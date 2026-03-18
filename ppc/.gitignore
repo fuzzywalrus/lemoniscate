@@ -1,0 +1,55 @@
+# macOS / OS X
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# macOS resource forks / metadata sometimes found in repos
+Icon?
+
+# PowerPC / make / GCC build artifacts
+*.o
+*.d
+*.a
+*.so
+*.dylib
+*.la
+*.elf
+*.bin
+*.map
+*.dSYM/
+
+# Coverage / profiling
+*.gcno
+*.gcda
+*.gcov
+*.prof
+
+# Temp / swap / editor artifacts
+*~
+*.swp
+*.swo
+*.tmp
+*.log
+*.rej
+*.orig
+
+# Core dumps
+core
+core.*
+
+# Common IDE folders
+.vscode/
+.idea/
+*.iml
+
+# Local per-user config (repo should not keep user-specific state)
+config/Users/
+
+# Binaries produced by this repo's Makefile
+libhotline.a
+test_runner
+test_client
+lemoniscate

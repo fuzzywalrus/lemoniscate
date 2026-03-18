@@ -1,0 +1,8 @@
+Name: Test Server
+Description: A test Lemoniscate server
+FileRoot: ./files
+Encoding: macintosh
+EnableBonjour: false
+MaxDownloads: 10
+Trackers:
+  - tracker.example.com:5498
