@@ -1,4 +1,4 @@
-# Lemoniscate
+# Lemoniscate - A modern Hotline Server for 10.4/10.5 Macs
 
 
 A native C and Objective-C implementation of the Hotline protocol for Mac OS X 10.4 Tiger and 10.5 Leopard on PowerPC. This project is a ground-up port of [Mobius](https://github.com/jhalter/mobius), a modern Hotline server and client written in Go by Jeff Halter.
