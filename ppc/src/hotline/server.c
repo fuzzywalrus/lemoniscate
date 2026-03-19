@@ -1090,6 +1090,9 @@ int hl_server_listen_and_serve(hl_server_t *srv)
 
     hl_log_info(srv->logger, "Server started, entering event loop");
 
+    /* Tracker registration timer — register immediately, then every 300s */
+    int tracker_elapsed = HL_TRACKER_UPDATE_FREQ; /* trigger on first tick */
+
     while (!srv->shutdown) {
         struct kevent events[64];
         struct timespec timeout = {1, 0};
@@ -1126,6 +1129,26 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                         pthread_rwlock_unlock(&cc->mu);
                     }
                     free(clients);
+                }
+
+                /* Periodic tracker registration */
+                tracker_elapsed += HL_IDLE_CHECK_INTERVAL;
+                if (tracker_elapsed >= HL_TRACKER_UPDATE_FREQ &&
+                    srv->config.enable_tracker_registration &&
+                    srv->config.tracker_count > 0) {
+                    tracker_elapsed = 0;
+                    int user_count = 0;
+                    hl_client_conn_t **ul = srv->client_mgr->vt->list(
+                        srv->client_mgr, &user_count);
+                    if (ul) free(ul);
+                    hl_tracker_register_all(
+                        (const char (*)[256])srv->config.trackers,
+                        srv->config.tracker_count,
+                        (uint16_t)srv->port,
+                        (uint16_t)user_count,
+                        srv->tracker_pass_id,
+                        srv->config.name,
+                        srv->config.description);
                 }
             }
             else if ((int)ev->ident == srv->listen_fd) {
