@@ -1061,24 +1061,33 @@ static int handle_old_post_news(hl_client_conn_t *cc, const hl_transaction_t *re
  * Maps to: Go HandleGetNewsCatNameList, HandlePostNewsArt, etc. */
 
 /* Helper: decode news path from FIELD_NEWS_PATH into category name.
- * News path is: {padding(2) + nameLen(1) + name(n)}+
+ * News path format: Count(2) + {Padding(2) + NameLen(1) + Name(n)}*Count
  * Returns the first path component name, or "General" if empty. */
 static const char *decode_news_path_cat(const hl_transaction_t *req, char *buf, size_t buflen)
 {
     const hl_field_t *path_field = hl_transaction_get_field(req, FIELD_NEWS_PATH);
-    if (!path_field || path_field->data_len < 5) {
+    if (!path_field || path_field->data_len < 2) {
         strncpy(buf, "General", buflen - 1);
         buf[buflen - 1] = '\0';
         return buf;
     }
 
-    /* Skip count(2), then first component: padding(2) + nameLen(1) + name */
     const uint8_t *p = path_field->data;
-    /* uint16_t count = hl_read_u16(p); */ p += 2;
-    /* skip padding */ p += 2;
+    uint16_t count = hl_read_u16(p);
+    p += 2;
+
+    if (count == 0 || path_field->data_len < 5) {
+        strncpy(buf, "General", buflen - 1);
+        buf[buflen - 1] = '\0';
+        return buf;
+    }
+
+    /* First component: Padding(2) + NameLen(1) + Name(nameLen) */
+    p += 2; /* skip padding */
     uint8_t name_len = *p; p++;
 
-    if (name_len == 0 || name_len >= buflen) {
+    if (name_len == 0 || (size_t)name_len >= buflen ||
+        (size_t)(p - path_field->data) + name_len > path_field->data_len) {
         strncpy(buf, "General", buflen - 1);
         buf[buflen - 1] = '\0';
         return buf;
