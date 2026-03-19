@@ -45,17 +45,11 @@ Lemoniscate.app/
     MacOS/
       Lemoniscate
       lemoniscate-server
-      mobius-hotline-server
 ```
 
-At runtime, the GUI looks for a server binary in this order:
-1. Inside the app bundle (`Contents/MacOS/`)
-2. Next to the app bundle as a sibling fallback
-
-Recognized names:
-- `lemoniscate-server`
-- `mobius-hotline-server`
-- `lemoniscate`
+At runtime, the GUI looks for `lemoniscate-server` in:
+1. The app bundle at `Contents/MacOS/lemoniscate-server`
+2. As a sibling binary next to `Lemoniscate.app` (same name: `lemoniscate-server`)
 
 ## Architecture compatibility
 

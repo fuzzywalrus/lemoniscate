@@ -161,7 +161,58 @@ static BOOL yamlBoolValue(NSString *value)
     return [v isEqualToString:@"true"] || [v isEqualToString:@"yes"] || [v isEqualToString:@"1"];
 }
 
+static NSString *humanFileSize(unsigned long long size)
+{
+    double value = (double)size;
+    if (value < 1024.0) return [NSString stringWithFormat:@"%llu B", size];
+    value /= 1024.0;
+    if (value < 1024.0) return [NSString stringWithFormat:@"%.1f KB", value];
+    value /= 1024.0;
+    if (value < 1024.0) return [NSString stringWithFormat:@"%.1f MB", value];
+    value /= 1024.0;
+    return [NSString stringWithFormat:@"%.1f GB", value];
+}
+
+static NSInteger compareOnlineUserByID(id a, id b, void *context)
+{
+    (void)context;
+    int aid = [[a objectForKey:@"id"] intValue];
+    int bid = [[b objectForKey:@"id"] intValue];
+    if (aid < bid) return (NSInteger)NSOrderedAscending;
+    if (aid > bid) return (NSInteger)NSOrderedDescending;
+    return (NSInteger)NSOrderedSame;
+}
+
 @interface AppController ()
+- (NSView *)createSettingsPanel;
+- (NSView *)createRightPanel;
+- (NSView *)createServerTabView;
+- (NSView *)createLogsTabView;
+- (NSView *)createAccountsTabView;
+- (NSView *)createOnlineTabView;
+- (NSView *)createFilesTabView;
+- (NSView *)createNewsTabView;
+- (void)layoutRightPanel;
+- (void)createMainMenu;
+- (void)createMainWindow;
+- (void)updateServerUI;
+- (void)loadSettings;
+- (void)loadAccountsListData;
+- (void)loadBanListData;
+- (void)writeBanListData;
+- (NSDictionary *)loadAccountDataForLogin:(NSString *)login;
+- (void)populateAccountEditorFromData:(NSDictionary *)acct;
+- (void)populateAccountEditorForNewAccount;
+- (void)updateAccountTemplateFromAccessKeys;
+- (NSMutableSet *)guestAccessTemplate;
+- (NSMutableSet *)adminAccessTemplate;
+- (void)processOnlineLogLine:(NSString *)text;
+- (void)updateOnlineUI;
+- (NSString *)resolvedFileRootPath;
+- (void)loadFilesAtPath:(NSString *)path;
+- (void)loadMessageBoardText;
+- (void)loadThreadedNewsCategories;
+- (void)openTextConfigFileNamed:(NSString *)filename title:(NSString *)title;
 - (void)loadConfigFromDisk;
 - (void)writeConfigToDisk;
 - (void)ensureConfigScaffolding;
@@ -181,6 +232,20 @@ static BOOL yamlBoolValue(NSString *value)
         _serverName = [@"Lemoniscate Server" retain];
         _serverDescription = [@"A Hotline server" retain];
         _autoScroll = YES;
+        _accountsItems = [[NSMutableArray alloc] init];
+        _accountAccessKeys = [[NSMutableSet alloc] init];
+        _bannedIPs = [[NSMutableArray alloc] init];
+        _bannedUsers = [[NSMutableArray alloc] init];
+        _bannedNicks = [[NSMutableArray alloc] init];
+        _selectedAccountLogin = nil;
+        _selectedAccountPassword = [@"" retain];
+        _onlineUsersByID = [[NSMutableDictionary alloc] init];
+        _onlineUsersItems = [[NSMutableArray alloc] init];
+        _onlineRefreshTimer = nil;
+        _onlinePeakConnections = 0;
+        _filesItems = [[NSMutableArray alloc] init];
+        _newsCategoryItems = [[NSMutableArray alloc] init];
+        _filesCurrentPath = nil;
 
         /* Find server binary (supports Lemoniscate + MobiusAdmin names). */
         NSBundle *bundle = [NSBundle mainBundle];
@@ -236,6 +301,23 @@ static BOOL yamlBoolValue(NSString *value)
 - (void)dealloc
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [_accountsItems release];
+    [_accountAccessKeys release];
+    [_bannedIPs release];
+    [_bannedUsers release];
+    [_bannedNicks release];
+    [_selectedAccountLogin release];
+    [_selectedAccountPassword release];
+    if (_onlineRefreshTimer) {
+        [_onlineRefreshTimer invalidate];
+        [_onlineRefreshTimer release];
+        _onlineRefreshTimer = nil;
+    }
+    [_onlineUsersByID release];
+    [_onlineUsersItems release];
+    [_filesItems release];
+    [_newsCategoryItems release];
+    [_filesCurrentPath release];
     [_processManager release];
     [_configDir release];
     [_serverName release];
@@ -252,6 +334,12 @@ static BOOL yamlBoolValue(NSString *value)
     [self createMainMenu];
     [self createMainWindow];
     [self loadConfigFromDisk];
+    [self ensureConfigScaffolding];
+    [self refreshAccountsList:nil];
+    [self loadBanListData];
+    [self refreshFilesList:nil];
+    [self loadMessageBoardText];
+    [self refreshThreadedNews:nil];
     [self updateServerUI];
 }
 
@@ -348,6 +436,13 @@ static BOOL yamlBoolValue(NSString *value)
             if (_maxConnPerIPField) [_maxConnPerIPField setIntValue:[val intValue]];
         }
     }
+
+    if (_filesTableView) [self refreshFilesList:nil];
+    if (_accountsTableView) [self refreshAccountsList:nil];
+    if (_bannedIPsTableView || _bannedUsersTableView || _bannedNicksTableView)
+        [self loadBanListData];
+    if (_messageBoardTextView) [self loadMessageBoardText];
+    if (_newsCategoriesTableView) [self refreshThreadedNews:nil];
 }
 
 - (void)writeConfigToDisk
@@ -565,6 +660,10 @@ static BOOL yamlBoolValue(NSString *value)
         action:@selector(restartServer:) keyEquivalent:@"R"];
     [mi setTarget:self]; [srvMenu addItem:mi]; [mi release];
 
+    mi = [[NSMenuItem alloc] initWithTitle:@"Reload Config"
+        action:@selector(reloadServerConfig:) keyEquivalent:@"l"];
+    [mi setTarget:self]; [srvMenu addItem:mi]; [mi release];
+
     [srvMenu addItem:[NSMenuItem separatorItem]];
 
     mi = [[NSMenuItem alloc] initWithTitle:@"Save Settings"
@@ -727,7 +826,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     /* ===== General ===== */
     {
-        float boxH = 5 * ROW_HEIGHT + 20;
+        float boxH = 7 * ROW_HEIGHT + 20;
         NSBox *box = makeSection(@"General", SECTION_MARGIN, y,
                                   secWidth, boxH);
         NSView *c = [box contentView];
@@ -762,6 +861,28 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
                                              @selector(chooseConfigDir:));
         iy = addRowWithButton(c, @"Config Dir:", _configDirField,
                                _chooseConfigDirButton, iy, fieldWidth);
+
+        NSTextField *agreementField = makeEditField(fieldWidth);
+        [agreementField setStringValue:@"Agreement.txt"];
+        [agreementField setEditable:NO];
+        [agreementField setFont:[NSFont systemFontOfSize:10.0]];
+        NSButton *agreementButton = makeButton(@"Edit...", self,
+                                               @selector(editAgreementFile:));
+        iy = addRowWithButton(c, @"Agreement:", agreementField,
+                              agreementButton, iy, fieldWidth);
+        [agreementField release];
+        [agreementButton release];
+
+        NSTextField *boardField = makeEditField(fieldWidth);
+        [boardField setStringValue:@"MessageBoard.txt"];
+        [boardField setEditable:NO];
+        [boardField setFont:[NSFont systemFontOfSize:10.0]];
+        NSButton *boardButton = makeButton(@"Edit...", self,
+                                           @selector(editMessageBoardFile:));
+        iy = addRowWithButton(c, @"Message Board:", boardField,
+                              boardButton, iy, fieldWidth);
+        [boardField release];
+        [boardButton release];
 
         [doc addSubview:box];
         [box release];
@@ -957,6 +1078,30 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_tabView addTabViewItem:tab];
     [tab release];
 
+    tab = [[NSTabViewItem alloc] initWithIdentifier:@"accounts"];
+    [tab setLabel:@"Accounts"];
+    [tab setView:[self createAccountsTabView]];
+    [_tabView addTabViewItem:tab];
+    [tab release];
+
+    tab = [[NSTabViewItem alloc] initWithIdentifier:@"online"];
+    [tab setLabel:@"Online"];
+    [tab setView:[self createOnlineTabView]];
+    [_tabView addTabViewItem:tab];
+    [tab release];
+
+    tab = [[NSTabViewItem alloc] initWithIdentifier:@"files"];
+    [tab setLabel:@"Files"];
+    [tab setView:[self createFilesTabView]];
+    [_tabView addTabViewItem:tab];
+    [tab release];
+
+    tab = [[NSTabViewItem alloc] initWithIdentifier:@"news"];
+    [tab setLabel:@"News"];
+    [tab setView:[self createNewsTabView]];
+    [_tabView addTabViewItem:tab];
+    [tab release];
+
     [container addSubview:_tabView];
     [self layoutRightPanel];
     return [container autorelease];
@@ -1010,16 +1155,20 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     _startButton = makeButton(@"Start", self, @selector(startServer:));
     _stopButton = makeButton(@"Stop", self, @selector(stopServer:));
     _restartButton = makeButton(@"Restart", self, @selector(restartServer:));
+    _reloadButton = makeButton(@"Reload Config", self,
+                               @selector(reloadServerConfig:));
 
     float startW = [_startButton frame].size.width;
     float stopW = [_stopButton frame].size.width;
     float restartW = [_restartButton frame].size.width;
+    float reloadW = [_reloadButton frame].size.width;
     if (startW < 72.0f) startW = 72.0f;
     if (stopW < 72.0f) stopW = 72.0f;
     if (restartW < 84.0f) restartW = 84.0f;
+    if (reloadW < 108.0f) reloadW = 108.0f;
 
     float btnH = 30.0f;
-    float totalBtnW = startW + stopW + restartW + 2.0f * btnGap;
+    float totalBtnW = startW + stopW + restartW + reloadW + 3.0f * btnGap;
     NSView *buttonRow = [[NSView alloc]
         initWithFrame:NSMakeRect(([view bounds].size.width - totalBtnW) / 2.0,
                                  222, totalBtnW, btnH)];
@@ -1036,6 +1185,10 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_restartButton setFrame:NSMakeRect(startW + stopW + 2.0f * btnGap,
                                         0, restartW, btnH)];
     [buttonRow addSubview:_restartButton];
+
+    [_reloadButton setFrame:NSMakeRect(startW + stopW + restartW + 3.0f * btnGap,
+                                       0, reloadW, btnH)];
+    [buttonRow addSubview:_reloadButton];
     [buttonRow release];
 
     if (![_processManager hasBinary]) {
@@ -1114,6 +1267,522 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     return [view autorelease];
 }
 
+/* ===== Accounts tab ===== */
+
+- (NSView *)createAccountsTabView
+{
+    NSView *view = [[NSView alloc]
+        initWithFrame:NSMakeRect(0, 0, 630, 590)];
+    [view setAutoresizesSubviews:YES];
+    [view setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+
+    NSView *tb = [[NSView alloc]
+        initWithFrame:NSMakeRect(0, 560, 630, 30)];
+    [tb setAutoresizingMask:(NSViewWidthSizable | NSViewMinYMargin)];
+
+    _accountsSegmentedControl = [[NSSegmentedControl alloc]
+        initWithFrame:NSMakeRect(8, 4, 150, 22)];
+    [_accountsSegmentedControl setSegmentCount:2];
+    [_accountsSegmentedControl setLabel:@"Users" forSegment:0];
+    [_accountsSegmentedControl setLabel:@"Bans" forSegment:1];
+    [_accountsSegmentedControl setSelectedSegment:0];
+    [_accountsSegmentedControl setTarget:self];
+    [_accountsSegmentedControl setAction:@selector(accountsSegmentChanged:)];
+    [tb addSubview:_accountsSegmentedControl];
+
+    _accountsCountLabel = makeLabel(@"0 accounts", 11.0, NO);
+    [_accountsCountLabel setFrame:NSMakeRect(170, 7, 280, 16)];
+    [tb addSubview:_accountsCountLabel];
+
+    NSButton *refreshBtn = makeButton(@"Refresh", self,
+                                      @selector(refreshAccountsList:));
+    [refreshBtn setFrame:NSMakeRect(540, 3, 80, 24)];
+    [refreshBtn setAutoresizingMask:NSViewMinXMargin];
+    [tb addSubview:refreshBtn];
+    [refreshBtn release];
+
+    [view addSubview:tb];
+    [tb release];
+
+    _accountsUsersView = [[NSView alloc]
+        initWithFrame:NSMakeRect(0, 0, 630, 560)];
+    [_accountsUsersView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [view addSubview:_accountsUsersView];
+
+    NSScrollView *sv = [[NSScrollView alloc]
+        initWithFrame:NSMakeRect(4, 4, 212, 552)];
+    [sv setAutoresizingMask:(NSViewHeightSizable)];
+    [sv setHasVerticalScroller:YES];
+    [sv setBorderType:NSBezelBorder];
+
+    _accountsTableView = [[NSTableView alloc]
+        initWithFrame:NSMakeRect(0, 0, 212, 552)];
+    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"login"];
+    [[col headerCell] setStringValue:@"Login"];
+    [col setWidth:190];
+    [_accountsTableView addTableColumn:col];
+    [col release];
+    [_accountsTableView setDataSource:(id)self];
+    [_accountsTableView setDelegate:(id)self];
+    [_accountsTableView setAllowsMultipleSelection:NO];
+    [sv setDocumentView:_accountsTableView];
+    [_accountsUsersView addSubview:sv];
+    [sv release];
+
+    NSBox *editor = [[NSBox alloc]
+        initWithFrame:NSMakeRect(220, 4, 406, 552)];
+    [editor setTitle:@"Account Editor"];
+    [editor setTitleFont:[NSFont boldSystemFontOfSize:11.0]];
+    [_accountsUsersView addSubview:editor];
+
+    NSView *ec = [editor contentView];
+    NSTextField *l;
+
+    l = makeLabel(@"Login:", 11.0, NO);
+    [l setAlignment:NSRightTextAlignment];
+    [l setFrame:NSMakeRect(6, 496, 70, 17)];
+    [ec addSubview:l];
+    [l release];
+    _accountLoginField = makeEditField(290);
+    [_accountLoginField setFrame:NSMakeRect(84, 492, 290, 22)];
+    [_accountLoginField setEditable:NO];
+    [ec addSubview:_accountLoginField];
+
+    l = makeLabel(@"Display Name:", 11.0, NO);
+    [l setAlignment:NSRightTextAlignment];
+    [l setFrame:NSMakeRect(6, 464, 70, 17)];
+    [ec addSubview:l];
+    [l release];
+    _accountNameField = makeEditField(290);
+    [_accountNameField setFrame:NSMakeRect(84, 460, 290, 22)];
+    [ec addSubview:_accountNameField];
+
+    l = makeLabel(@"File Root:", 11.0, NO);
+    [l setAlignment:NSRightTextAlignment];
+    [l setFrame:NSMakeRect(6, 432, 70, 17)];
+    [ec addSubview:l];
+    [l release];
+    _accountFileRootField = makeEditField(290);
+    [_accountFileRootField setFrame:NSMakeRect(84, 428, 290, 22)];
+    [ec addSubview:_accountFileRootField];
+
+    l = makeLabel(@"Template:", 11.0, NO);
+    [l setAlignment:NSRightTextAlignment];
+    [l setFrame:NSMakeRect(6, 400, 70, 17)];
+    [ec addSubview:l];
+    [l release];
+    _accountTemplatePopup = [[NSPopUpButton alloc]
+        initWithFrame:NSMakeRect(84, 396, 140, 24) pullsDown:NO];
+    [_accountTemplatePopup addItemWithTitle:@"Custom"];
+    [_accountTemplatePopup addItemWithTitle:@"Guest"];
+    [_accountTemplatePopup addItemWithTitle:@"Admin"];
+    [_accountTemplatePopup setTarget:self];
+    [_accountTemplatePopup setAction:@selector(accountTemplateChanged:)];
+    [ec addSubview:_accountTemplatePopup];
+
+    _accountNewButton = makeButton(@"New", self, @selector(newAccount:));
+    [_accountNewButton setFrame:NSMakeRect(84, 356, 70, 24)];
+    [ec addSubview:_accountNewButton];
+
+    _accountDeleteButton = makeButton(@"Delete", self, @selector(deleteAccount:));
+    [_accountDeleteButton setFrame:NSMakeRect(160, 356, 70, 24)];
+    [ec addSubview:_accountDeleteButton];
+
+    _accountSaveButton = makeButton(@"Save", self, @selector(saveAccount:));
+    [_accountSaveButton setFrame:NSMakeRect(236, 356, 70, 24)];
+    [ec addSubview:_accountSaveButton];
+
+    l = makeLabel(@"Templates apply common permission sets. Custom preserves existing Access flags.", 10.0, NO);
+    [l setTextColor:[NSColor grayColor]];
+    [l setFrame:NSMakeRect(84, 330, 290, 30)];
+    [ec addSubview:l];
+    [l release];
+
+    [editor release];
+
+    _accountsBansView = [[NSView alloc]
+        initWithFrame:NSMakeRect(0, 0, 630, 560)];
+    [_accountsBansView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [view addSubview:_accountsBansView];
+    [_accountsBansView setHidden:YES];
+
+    {
+        NSBox *box = [[NSBox alloc] initWithFrame:NSMakeRect(6, 6, 203, 548)];
+        [box setTitle:@"Banned IPs"];
+        [box setTitleFont:[NSFont boldSystemFontOfSize:11.0]];
+        NSView *c = [box contentView];
+
+        NSScrollView *bsv = [[NSScrollView alloc] initWithFrame:NSMakeRect(6, 56, 185, 456)];
+        [bsv setHasVerticalScroller:YES];
+        [bsv setBorderType:NSBezelBorder];
+        _bannedIPsTableView = [[NSTableView alloc] initWithFrame:NSMakeRect(0, 0, 185, 456)];
+        col = [[NSTableColumn alloc] initWithIdentifier:@"ban_ip"];
+        [[col headerCell] setStringValue:@"IP"];
+        [col setWidth:170];
+        [_bannedIPsTableView addTableColumn:col];
+        [col release];
+        [_bannedIPsTableView setDataSource:(id)self];
+        [_bannedIPsTableView setDelegate:(id)self];
+        [bsv setDocumentView:_bannedIPsTableView];
+        [c addSubview:bsv];
+        [bsv release];
+
+        _newBanIPField = makeEditField(132);
+        [_newBanIPField setFrame:NSMakeRect(6, 30, 132, 22)];
+        [c addSubview:_newBanIPField];
+        NSButton *add = makeButton(@"Add", self, @selector(addIPBan:));
+        [add setFrame:NSMakeRect(142, 30, 50, 22)];
+        [c addSubview:add];
+        [add release];
+        NSButton *rem = makeButton(@"Remove", self, @selector(removeIPBan:));
+        [rem setFrame:NSMakeRect(126, 4, 66, 22)];
+        [c addSubview:rem];
+        [rem release];
+
+        [_accountsBansView addSubview:box];
+        [box release];
+    }
+
+    {
+        NSBox *box = [[NSBox alloc] initWithFrame:NSMakeRect(214, 6, 203, 548)];
+        [box setTitle:@"Banned Usernames"];
+        [box setTitleFont:[NSFont boldSystemFontOfSize:11.0]];
+        NSView *c = [box contentView];
+
+        NSScrollView *bsv = [[NSScrollView alloc] initWithFrame:NSMakeRect(6, 56, 185, 456)];
+        [bsv setHasVerticalScroller:YES];
+        [bsv setBorderType:NSBezelBorder];
+        _bannedUsersTableView = [[NSTableView alloc] initWithFrame:NSMakeRect(0, 0, 185, 456)];
+        col = [[NSTableColumn alloc] initWithIdentifier:@"ban_user"];
+        [[col headerCell] setStringValue:@"Username"];
+        [col setWidth:170];
+        [_bannedUsersTableView addTableColumn:col];
+        [col release];
+        [_bannedUsersTableView setDataSource:(id)self];
+        [_bannedUsersTableView setDelegate:(id)self];
+        [bsv setDocumentView:_bannedUsersTableView];
+        [c addSubview:bsv];
+        [bsv release];
+
+        _newBanUserField = makeEditField(132);
+        [_newBanUserField setFrame:NSMakeRect(6, 30, 132, 22)];
+        [c addSubview:_newBanUserField];
+        NSButton *add = makeButton(@"Add", self, @selector(addUserBan:));
+        [add setFrame:NSMakeRect(142, 30, 50, 22)];
+        [c addSubview:add];
+        [add release];
+        NSButton *rem = makeButton(@"Remove", self, @selector(removeUserBan:));
+        [rem setFrame:NSMakeRect(126, 4, 66, 22)];
+        [c addSubview:rem];
+        [rem release];
+
+        [_accountsBansView addSubview:box];
+        [box release];
+    }
+
+    {
+        NSBox *box = [[NSBox alloc] initWithFrame:NSMakeRect(422, 6, 203, 548)];
+        [box setTitle:@"Banned Nicknames"];
+        [box setTitleFont:[NSFont boldSystemFontOfSize:11.0]];
+        NSView *c = [box contentView];
+
+        NSScrollView *bsv = [[NSScrollView alloc] initWithFrame:NSMakeRect(6, 56, 185, 456)];
+        [bsv setHasVerticalScroller:YES];
+        [bsv setBorderType:NSBezelBorder];
+        _bannedNicksTableView = [[NSTableView alloc] initWithFrame:NSMakeRect(0, 0, 185, 456)];
+        col = [[NSTableColumn alloc] initWithIdentifier:@"ban_nick"];
+        [[col headerCell] setStringValue:@"Nickname"];
+        [col setWidth:170];
+        [_bannedNicksTableView addTableColumn:col];
+        [col release];
+        [_bannedNicksTableView setDataSource:(id)self];
+        [_bannedNicksTableView setDelegate:(id)self];
+        [bsv setDocumentView:_bannedNicksTableView];
+        [c addSubview:bsv];
+        [bsv release];
+
+        _newBanNickField = makeEditField(132);
+        [_newBanNickField setFrame:NSMakeRect(6, 30, 132, 22)];
+        [c addSubview:_newBanNickField];
+        NSButton *add = makeButton(@"Add", self, @selector(addNickBan:));
+        [add setFrame:NSMakeRect(142, 30, 50, 22)];
+        [c addSubview:add];
+        [add release];
+        NSButton *rem = makeButton(@"Remove", self, @selector(removeNickBan:));
+        [rem setFrame:NSMakeRect(126, 4, 66, 22)];
+        [c addSubview:rem];
+        [rem release];
+
+        [_accountsBansView addSubview:box];
+        [box release];
+    }
+
+    [self refreshAccountsList:nil];
+    [self loadBanListData];
+    [self populateAccountEditorForNewAccount];
+    return [view autorelease];
+}
+
+/* ===== Online tab ===== */
+
+- (NSView *)createOnlineTabView
+{
+    NSView *view = [[NSView alloc]
+        initWithFrame:NSMakeRect(0, 0, 630, 590)];
+    [view setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+
+    NSView *tb = [[NSView alloc]
+        initWithFrame:NSMakeRect(0, 560, 630, 30)];
+    [tb setAutoresizingMask:(NSViewWidthSizable | NSViewMinYMargin)];
+
+    _onlineStatusLabel = makeLabel(@"Connected: 0  Peak: 0", 11.0, NO);
+    [_onlineStatusLabel setFrame:NSMakeRect(8, 7, 320, 16)];
+    [_onlineStatusLabel setTextColor:[NSColor grayColor]];
+    [tb addSubview:_onlineStatusLabel];
+
+    _onlineRefreshButton = makeButton(@"Refresh", self, @selector(refreshOnlineUsers:));
+    [_onlineRefreshButton setFrame:NSMakeRect(460, 3, 80, 24)];
+    [_onlineRefreshButton setAutoresizingMask:NSViewMinXMargin];
+    [tb addSubview:_onlineRefreshButton];
+
+    _onlineBanButton = makeButton(@"Ban Selected IP", self, @selector(banSelectedOnlineUser:));
+    [_onlineBanButton setFrame:NSMakeRect(542, 3, 86, 24)];
+    [_onlineBanButton setAutoresizingMask:NSViewMinXMargin];
+    [_onlineBanButton setEnabled:NO];
+    [tb addSubview:_onlineBanButton];
+
+    [view addSubview:tb];
+    [tb release];
+
+    NSScrollView *sv = [[NSScrollView alloc]
+        initWithFrame:NSMakeRect(4, 4, 622, 554)];
+    [sv setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [sv setHasVerticalScroller:YES];
+    [sv setBorderType:NSBezelBorder];
+
+    _onlineTableView = [[NSTableView alloc]
+        initWithFrame:NSMakeRect(0, 0, 622, 554)];
+
+    NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"online_login"];
+    [[col headerCell] setStringValue:@"Login"];
+    [col setWidth:180];
+    [_onlineTableView addTableColumn:col];
+    [col release];
+
+    col = [[NSTableColumn alloc] initWithIdentifier:@"online_ip"];
+    [[col headerCell] setStringValue:@"IP Address"];
+    [col setWidth:210];
+    [_onlineTableView addTableColumn:col];
+    [col release];
+
+    col = [[NSTableColumn alloc] initWithIdentifier:@"online_id"];
+    [[col headerCell] setStringValue:@"User ID"];
+    [col setWidth:90];
+    [_onlineTableView addTableColumn:col];
+    [col release];
+
+    col = [[NSTableColumn alloc] initWithIdentifier:@"online_seen"];
+    [[col headerCell] setStringValue:@"Last Seen"];
+    [col setWidth:130];
+    [_onlineTableView addTableColumn:col];
+    [col release];
+
+    [_onlineTableView setDataSource:(id)self];
+    [_onlineTableView setDelegate:(id)self];
+    [_onlineTableView setAllowsMultipleSelection:NO];
+
+    [sv setDocumentView:_onlineTableView];
+    [view addSubview:sv];
+    [sv release];
+
+    if (!_onlineRefreshTimer) {
+        _onlineRefreshTimer = [[NSTimer scheduledTimerWithTimeInterval:5.0
+                                                                 target:self
+                                                               selector:@selector(refreshOnlineUsers:)
+                                                               userInfo:nil
+                                                                repeats:YES] retain];
+    }
+    [self refreshOnlineUsers:nil];
+
+    return [view autorelease];
+}
+
+/* ===== Files tab ===== */
+
+- (NSView *)createFilesTabView
+{
+    NSView *view = [[NSView alloc]
+        initWithFrame:NSMakeRect(0, 0, 630, 590)];
+    [view setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+
+    NSView *tb = [[NSView alloc]
+        initWithFrame:NSMakeRect(0, 560, 630, 30)];
+    [tb setAutoresizingMask:(NSViewWidthSizable | NSViewMinYMargin)];
+
+    NSButton *homeBtn = makeButton(@"Home", self, @selector(navigateFilesHome:));
+    [homeBtn setFrame:NSMakeRect(8, 3, 62, 24)];
+    [tb addSubview:homeBtn];
+    [homeBtn release];
+
+    NSButton *upBtn = makeButton(@"Up", self, @selector(navigateFilesUp:));
+    [upBtn setFrame:NSMakeRect(74, 3, 52, 24)];
+    [tb addSubview:upBtn];
+    [upBtn release];
+
+    NSButton *refreshBtn = makeButton(@"Refresh", self, @selector(refreshFilesList:));
+    [refreshBtn setFrame:NSMakeRect(130, 3, 74, 24)];
+    [tb addSubview:refreshBtn];
+    [refreshBtn release];
+
+    _filesPathLabel = makeLabel(@"", 10.0, NO);
+    [_filesPathLabel setTextColor:[NSColor grayColor]];
+    [_filesPathLabel setFrame:NSMakeRect(212, 7, 410, 16)];
+    [_filesPathLabel setAutoresizingMask:(NSViewWidthSizable | NSViewMinYMargin)];
+    [tb addSubview:_filesPathLabel];
+
+    [view addSubview:tb];
+    [tb release];
+
+    NSScrollView *sv = [[NSScrollView alloc]
+        initWithFrame:NSMakeRect(4, 4, 622, 554)];
+    [sv setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [sv setHasVerticalScroller:YES];
+    [sv setBorderType:NSBezelBorder];
+
+    _filesTableView = [[NSTableView alloc]
+        initWithFrame:NSMakeRect(0, 0, 622, 554)];
+
+    NSTableColumn *nameCol = [[NSTableColumn alloc] initWithIdentifier:@"name"];
+    [[nameCol headerCell] setStringValue:@"Name"];
+    [nameCol setWidth:350];
+    [_filesTableView addTableColumn:nameCol];
+    [nameCol release];
+
+    NSTableColumn *sizeCol = [[NSTableColumn alloc] initWithIdentifier:@"size"];
+    [[sizeCol headerCell] setStringValue:@"Size"];
+    [sizeCol setWidth:90];
+    [_filesTableView addTableColumn:sizeCol];
+    [sizeCol release];
+
+    NSTableColumn *dateCol = [[NSTableColumn alloc] initWithIdentifier:@"modified"];
+    [[dateCol headerCell] setStringValue:@"Modified"];
+    [dateCol setWidth:170];
+    [_filesTableView addTableColumn:dateCol];
+    [dateCol release];
+
+    [_filesTableView setDataSource:(id)self];
+    [_filesTableView setDelegate:(id)self];
+    [_filesTableView setTarget:self];
+    [_filesTableView setDoubleAction:@selector(filesTableDoubleClick:)];
+
+    [sv setDocumentView:_filesTableView];
+    [view addSubview:sv];
+    [sv release];
+
+    [self refreshFilesList:nil];
+    return [view autorelease];
+}
+
+/* ===== News tab ===== */
+
+- (NSView *)createNewsTabView
+{
+    NSView *view = [[NSView alloc]
+        initWithFrame:NSMakeRect(0, 0, 630, 590)];
+    [view setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+
+    NSView *tb = [[NSView alloc]
+        initWithFrame:NSMakeRect(0, 560, 630, 30)];
+    [tb setAutoresizingMask:(NSViewWidthSizable | NSViewMinYMargin)];
+
+    _newsSegmentedControl = [[NSSegmentedControl alloc]
+        initWithFrame:NSMakeRect(8, 4, 230, 22)];
+    [_newsSegmentedControl setSegmentCount:2];
+    [_newsSegmentedControl setLabel:@"Message Board" forSegment:0];
+    [_newsSegmentedControl setLabel:@"Threaded News" forSegment:1];
+    [_newsSegmentedControl setTarget:self];
+    [_newsSegmentedControl setAction:@selector(newsSegmentChanged:)];
+    [_newsSegmentedControl setSelectedSegment:0];
+    [tb addSubview:_newsSegmentedControl];
+
+    [view addSubview:tb];
+    [tb release];
+
+    _newsContainerView = [[NSView alloc]
+        initWithFrame:NSMakeRect(0, 0, 630, 560)];
+    [_newsContainerView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [view addSubview:_newsContainerView];
+
+    _newsMessageBoardView = [[NSView alloc]
+        initWithFrame:NSMakeRect(0, 0, 630, 560)];
+    [_newsMessageBoardView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+
+    NSScrollView *mbScroll = [[NSScrollView alloc]
+        initWithFrame:NSMakeRect(4, 34, 622, 522)];
+    [mbScroll setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [mbScroll setHasVerticalScroller:YES];
+    [mbScroll setBorderType:NSBezelBorder];
+
+    _messageBoardTextView = [[NSTextView alloc]
+        initWithFrame:NSMakeRect(0, 0, 622, 522)];
+    [_messageBoardTextView setMinSize:NSMakeSize(0, 522)];
+    [_messageBoardTextView setMaxSize:NSMakeSize(1e7, 1e7)];
+    [_messageBoardTextView setVerticallyResizable:YES];
+    [_messageBoardTextView setHorizontallyResizable:NO];
+    [_messageBoardTextView setAutoresizingMask:NSViewWidthSizable];
+    [[_messageBoardTextView textContainer] setContainerSize:NSMakeSize(622, 1e7)];
+    [[_messageBoardTextView textContainer] setWidthTracksTextView:YES];
+    [_messageBoardTextView setFont:[NSFont fontWithName:@"Monaco" size:10.0]];
+    [mbScroll setDocumentView:_messageBoardTextView];
+    [_newsMessageBoardView addSubview:mbScroll];
+    [mbScroll release];
+
+    _saveMessageBoardButton = makeButton(@"Save Message Board", self,
+                                         @selector(saveMessageBoard:));
+    [_saveMessageBoardButton setFrame:NSMakeRect(488, 5, 136, 24)];
+    [_saveMessageBoardButton setAutoresizingMask:(NSViewMinXMargin | NSViewMaxYMargin)];
+    [_newsMessageBoardView addSubview:_saveMessageBoardButton];
+
+    _newsThreadedView = [[NSView alloc]
+        initWithFrame:NSMakeRect(0, 0, 630, 560)];
+    [_newsThreadedView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+
+    NSButton *refreshThreadedBtn = makeButton(@"Refresh", self,
+                                              @selector(refreshThreadedNews:));
+    [refreshThreadedBtn setFrame:NSMakeRect(544, 530, 80, 24)];
+    [refreshThreadedBtn setAutoresizingMask:(NSViewMinXMargin | NSViewMinYMargin)];
+    [_newsThreadedView addSubview:refreshThreadedBtn];
+    [refreshThreadedBtn release];
+
+    NSScrollView *catsScroll = [[NSScrollView alloc]
+        initWithFrame:NSMakeRect(4, 4, 622, 522)];
+    [catsScroll setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [catsScroll setHasVerticalScroller:YES];
+    [catsScroll setBorderType:NSBezelBorder];
+
+    _newsCategoriesTableView = [[NSTableView alloc]
+        initWithFrame:NSMakeRect(0, 0, 622, 522)];
+    NSTableColumn *catCol = [[NSTableColumn alloc] initWithIdentifier:@"category"];
+    [[catCol headerCell] setStringValue:@"Threaded News Categories"];
+    [catCol setWidth:600];
+    [_newsCategoriesTableView addTableColumn:catCol];
+    [catCol release];
+    [_newsCategoriesTableView setDataSource:(id)self];
+    [_newsCategoriesTableView setDelegate:(id)self];
+    [catsScroll setDocumentView:_newsCategoriesTableView];
+    [_newsThreadedView addSubview:catsScroll];
+    [catsScroll release];
+
+    [_newsContainerView addSubview:_newsMessageBoardView];
+    [_newsContainerView addSubview:_newsThreadedView];
+    [_newsThreadedView setHidden:YES];
+
+    [self loadMessageBoardText];
+    [self refreshThreadedNews:nil];
+
+    return [view autorelease];
+}
+
 /* ===== Actions ===== */
 
 - (void)startServer:(id)sender
@@ -1155,6 +1824,11 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_configDirField setStringValue:_configDir];
         [self loadConfigFromDisk];
         [self saveSettings:nil];
+        [self refreshAccountsList:nil];
+        [self loadBanListData];
+        [self refreshFilesList:nil];
+        [self loadMessageBoardText];
+        [self refreshThreadedNews:nil];
     }
 }
 
@@ -1169,6 +1843,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     if ([panel runModal] == NSOKButton) {
         [_fileRootField setStringValue:
             [[panel filenames] objectAtIndex:0]];
+        [self refreshFilesList:nil];
     }
 }
 
@@ -1186,6 +1861,328 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     }
 }
 
+- (void)editAgreementFile:(id)sender
+{
+    (void)sender;
+    [self openTextConfigFileNamed:@"Agreement.txt" title:@"Agreement"];
+}
+
+- (void)editMessageBoardFile:(id)sender
+{
+    (void)sender;
+    [self openTextConfigFileNamed:@"MessageBoard.txt" title:@"Message Board"];
+}
+
+- (void)reloadServerConfig:(id)sender
+{
+    (void)sender;
+    [self saveSettings:nil];
+    [self ensureConfigScaffolding];
+    [self writeConfigToDisk];
+
+    if ([_processManager isRunning]) {
+        [_processManager reloadConfiguration];
+    }
+}
+
+- (void)refreshAccountsList:(id)sender
+{
+    (void)sender;
+    if (_accountsSegmentedControl && [_accountsSegmentedControl selectedSegment] == 1) {
+        [self loadBanListData];
+    } else {
+        [self loadAccountsListData];
+    }
+}
+
+- (void)accountsSegmentChanged:(id)sender
+{
+    (void)sender;
+    BOOL showUsers = ([_accountsSegmentedControl selectedSegment] == 0);
+    [_accountsUsersView setHidden:!showUsers];
+    [_accountsBansView setHidden:showUsers];
+    if (showUsers) {
+        [self refreshAccountsList:nil];
+    } else {
+        [self loadBanListData];
+    }
+}
+
+- (void)newAccount:(id)sender
+{
+    (void)sender;
+    [_accountsTableView deselectAll:nil];
+    [self populateAccountEditorForNewAccount];
+}
+
+- (void)accountTemplateChanged:(id)sender
+{
+    (void)sender;
+    NSInteger idx = [_accountTemplatePopup indexOfSelectedItem];
+    if (idx == 1) {
+        [_accountAccessKeys removeAllObjects];
+        [_accountAccessKeys unionSet:[self guestAccessTemplate]];
+    } else if (idx == 2) {
+        [_accountAccessKeys removeAllObjects];
+        [_accountAccessKeys unionSet:[self adminAccessTemplate]];
+    }
+}
+
+- (void)saveAccount:(id)sender
+{
+    (void)sender;
+    [self ensureConfigScaffolding];
+
+    NSString *login = [trimmedString([_accountLoginField stringValue]) lowercaseString];
+    if ([login length] == 0) {
+        NSRunAlertPanel(@"Invalid Account", @"Login cannot be empty.", @"OK", nil, nil);
+        return;
+    }
+
+    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
+        @"abcdefghijklmnopqrstuvwxyz0123456789-_"];
+    unsigned i;
+    for (i = 0; i < [login length]; i++) {
+        unichar ch = [login characterAtIndex:i];
+        if (![allowed characterIsMember:ch]) {
+            NSRunAlertPanel(@"Invalid Login",
+                            @"Use lowercase letters, numbers, '-' or '_'.",
+                            @"OK", nil, nil);
+            return;
+        }
+    }
+
+    NSString *name = trimmedString([_accountNameField stringValue]);
+    if ([name length] == 0) name = login;
+    NSString *fileRoot = trimmedString([_accountFileRootField stringValue]);
+
+    NSString *usersDir = [_configDir stringByAppendingPathComponent:@"Users"];
+    NSString *path = [usersDir stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"%@.yaml", login]];
+
+    if (!_selectedAccountLogin || ![_selectedAccountLogin isEqualToString:login]) {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        if ([fm fileExistsAtPath:path]) {
+            NSRunAlertPanel(@"Account Exists",
+                            @"An account with that login already exists.",
+                            @"OK", nil, nil);
+            return;
+        }
+    }
+
+    NSMutableString *yaml = [NSMutableString string];
+    [yaml appendFormat:@"Login: %@\n", login];
+    [yaml appendFormat:@"Name: %@\n", name];
+    [yaml appendFormat:@"Password: \"%@\"\n", _selectedAccountPassword ? _selectedAccountPassword : @""];
+    [yaml appendString:@"Access:\n"];
+
+    NSArray *sorted = [[_accountAccessKeys allObjects] sortedArrayUsingSelector:
+        @selector(caseInsensitiveCompare:)];
+    for (i = 0; i < [sorted count]; i++) {
+        [yaml appendFormat:@"  %@: true\n", [sorted objectAtIndex:i]];
+    }
+    if ([fileRoot length] > 0) {
+        [yaml appendFormat:@"FileRoot: %@\n", fileRoot];
+    }
+
+    if (![yaml writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]) {
+        NSRunAlertPanel(@"Save Failed", @"Could not write account file.", @"OK", nil, nil);
+        return;
+    }
+
+    [_selectedAccountLogin release];
+    _selectedAccountLogin = [login retain];
+    [self refreshAccountsList:nil];
+    NSUInteger row = [_accountsItems indexOfObject:login];
+    if (row != NSNotFound) {
+        [_accountsTableView selectRow:(int)row byExtendingSelection:NO];
+    }
+}
+
+- (void)deleteAccount:(id)sender
+{
+    (void)sender;
+    NSString *login = _selectedAccountLogin;
+    if (!login || [login length] == 0) return;
+
+    int result = NSRunAlertPanel(@"Delete Account",
+                                 @"Delete account \"%@\"?",
+                                 @"Delete", @"Cancel", nil, login);
+    if (result != NSAlertDefaultReturn) return;
+
+    NSString *path = [[_configDir stringByAppendingPathComponent:@"Users"]
+        stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.yaml", login]];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([fm fileExistsAtPath:path]) {
+        [fm removeFileAtPath:path handler:nil];
+    }
+
+    [self populateAccountEditorForNewAccount];
+    [self refreshAccountsList:nil];
+}
+
+- (void)addIPBan:(id)sender
+{
+    (void)sender;
+    NSString *value = trimmedString([_newBanIPField stringValue]);
+    if ([value length] == 0) return;
+    if (![_bannedIPs containsObject:value]) [_bannedIPs addObject:value];
+    [_newBanIPField setStringValue:@""];
+    [self writeBanListData];
+    [self loadBanListData];
+}
+
+- (void)removeIPBan:(id)sender
+{
+    (void)sender;
+    int row = [_bannedIPsTableView selectedRow];
+    if (row < 0 || row >= (int)[_bannedIPs count]) return;
+    [_bannedIPs removeObjectAtIndex:(unsigned)row];
+    [self writeBanListData];
+    [self loadBanListData];
+}
+
+- (void)addUserBan:(id)sender
+{
+    (void)sender;
+    NSString *value = trimmedString([_newBanUserField stringValue]);
+    if ([value length] == 0) return;
+    if (![_bannedUsers containsObject:value]) [_bannedUsers addObject:value];
+    [_newBanUserField setStringValue:@""];
+    [self writeBanListData];
+    [self loadBanListData];
+}
+
+- (void)removeUserBan:(id)sender
+{
+    (void)sender;
+    int row = [_bannedUsersTableView selectedRow];
+    if (row < 0 || row >= (int)[_bannedUsers count]) return;
+    [_bannedUsers removeObjectAtIndex:(unsigned)row];
+    [self writeBanListData];
+    [self loadBanListData];
+}
+
+- (void)addNickBan:(id)sender
+{
+    (void)sender;
+    NSString *value = trimmedString([_newBanNickField stringValue]);
+    if ([value length] == 0) return;
+    if (![_bannedNicks containsObject:value]) [_bannedNicks addObject:value];
+    [_newBanNickField setStringValue:@""];
+    [self writeBanListData];
+    [self loadBanListData];
+}
+
+- (void)removeNickBan:(id)sender
+{
+    (void)sender;
+    int row = [_bannedNicksTableView selectedRow];
+    if (row < 0 || row >= (int)[_bannedNicks count]) return;
+    [_bannedNicks removeObjectAtIndex:(unsigned)row];
+    [self writeBanListData];
+    [self loadBanListData];
+}
+
+- (void)refreshOnlineUsers:(id)sender
+{
+    (void)sender;
+    [self updateOnlineUI];
+}
+
+- (void)banSelectedOnlineUser:(id)sender
+{
+    (void)sender;
+    int row = _onlineTableView ? [_onlineTableView selectedRow] : -1;
+    if (row < 0 || row >= (int)[_onlineUsersItems count]) return;
+
+    NSDictionary *user = [_onlineUsersItems objectAtIndex:(unsigned)row];
+    NSString *ip = [user objectForKey:@"ip"];
+    if (!ip || [ip length] == 0) return;
+
+    if (![_bannedIPs containsObject:ip]) {
+        [_bannedIPs addObject:ip];
+        [_bannedIPs sortUsingSelector:@selector(caseInsensitiveCompare:)];
+        [self writeBanListData];
+        [self loadBanListData];
+    }
+
+    if ([_processManager isRunning]) {
+        [_processManager reloadConfiguration];
+    }
+}
+
+- (void)navigateFilesHome:(id)sender
+{
+    (void)sender;
+    [self loadFilesAtPath:[self resolvedFileRootPath]];
+}
+
+- (void)navigateFilesUp:(id)sender
+{
+    (void)sender;
+    if (!_filesCurrentPath || [_filesCurrentPath length] == 0) {
+        [self navigateFilesHome:nil];
+        return;
+    }
+
+    NSString *root = [self resolvedFileRootPath];
+    NSString *parent = [_filesCurrentPath stringByDeletingLastPathComponent];
+    if (![parent hasPrefix:root] || [parent isEqualToString:@""]) {
+        parent = root;
+    }
+    [self loadFilesAtPath:parent];
+}
+
+- (void)refreshFilesList:(id)sender
+{
+    (void)sender;
+    if (_filesCurrentPath && [_filesCurrentPath length] > 0) {
+        [self loadFilesAtPath:_filesCurrentPath];
+    } else {
+        [self loadFilesAtPath:[self resolvedFileRootPath]];
+    }
+}
+
+- (void)filesTableDoubleClick:(id)sender
+{
+    (void)sender;
+    int row = [_filesTableView clickedRow];
+    if (row < 0 || row >= (int)[_filesItems count]) return;
+    NSDictionary *entry = [_filesItems objectAtIndex:(unsigned)row];
+    NSNumber *isDir = [entry objectForKey:@"isDir"];
+    if ([isDir boolValue]) {
+        [self loadFilesAtPath:[entry objectForKey:@"path"]];
+    }
+}
+
+- (void)newsSegmentChanged:(id)sender
+{
+    (void)sender;
+    BOOL showMessageBoard = ([_newsSegmentedControl selectedSegment] == 0);
+    [_newsMessageBoardView setHidden:!showMessageBoard];
+    [_newsThreadedView setHidden:showMessageBoard];
+}
+
+- (void)saveMessageBoard:(id)sender
+{
+    (void)sender;
+    [self ensureConfigScaffolding];
+    NSString *path = [_configDir stringByAppendingPathComponent:@"MessageBoard.txt"];
+    NSString *text = [_messageBoardTextView string];
+    if (![text writeToFile:path atomically:YES
+                  encoding:NSUTF8StringEncoding error:nil]) {
+        NSRunAlertPanel(@"Unable to Save", @"Could not save MessageBoard.txt.",
+                        @"OK", nil, nil);
+    }
+}
+
+- (void)refreshThreadedNews:(id)sender
+{
+    (void)sender;
+    [self loadThreadedNewsCategories];
+}
+
 - (void)clearLogs:(id)sender
 {
     (void)sender;
@@ -1196,6 +2193,620 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 {
     (void)sender;
     _autoScroll = ([_autoScrollCheckbox state] == NSOnState);
+}
+
+/* ===== Tab data helpers ===== */
+
+- (void)openTextConfigFileNamed:(NSString *)filename title:(NSString *)title
+{
+    [self ensureConfigScaffolding];
+    NSString *path = [_configDir stringByAppendingPathComponent:filename];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (![fm fileExistsAtPath:path]) {
+        [@"" writeToFile:path atomically:YES
+                encoding:NSUTF8StringEncoding error:nil];
+    }
+    if (![[NSWorkspace sharedWorkspace] openFile:path]) {
+        NSString *msg = [NSString stringWithFormat:@"Could not open %@.", title];
+        NSRunAlertPanel(@"Unable to Open File",
+                        @"%@",
+                        @"OK", nil, nil, msg);
+    }
+}
+
+- (void)loadAccountsListData
+{
+    [self ensureConfigScaffolding];
+    [_accountsItems removeAllObjects];
+
+    NSString *usersDir = [_configDir stringByAppendingPathComponent:@"Users"];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *contents = [fm directoryContentsAtPath:usersDir];
+    if (contents) {
+        NSArray *sorted = [contents sortedArrayUsingSelector:
+            @selector(caseInsensitiveCompare:)];
+        unsigned i;
+        for (i = 0; i < [sorted count]; i++) {
+            NSString *name = [sorted objectAtIndex:i];
+            if (![name hasSuffix:@".yaml"]) continue;
+            NSString *login = [name stringByDeletingPathExtension];
+            if ([login length] > 0) [_accountsItems addObject:login];
+        }
+    }
+
+    if (_accountsTableView) [_accountsTableView reloadData];
+    if (_accountsCountLabel) {
+        [_accountsCountLabel setStringValue:
+            [NSString stringWithFormat:@"%u account%@",
+             (unsigned)[_accountsItems count],
+             ([ _accountsItems count] == 1 ? @"" : @"s")]];
+    }
+
+    if (_accountsTableView) {
+        NSUInteger idx = NSNotFound;
+        if (_selectedAccountLogin) {
+            idx = [_accountsItems indexOfObject:_selectedAccountLogin];
+        }
+        if (idx == NSNotFound && [_accountsItems count] > 0) idx = 0;
+
+        if (idx != NSNotFound) {
+            [_accountsTableView selectRow:(int)idx byExtendingSelection:NO];
+            NSDictionary *acct = [self loadAccountDataForLogin:
+                [_accountsItems objectAtIndex:idx]];
+            [self populateAccountEditorFromData:acct];
+        } else {
+            [self populateAccountEditorForNewAccount];
+        }
+    }
+}
+
+- (NSDictionary *)loadAccountDataForLogin:(NSString *)login
+{
+    NSMutableSet *access = [NSMutableSet set];
+    NSString *name = login ? login : @"";
+    NSString *password = @"";
+    NSString *fileRoot = @"";
+    NSString *usersDir = [_configDir stringByAppendingPathComponent:@"Users"];
+    NSString *path = [usersDir stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"%@.yaml", login ? login : @""]];
+
+    NSString *yaml = [NSString stringWithContentsOfFile:path
+                                               encoding:NSUTF8StringEncoding
+                                                  error:nil];
+    if (yaml) {
+        NSArray *lines = [yaml componentsSeparatedByCharactersInSet:
+            [NSCharacterSet newlineCharacterSet]];
+        BOOL inAccess = NO;
+        unsigned i;
+        for (i = 0; i < [lines count]; i++) {
+            NSString *raw = [lines objectAtIndex:i];
+            NSString *line = trimmedString(raw);
+            if ([line length] == 0 || [line hasPrefix:@"#"]) continue;
+
+            if (inAccess) {
+                BOOL indented = [raw hasPrefix:@"  "] || [raw hasPrefix:@"\t"];
+                if (!indented) {
+                    inAccess = NO;
+                } else {
+                    NSRange sep = [line rangeOfString:@":"];
+                    if (sep.location != NSNotFound) {
+                        NSString *k = trimmedString([line substringToIndex:sep.location]);
+                        NSString *v = [[trimmedString([line substringFromIndex:sep.location + 1])
+                            lowercaseString] stringByTrimmingCharactersInSet:
+                            [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                        if ([k length] > 0 &&
+                            ([v isEqualToString:@"true"] || [v isEqualToString:@"yes"] ||
+                             [v isEqualToString:@"1"])) {
+                            [access addObject:k];
+                        }
+                    }
+                    continue;
+                }
+            }
+
+            NSRange sep = [line rangeOfString:@":"];
+            if (sep.location == NSNotFound) continue;
+            NSString *key = trimmedString([line substringToIndex:sep.location]);
+            NSString *val = yamlUnquote([line substringFromIndex:sep.location + 1]);
+
+            if ([key isEqualToString:@"Access"]) {
+                inAccess = YES;
+            } else if ([key isEqualToString:@"Login"]) {
+                if ([val length] > 0) login = val;
+            } else if ([key isEqualToString:@"Name"]) {
+                name = val;
+            } else if ([key isEqualToString:@"Password"]) {
+                password = val;
+            } else if ([key isEqualToString:@"FileRoot"]) {
+                fileRoot = val;
+            }
+        }
+    }
+
+    if ([name length] == 0) name = login ? login : @"";
+    return [NSDictionary dictionaryWithObjectsAndKeys:
+        (login ? login : @""), @"login",
+        name, @"name",
+        password, @"password",
+        fileRoot, @"fileRoot",
+        access, @"access",
+        nil];
+}
+
+- (NSMutableSet *)guestAccessTemplate
+{
+    return [NSMutableSet setWithArray:[NSArray arrayWithObjects:
+        @"DownloadFile", @"ReadChat", @"SendChat", @"GetClientInfo",
+        @"OpenChat", @"NewsReadArt", @"NewsPostArt", nil]];
+}
+
+- (NSMutableSet *)adminAccessTemplate
+{
+    return [NSMutableSet setWithArray:[NSArray arrayWithObjects:
+        @"DownloadFile", @"UploadFile", @"ReadChat", @"SendChat",
+        @"CreateUser", @"DeleteUser", @"OpenUser", @"ModifyUser",
+        @"GetClientInfo", @"DisconnectUser", @"Broadcast", @"CreateFolder",
+        @"DeleteFile", @"OpenChat", @"NewsReadArt", @"NewsPostArt", nil]];
+}
+
+- (void)updateAccountTemplateFromAccessKeys
+{
+    NSMutableSet *guest = [self guestAccessTemplate];
+    NSMutableSet *admin = [self adminAccessTemplate];
+    if ([_accountAccessKeys isEqualToSet:guest]) {
+        [_accountTemplatePopup selectItemAtIndex:1];
+    } else if ([_accountAccessKeys isEqualToSet:admin]) {
+        [_accountTemplatePopup selectItemAtIndex:2];
+    } else {
+        [_accountTemplatePopup selectItemAtIndex:0];
+    }
+}
+
+- (void)populateAccountEditorFromData:(NSDictionary *)acct
+{
+    NSString *login = [acct objectForKey:@"login"];
+    NSString *name = [acct objectForKey:@"name"];
+    NSString *fileRoot = [acct objectForKey:@"fileRoot"];
+    NSString *password = [acct objectForKey:@"password"];
+    NSSet *access = [acct objectForKey:@"access"];
+
+    [_selectedAccountLogin release];
+    _selectedAccountLogin = [login retain];
+    [_selectedAccountPassword release];
+    _selectedAccountPassword = [(password ? password : @"") retain];
+
+    [_accountLoginField setStringValue:(login ? login : @"")];
+    [_accountLoginField setEditable:NO];
+    [_accountNameField setStringValue:(name ? name : @"")];
+    [_accountFileRootField setStringValue:(fileRoot ? fileRoot : @"")];
+    [_accountDeleteButton setEnabled:YES];
+
+    [_accountAccessKeys removeAllObjects];
+    if (access) [_accountAccessKeys unionSet:access];
+    [self updateAccountTemplateFromAccessKeys];
+}
+
+- (void)populateAccountEditorForNewAccount
+{
+    [_selectedAccountLogin release];
+    _selectedAccountLogin = nil;
+    [_selectedAccountPassword release];
+    _selectedAccountPassword = [@"" retain];
+
+    [_accountLoginField setEditable:YES];
+    [_accountLoginField setStringValue:@""];
+    [_accountNameField setStringValue:@""];
+    [_accountFileRootField setStringValue:@""];
+    [_accountDeleteButton setEnabled:NO];
+
+    [_accountAccessKeys removeAllObjects];
+    [_accountAccessKeys unionSet:[self guestAccessTemplate]];
+    [_accountTemplatePopup selectItemAtIndex:1];
+}
+
+- (void)loadBanListData
+{
+    [self ensureConfigScaffolding];
+    [_bannedIPs removeAllObjects];
+    [_bannedUsers removeAllObjects];
+    [_bannedNicks removeAllObjects];
+
+    NSString *path = [_configDir stringByAppendingPathComponent:@"Banlist.yaml"];
+    NSString *yaml = [NSString stringWithContentsOfFile:path
+                                               encoding:NSUTF8StringEncoding
+                                                  error:nil];
+    if (yaml) {
+        NSArray *lines = [yaml componentsSeparatedByCharactersInSet:
+            [NSCharacterSet newlineCharacterSet]];
+        int section = 0; /* 1 ip, 2 user, 3 nick */
+        unsigned i;
+        for (i = 0; i < [lines count]; i++) {
+            NSString *raw = [lines objectAtIndex:i];
+            NSString *line = trimmedString(raw);
+            if ([line length] == 0 || [line hasPrefix:@"#"]) continue;
+
+            if ([line isEqualToString:@"banList:"]) {
+                section = 1; continue;
+            }
+            if ([line isEqualToString:@"bannedUsers:"]) {
+                section = 2; continue;
+            }
+            if ([line isEqualToString:@"bannedNicks:"]) {
+                section = 3; continue;
+            }
+
+            BOOL indented = [raw hasPrefix:@"  "] || [raw hasPrefix:@"\t"];
+            if (!indented || section == 0) continue;
+
+            NSRange sep = [line rangeOfString:@":"];
+            if (sep.location == NSNotFound) continue;
+            NSString *key = trimmedString([line substringToIndex:sep.location]);
+            if ([key length] == 0) continue;
+
+            if (section == 1 && ![_bannedIPs containsObject:key]) {
+                [_bannedIPs addObject:key];
+            } else if (section == 2 && ![_bannedUsers containsObject:key]) {
+                [_bannedUsers addObject:key];
+            } else if (section == 3 && ![_bannedNicks containsObject:key]) {
+                [_bannedNicks addObject:key];
+            }
+        }
+    }
+
+    [_bannedIPs sortUsingSelector:@selector(caseInsensitiveCompare:)];
+    [_bannedUsers sortUsingSelector:@selector(caseInsensitiveCompare:)];
+    [_bannedNicks sortUsingSelector:@selector(caseInsensitiveCompare:)];
+
+    if (_bannedIPsTableView) [_bannedIPsTableView reloadData];
+    if (_bannedUsersTableView) [_bannedUsersTableView reloadData];
+    if (_bannedNicksTableView) [_bannedNicksTableView reloadData];
+}
+
+- (void)writeBanListData
+{
+    [self ensureConfigScaffolding];
+    NSString *path = [_configDir stringByAppendingPathComponent:@"Banlist.yaml"];
+    NSMutableString *yaml = [NSMutableString string];
+    unsigned i;
+
+    [yaml appendString:@"banList:\n"];
+    for (i = 0; i < [_bannedIPs count]; i++) {
+        [yaml appendFormat:@"  %@: ~\n", [_bannedIPs objectAtIndex:i]];
+    }
+    [yaml appendString:@"bannedUsers:\n"];
+    for (i = 0; i < [_bannedUsers count]; i++) {
+        [yaml appendFormat:@"  %@: true\n", [_bannedUsers objectAtIndex:i]];
+    }
+    [yaml appendString:@"bannedNicks:\n"];
+    for (i = 0; i < [_bannedNicks count]; i++) {
+        [yaml appendFormat:@"  %@: true\n", [_bannedNicks objectAtIndex:i]];
+    }
+
+    [yaml writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
+- (void)processOnlineLogLine:(NSString *)text
+{
+    if (!text || [text length] == 0) return;
+
+    if ([text rangeOfString:@"Server started"].location != NSNotFound ||
+        [text rangeOfString:@"Server shutting down"].location != NSNotFound) {
+        [_onlineUsersByID removeAllObjects];
+        [self updateOnlineUI];
+        return;
+    }
+
+    NSRange loginRange = [text rangeOfString:@"Login: "];
+    if (loginRange.location != NSNotFound) {
+        NSUInteger remoteStart = loginRange.location + [@"Login: " length];
+        NSRange asRange = [text rangeOfString:@" as \""
+                                      options:0
+                                        range:NSMakeRange(remoteStart,
+                                            [text length] - remoteStart)];
+        if (asRange.location != NSNotFound) {
+            NSString *remote = [text substringWithRange:
+                NSMakeRange(remoteStart, asRange.location - remoteStart)];
+
+            NSUInteger nameStart = asRange.location + [@" as \"" length];
+            NSRange nameEnd = [text rangeOfString:@"\" (id="
+                                             options:0
+                                               range:NSMakeRange(nameStart,
+                                                   [text length] - nameStart)];
+            if (nameEnd.location != NSNotFound) {
+                NSString *login = [text substringWithRange:
+                    NSMakeRange(nameStart, nameEnd.location - nameStart)];
+                NSUInteger idStart = nameEnd.location + [@"\" (id=" length];
+                NSRange idEnd = [text rangeOfString:@")"
+                                           options:0
+                                             range:NSMakeRange(idStart,
+                                                 [text length] - idStart)];
+                if (idEnd.location != NSNotFound) {
+                    NSString *idStr = [text substringWithRange:
+                        NSMakeRange(idStart, idEnd.location - idStart)];
+                    int userID = [idStr intValue];
+                    if (userID > 0) {
+                        NSString *ip = remote;
+                        NSRange portSep = [remote rangeOfString:@":"
+                                                         options:NSBackwardsSearch];
+                        if (portSep.location != NSNotFound) {
+                            ip = [remote substringToIndex:portSep.location];
+                        }
+
+                        NSMutableDictionary *user =
+                            [NSMutableDictionary dictionaryWithObjectsAndKeys:
+                                [NSNumber numberWithInt:userID], @"id",
+                                (login ? login : @""), @"login",
+                                (ip ? ip : @""), @"ip",
+                                [NSDate date], @"lastSeen",
+                                nil];
+                        [_onlineUsersByID setObject:user
+                                            forKey:[NSString stringWithFormat:@"%d", userID]];
+                        if ((int)[_onlineUsersByID count] > _onlinePeakConnections) {
+                            _onlinePeakConnections = (int)[_onlineUsersByID count];
+                        }
+                        [self updateOnlineUI];
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    NSRange disRange = [text rangeOfString:@"Client disconnected: "];
+    if (disRange.location != NSNotFound) {
+        NSUInteger idStart = NSNotFound;
+        NSRange idMarker = [text rangeOfString:@"(id="];
+        if (idMarker.location != NSNotFound) {
+            idStart = idMarker.location + [@"(id=" length];
+        }
+        if (idStart != NSNotFound) {
+            NSRange idEnd = [text rangeOfString:@")"
+                                       options:0
+                                         range:NSMakeRange(idStart,
+                                             [text length] - idStart)];
+            if (idEnd.location != NSNotFound) {
+                NSString *idStr = [text substringWithRange:
+                    NSMakeRange(idStart, idEnd.location - idStart)];
+                int userID = [idStr intValue];
+                if (userID > 0) {
+                    [_onlineUsersByID removeObjectForKey:
+                        [NSString stringWithFormat:@"%d", userID]];
+                    [self updateOnlineUI];
+                }
+            }
+        }
+    }
+}
+
+- (void)updateOnlineUI
+{
+    if (!_onlineTableView) return;
+
+    [_onlineUsersItems removeAllObjects];
+    NSArray *vals = [_onlineUsersByID allValues];
+    NSArray *sorted = [vals sortedArrayUsingFunction:compareOnlineUserByID
+                                             context:NULL];
+    [_onlineUsersItems addObjectsFromArray:sorted];
+
+    [_onlineTableView reloadData];
+
+    NSString *status = [NSString stringWithFormat:
+        @"Connected: %u  Peak: %d",
+        (unsigned)[_onlineUsersItems count], _onlinePeakConnections];
+    [_onlineStatusLabel setStringValue:status];
+
+    int sel = [_onlineTableView selectedRow];
+    [_onlineBanButton setEnabled:(sel >= 0 && sel < (int)[_onlineUsersItems count])];
+}
+
+- (NSString *)resolvedFileRootPath
+{
+    NSString *root = @"";
+    if (_fileRootField) root = trimmedString([_fileRootField stringValue]);
+    if (!root || [root length] == 0) root = @"Files";
+    if ([root hasPrefix:@"/"]) return root;
+    return [_configDir stringByAppendingPathComponent:root];
+}
+
+- (void)loadFilesAtPath:(NSString *)path
+{
+    if (!path || [path length] == 0) path = [self resolvedFileRootPath];
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:path isDirectory:&isDir] || !isDir) {
+        [_filesItems removeAllObjects];
+        if (_filesTableView) [_filesTableView reloadData];
+        if (_filesPathLabel) [_filesPathLabel setStringValue:@"File root not found"];
+        return;
+    }
+
+    [path retain];
+    [_filesCurrentPath release];
+    _filesCurrentPath = path;
+
+    if (_filesPathLabel) [_filesPathLabel setStringValue:_filesCurrentPath];
+
+    [_filesItems removeAllObjects];
+    NSArray *contents = [fm directoryContentsAtPath:_filesCurrentPath];
+    NSArray *sorted = contents ? [contents sortedArrayUsingSelector:
+        @selector(caseInsensitiveCompare:)] : [NSArray array];
+    NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+    [fmt setDateFormat:@"yyyy-MM-dd HH:mm"];
+
+    unsigned i;
+    for (i = 0; i < [sorted count]; i++) {
+        NSString *name = [sorted objectAtIndex:i];
+        if ([name hasPrefix:@"."]) continue;
+
+        NSString *fullPath = [_filesCurrentPath stringByAppendingPathComponent:name];
+        BOOL entryIsDir = NO;
+        if (![fm fileExistsAtPath:fullPath isDirectory:&entryIsDir]) continue;
+
+        NSDictionary *attrs = [fm fileAttributesAtPath:fullPath traverseLink:YES];
+        NSString *sizeText = entryIsDir ? @"—" : @"";
+        NSString *dateText = @"";
+
+        if (!entryIsDir && attrs) {
+            NSNumber *sizeNum = [attrs objectForKey:NSFileSize];
+            if (sizeNum) sizeText = humanFileSize([sizeNum unsignedLongLongValue]);
+        }
+        if (attrs) {
+            NSDate *modDate = [attrs objectForKey:NSFileModificationDate];
+            if (modDate) dateText = [fmt stringFromDate:modDate];
+        }
+
+        NSDictionary *item = [NSDictionary dictionaryWithObjectsAndKeys:
+            name, @"name",
+            fullPath, @"path",
+            [NSNumber numberWithBool:entryIsDir], @"isDir",
+            sizeText, @"size",
+            dateText, @"modified",
+            nil];
+        [_filesItems addObject:item];
+    }
+    [fmt release];
+
+    if (_filesTableView) [_filesTableView reloadData];
+}
+
+- (void)loadMessageBoardText
+{
+    if (!_messageBoardTextView) return;
+    [self ensureConfigScaffolding];
+    NSString *path = [_configDir stringByAppendingPathComponent:@"MessageBoard.txt"];
+    NSString *text = [NSString stringWithContentsOfFile:path
+                                               encoding:NSUTF8StringEncoding
+                                                  error:nil];
+    if (!text) text = @"";
+    [_messageBoardTextView setString:text];
+}
+
+- (void)loadThreadedNewsCategories
+{
+    [self ensureConfigScaffolding];
+    [_newsCategoryItems removeAllObjects];
+
+    NSString *path = [_configDir stringByAppendingPathComponent:@"ThreadedNews.yaml"];
+    NSString *yaml = [NSString stringWithContentsOfFile:path
+                                               encoding:NSUTF8StringEncoding
+                                                  error:nil];
+    if (yaml) {
+        NSArray *lines = [yaml componentsSeparatedByCharactersInSet:
+            [NSCharacterSet newlineCharacterSet]];
+        unsigned i;
+        for (i = 0; i < [lines count]; i++) {
+            NSString *line = trimmedString([lines objectAtIndex:i]);
+            if (![line hasPrefix:@"Name:"]) continue;
+            NSRange sep = [line rangeOfString:@":"];
+            if (sep.location == NSNotFound) continue;
+            NSString *name = yamlUnquote([line substringFromIndex:sep.location + 1]);
+            if ([name length] == 0) continue;
+            if (![_newsCategoryItems containsObject:name]) {
+                [_newsCategoryItems addObject:name];
+            }
+        }
+    }
+
+    if ([_newsCategoryItems count] == 0) {
+        [_newsCategoryItems addObject:@"(No categories found)"];
+    }
+    if (_newsCategoriesTableView) [_newsCategoriesTableView reloadData];
+}
+
+/* ===== NSTableView datasource ===== */
+
+- (int)numberOfRowsInTableView:(NSTableView *)tableView
+{
+    if (tableView == _accountsTableView) return (int)[_accountsItems count];
+    if (tableView == _onlineTableView) return (int)[_onlineUsersItems count];
+    if (tableView == _bannedIPsTableView) return (int)[_bannedIPs count];
+    if (tableView == _bannedUsersTableView) return (int)[_bannedUsers count];
+    if (tableView == _bannedNicksTableView) return (int)[_bannedNicks count];
+    if (tableView == _filesTableView) return (int)[_filesItems count];
+    if (tableView == _newsCategoriesTableView) return (int)[_newsCategoryItems count];
+    return 0;
+}
+
+- (id)tableView:(NSTableView *)tableView
+objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
+{
+    if (tableView == _accountsTableView) {
+        if (row < 0 || row >= (int)[_accountsItems count]) return @"";
+        return [_accountsItems objectAtIndex:(unsigned)row];
+    }
+
+    if (tableView == _filesTableView) {
+        if (row < 0 || row >= (int)[_filesItems count]) return @"";
+        NSDictionary *item = [_filesItems objectAtIndex:(unsigned)row];
+        NSString *cid = [tableColumn identifier];
+        id value = [item objectForKey:cid];
+        return value ? value : @"";
+    }
+
+    if (tableView == _onlineTableView) {
+        if (row < 0 || row >= (int)[_onlineUsersItems count]) return @"";
+        NSDictionary *item = [_onlineUsersItems objectAtIndex:(unsigned)row];
+        NSString *cid = [tableColumn identifier];
+        if ([cid isEqualToString:@"online_login"]) {
+            return [item objectForKey:@"login"];
+        } else if ([cid isEqualToString:@"online_ip"]) {
+            return [item objectForKey:@"ip"];
+        } else if ([cid isEqualToString:@"online_id"]) {
+            return [NSString stringWithFormat:@"%d",
+                [[item objectForKey:@"id"] intValue]];
+        } else if ([cid isEqualToString:@"online_seen"]) {
+            NSDate *d = [item objectForKey:@"lastSeen"];
+            NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+            [fmt setDateFormat:@"HH:mm:ss"];
+            NSString *s = d ? [fmt stringFromDate:d] : @"";
+            [fmt release];
+            return s;
+        }
+        return @"";
+    }
+
+    if (tableView == _bannedIPsTableView) {
+        if (row < 0 || row >= (int)[_bannedIPs count]) return @"";
+        return [_bannedIPs objectAtIndex:(unsigned)row];
+    }
+
+    if (tableView == _bannedUsersTableView) {
+        if (row < 0 || row >= (int)[_bannedUsers count]) return @"";
+        return [_bannedUsers objectAtIndex:(unsigned)row];
+    }
+
+    if (tableView == _bannedNicksTableView) {
+        if (row < 0 || row >= (int)[_bannedNicks count]) return @"";
+        return [_bannedNicks objectAtIndex:(unsigned)row];
+    }
+
+    if (tableView == _newsCategoriesTableView) {
+        if (row < 0 || row >= (int)[_newsCategoryItems count]) return @"";
+        return [_newsCategoryItems objectAtIndex:(unsigned)row];
+    }
+    return @"";
+}
+
+- (void)tableViewSelectionDidChange:(NSNotification *)note
+{
+    NSTableView *tv = [note object];
+    if (tv == _onlineTableView) {
+        int sel = [_onlineTableView selectedRow];
+        [_onlineBanButton setEnabled:(sel >= 0 && sel < (int)[_onlineUsersItems count])];
+        return;
+    }
+    if (tv != _accountsTableView) return;
+
+    int row = [_accountsTableView selectedRow];
+    if (row < 0 || row >= (int)[_accountsItems count]) {
+        [self populateAccountEditorForNewAccount];
+        return;
+    }
+
+    NSString *login = [_accountsItems objectAtIndex:(unsigned)row];
+    NSDictionary *acct = [self loadAccountDataForLogin:login];
+    [self populateAccountEditorFromData:acct];
 }
 
 /* ===== Notifications ===== */
@@ -1232,6 +2843,8 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [[_logTextView textStorage] appendAttributedString:as];
     [as release];
 
+    [self processOnlineLogLine:text];
+
     if (_autoScroll)
         [_logTextView scrollRangeToVisible:
             NSMakeRange([[_logTextView string] length], 0)];
@@ -1243,6 +2856,11 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 {
     BOOL running = [_processManager isRunning];
     ServerStatus st = [_processManager status];
+
+    if (!running && [_onlineUsersByID count] > 0) {
+        [_onlineUsersByID removeAllObjects];
+        [self updateOnlineUI];
+    }
 
     switch (st) {
         case ServerStatusStopped:
@@ -1286,6 +2904,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_startButton setEnabled:!running];
     [_stopButton setEnabled:running];
     [_restartButton setEnabled:[_processManager hasBinary]];
+    if (_reloadButton) [_reloadButton setEnabled:running];
 
     [_footerStatusLabel setStringValue:[_processManager statusLabel]];
     [_footerStatusLabel sizeToFit];
@@ -1307,6 +2926,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     if (action == @selector(startServer:)) return !running;
     if (action == @selector(stopServer:)) return running;
     if (action == @selector(restartServer:)) return [_processManager hasBinary];
+    if (action == @selector(reloadServerConfig:)) return running;
     return YES;
 }
 

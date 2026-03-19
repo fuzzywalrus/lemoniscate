@@ -13,6 +13,7 @@
 #include "hotline/handshake.h"
 #include "hotline/field.h"
 #include "hotline/user.h"
+#include "hotline/password.h"
 #include "hotline/transfer.h"
 #include "hotline/file_transfer.h"
 #include "hotline/flattened_file_object.h"
@@ -612,9 +613,7 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
                 hl_field_decode_obfuscated_string(f_password, password_str,
                                                    sizeof(password_str));
             }
-            /* TODO: bcrypt comparison when bcrypt library is integrated.
-             * For now, compare plaintext password. */
-            if (strcmp(password_str, acct->password) != 0) {
+            if (!hl_password_verify(password_str, acct->password)) {
                 hl_log_info(srv->logger, "Login failed (bad password): %s from %s",
                             login_str, ip_str);
                 hl_transaction_t err_reply;
