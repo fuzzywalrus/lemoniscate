@@ -188,6 +188,26 @@ static NSString *yamlQuoted(NSString *s)
     return [NSString stringWithFormat:@"\"%@\"", m];
 }
 
+static void parseInlineYAMLArray(NSString *value, NSMutableArray *outItems)
+{
+    if (!value || !outItems) return;
+    NSString *v = trimmedString(value);
+    if (![v hasPrefix:@"["] || ![v hasSuffix:@"]"]) return;
+    if ([v length] < 2) return;
+
+    NSString *inner = trimmedString([v substringWithRange:
+        NSMakeRange(1, [v length] - 2)]);
+    if ([inner length] == 0) return;
+
+    NSArray *parts = [inner componentsSeparatedByString:@","];
+    unsigned i;
+    for (i = 0; i < [parts count]; i++) {
+        NSString *item = yamlUnquote(trimmedString([parts objectAtIndex:i]));
+        if ([item length] == 0) continue;
+        if (![outItems containsObject:item]) [outItems addObject:item];
+    }
+}
+
 static NSString *humanFileSize(unsigned long long size)
 {
     double value = (double)size;
@@ -254,6 +274,8 @@ static NSString *humanFileSize(unsigned long long size)
         _autoScroll = YES;
         _accountsItems = [[NSMutableArray alloc] init];
         _accountAccessKeys = [[NSMutableSet alloc] init];
+        _trackerItems = [[NSMutableArray alloc] init];
+        _ignoreFileItems = [[NSMutableArray alloc] init];
         _bannedIPs = [[NSMutableArray alloc] init];
         _bannedUsers = [[NSMutableArray alloc] init];
         _bannedNicks = [[NSMutableArray alloc] init];
@@ -327,6 +349,8 @@ static NSString *humanFileSize(unsigned long long size)
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_accountsItems release];
     [_accountAccessKeys release];
+    [_trackerItems release];
+    [_ignoreFileItems release];
     [_bannedIPs release];
     [_bannedUsers release];
     [_bannedNicks release];
@@ -416,12 +440,35 @@ static NSString *humanFileSize(unsigned long long size)
                                                    error:nil];
     if (!yaml || [yaml length] == 0) return;
 
+    [_trackerItems removeAllObjects];
+    [_ignoreFileItems removeAllObjects];
     NSArray *lines = [yaml componentsSeparatedByCharactersInSet:
         [NSCharacterSet newlineCharacterSet]];
+    BOOL inTrackersList = NO;
+    BOOL inIgnoreFilesList = NO;
     unsigned i;
     for (i = 0; i < [lines count]; i++) {
-        NSString *line = trimmedString([lines objectAtIndex:i]);
+        NSString *rawLine = [lines objectAtIndex:i];
+        NSString *line = trimmedString(rawLine);
         if ([line length] == 0 || [line hasPrefix:@"#"]) continue;
+
+        if (inTrackersList || inIgnoreFilesList) {
+            BOOL isListItem = [rawLine hasPrefix:@"  -"] || [rawLine hasPrefix:@"\t-"];
+            if (isListItem) {
+                NSString *item = trimmedString([line substringFromIndex:1]);
+                item = yamlUnquote(item);
+                if ([item length] > 0) {
+                    if (inTrackersList && ![_trackerItems containsObject:item]) {
+                        [_trackerItems addObject:item];
+                    } else if (inIgnoreFilesList && ![_ignoreFileItems containsObject:item]) {
+                        [_ignoreFileItems addObject:item];
+                    }
+                }
+                continue;
+            }
+            inTrackersList = NO;
+            inIgnoreFilesList = NO;
+        }
 
         NSRange sep = [line rangeOfString:@":"];
         if (sep.location == NSNotFound) continue;
@@ -451,6 +498,20 @@ static NSString *humanFileSize(unsigned long long size)
             if (_trackerCheckbox) {
                 [_trackerCheckbox setState:yamlBoolValue(val) ? NSOnState : NSOffState];
             }
+        } else if ([key isEqualToString:@"Trackers"]) {
+            NSString *rawVal = trimmedString([line substringFromIndex:sep.location + 1]);
+            if ([rawVal length] == 0) {
+                inTrackersList = YES;
+            } else if (![rawVal isEqualToString:@"[]"]) {
+                parseInlineYAMLArray(rawVal, _trackerItems);
+            }
+        } else if ([key isEqualToString:@"IgnoreFiles"]) {
+            NSString *rawVal = trimmedString([line substringFromIndex:sep.location + 1]);
+            if ([rawVal length] == 0) {
+                inIgnoreFilesList = YES;
+            } else if (![rawVal isEqualToString:@"[]"]) {
+                parseInlineYAMLArray(rawVal, _ignoreFileItems);
+            }
         } else if ([key isEqualToString:@"PreserveResourceForks"]) {
             if (_preserveForkCheckbox) {
                 [_preserveForkCheckbox setState:yamlBoolValue(val) ? NSOnState : NSOffState];
@@ -468,6 +529,14 @@ static NSString *humanFileSize(unsigned long long size)
     if (_accountsTableView) [self refreshAccountsList:nil];
     if (_bannedIPsTableView || _bannedUsersTableView || _bannedNicksTableView)
         [self loadBanListData];
+    if (_trackerTableView) {
+        [_trackerTableView reloadData];
+        if (_removeTrackerButton) [_removeTrackerButton setEnabled:NO];
+    }
+    if (_ignoreFilesTableView) {
+        [_ignoreFilesTableView reloadData];
+        if (_removeIgnoreFileButton) [_removeIgnoreFileButton setEnabled:NO];
+    }
     if (_messageBoardTextView) [self loadMessageBoardText];
     if (_newsCategoriesTableView) [self refreshThreadedNews:nil];
 }
@@ -501,21 +570,44 @@ static NSString *humanFileSize(unsigned long long size)
     NSString *qBanner = [banner stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
     NSString *qRoot = [fileRoot stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
 
-    NSString *yaml = [NSString stringWithFormat:
+    NSMutableString *yaml = [NSMutableString stringWithFormat:
         @"Name: \"%@\"\n"
         @"Description: \"%@\"\n"
         @"BannerFile: \"%@\"\n"
         @"FileRoot: \"%@\"\n"
-        @"EnableTrackerRegistration: %@\n"
-        @"Trackers: []\n"
+        @"EnableTrackerRegistration: %@\n",
+        qName, qDesc, qBanner, qRoot,
+        enableTracker ? @"true" : @"false"];
+
+    if ([_trackerItems count] == 0) {
+        [yaml appendString:@"Trackers: []\n"];
+    } else {
+        unsigned i;
+        [yaml appendString:@"Trackers:\n"];
+        for (i = 0; i < [_trackerItems count]; i++) {
+            NSString *tracker = [_trackerItems objectAtIndex:i];
+            [yaml appendFormat:@"  - %@\n", yamlQuoted(tracker)];
+        }
+    }
+
+    if ([_ignoreFileItems count] == 0) {
+        [yaml appendString:@"IgnoreFiles: []\n"];
+    } else {
+        unsigned i;
+        [yaml appendString:@"IgnoreFiles:\n"];
+        for (i = 0; i < [_ignoreFileItems count]; i++) {
+            NSString *pattern = [_ignoreFileItems objectAtIndex:i];
+            [yaml appendFormat:@"  - %@\n", yamlQuoted(pattern)];
+        }
+    }
+
+    [yaml appendFormat:
         @"EnableBonjour: %@\n"
         @"Encoding: macintosh\n"
         @"MaxDownloads: %d\n"
         @"MaxDownloadsPerClient: %d\n"
         @"MaxConnectionsPerIP: %d\n"
         @"PreserveResourceForks: %@\n",
-        qName, qDesc, qBanner, qRoot,
-        enableTracker ? @"true" : @"false",
         enableBonjour ? @"true" : @"false",
         maxDownloads, maxDLPerClient, maxConnPerIP,
         preserveForks ? @"true" : @"false"];
@@ -942,7 +1034,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     /* ===== Tracker Registration ===== */
     {
-        float boxH = ROW_HEIGHT + 16;
+        float boxH = 154;
         NSBox *box = makeSection(@"Tracker Registration", SECTION_MARGIN, y,
                                   secWidth, boxH);
         NSView *c = [box contentView];
@@ -955,6 +1047,38 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_trackerCheckbox setState:NSOffState];
         iy = addCheckbox(c, _trackerCheckbox, iy);
 
+        NSScrollView *tsv = [[NSScrollView alloc]
+            initWithFrame:NSMakeRect(LABEL_WIDTH - 4, iy + 2,
+                                     fieldWidth - ROW_RIGHT_PAD, 78)];
+        [tsv setHasVerticalScroller:YES];
+        [tsv setBorderType:NSBezelBorder];
+        _trackerTableView = [[NSTableView alloc]
+            initWithFrame:NSMakeRect(0, 0, fieldWidth - ROW_RIGHT_PAD, 78)];
+        NSTableColumn *tcol = [[NSTableColumn alloc] initWithIdentifier:@"tracker"];
+        [[tcol headerCell] setStringValue:@"Trackers"];
+        [tcol setWidth:fieldWidth - ROW_RIGHT_PAD - 20];
+        [_trackerTableView addTableColumn:tcol];
+        [tcol release];
+        [_trackerTableView setDataSource:(id)self];
+        [_trackerTableView setDelegate:(id)self];
+        [_trackerTableView setAllowsMultipleSelection:NO];
+        [tsv setDocumentView:_trackerTableView];
+        [c addSubview:tsv];
+        [tsv release];
+
+        _newTrackerField = makeEditField(248);
+        [_newTrackerField setFrame:NSMakeRect(LABEL_WIDTH - 4, iy + 84, 248, 22)];
+        [c addSubview:_newTrackerField];
+
+        _addTrackerButton = makeButton(@"Add", self, @selector(addTracker:));
+        [_addTrackerButton setFrame:NSMakeRect(LABEL_WIDTH + 248, iy + 84, 50, 22)];
+        [c addSubview:_addTrackerButton];
+
+        _removeTrackerButton = makeButton(@"Remove", self, @selector(removeTracker:));
+        [_removeTrackerButton setFrame:NSMakeRect(LABEL_WIDTH + 302, iy + 84, 70, 22)];
+        [_removeTrackerButton setEnabled:NO];
+        [c addSubview:_removeTrackerButton];
+
         [doc addSubview:box];
         [box release];
         y += boxH + 8;
@@ -962,7 +1086,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     /* ===== Files ===== */
     {
-        float boxH = ROW_HEIGHT + 16;
+        float boxH = 154;
         NSBox *box = makeSection(@"Files", SECTION_MARGIN, y,
                                   secWidth, boxH);
         NSView *c = [box contentView];
@@ -974,6 +1098,38 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_preserveForkCheckbox setTitle:@"Preserve Resource Forks"];
         [_preserveForkCheckbox setState:NSOffState];
         iy = addCheckbox(c, _preserveForkCheckbox, iy);
+
+        NSScrollView *isv = [[NSScrollView alloc]
+            initWithFrame:NSMakeRect(LABEL_WIDTH - 4, iy + 2,
+                                     fieldWidth - ROW_RIGHT_PAD, 78)];
+        [isv setHasVerticalScroller:YES];
+        [isv setBorderType:NSBezelBorder];
+        _ignoreFilesTableView = [[NSTableView alloc]
+            initWithFrame:NSMakeRect(0, 0, fieldWidth - ROW_RIGHT_PAD, 78)];
+        NSTableColumn *icol = [[NSTableColumn alloc] initWithIdentifier:@"ignore_pattern"];
+        [[icol headerCell] setStringValue:@"Ignore Patterns"];
+        [icol setWidth:fieldWidth - ROW_RIGHT_PAD - 20];
+        [_ignoreFilesTableView addTableColumn:icol];
+        [icol release];
+        [_ignoreFilesTableView setDataSource:(id)self];
+        [_ignoreFilesTableView setDelegate:(id)self];
+        [_ignoreFilesTableView setAllowsMultipleSelection:NO];
+        [isv setDocumentView:_ignoreFilesTableView];
+        [c addSubview:isv];
+        [isv release];
+
+        _newIgnoreFileField = makeEditField(248);
+        [_newIgnoreFileField setFrame:NSMakeRect(LABEL_WIDTH - 4, iy + 84, 248, 22)];
+        [c addSubview:_newIgnoreFileField];
+
+        _addIgnoreFileButton = makeButton(@"Add", self, @selector(addIgnoreFilePattern:));
+        [_addIgnoreFileButton setFrame:NSMakeRect(LABEL_WIDTH + 248, iy + 84, 50, 22)];
+        [c addSubview:_addIgnoreFileButton];
+
+        _removeIgnoreFileButton = makeButton(@"Remove", self, @selector(removeIgnoreFilePattern:));
+        [_removeIgnoreFileButton setFrame:NSMakeRect(LABEL_WIDTH + 302, iy + 84, 70, 22)];
+        [_removeIgnoreFileButton setEnabled:NO];
+        [c addSubview:_removeIgnoreFileButton];
 
         [doc addSubview:box];
         [box release];
@@ -1990,6 +2146,52 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 {
     (void)sender;
     [self openTextConfigFileNamed:@"MessageBoard.txt" title:@"Message Board"];
+}
+
+- (void)addTracker:(id)sender
+{
+    (void)sender;
+    NSString *tracker = trimmedString([_newTrackerField stringValue]);
+    if ([tracker length] == 0) return;
+    if (![_trackerItems containsObject:tracker]) {
+        [_trackerItems addObject:tracker];
+        if (_trackerTableView) [_trackerTableView reloadData];
+        [self writeConfigToDisk];
+    }
+    [_newTrackerField setStringValue:@""];
+}
+
+- (void)removeTracker:(id)sender
+{
+    (void)sender;
+    int row = _trackerTableView ? [_trackerTableView selectedRow] : -1;
+    if (row < 0 || row >= (int)[_trackerItems count]) return;
+    [_trackerItems removeObjectAtIndex:(unsigned)row];
+    if (_trackerTableView) [_trackerTableView reloadData];
+    [self writeConfigToDisk];
+}
+
+- (void)addIgnoreFilePattern:(id)sender
+{
+    (void)sender;
+    NSString *pattern = trimmedString([_newIgnoreFileField stringValue]);
+    if ([pattern length] == 0) return;
+    if (![_ignoreFileItems containsObject:pattern]) {
+        [_ignoreFileItems addObject:pattern];
+        if (_ignoreFilesTableView) [_ignoreFilesTableView reloadData];
+        [self writeConfigToDisk];
+    }
+    [_newIgnoreFileField setStringValue:@""];
+}
+
+- (void)removeIgnoreFilePattern:(id)sender
+{
+    (void)sender;
+    int row = _ignoreFilesTableView ? [_ignoreFilesTableView selectedRow] : -1;
+    if (row < 0 || row >= (int)[_ignoreFileItems count]) return;
+    [_ignoreFileItems removeObjectAtIndex:(unsigned)row];
+    if (_ignoreFilesTableView) [_ignoreFilesTableView reloadData];
+    [self writeConfigToDisk];
 }
 
 - (void)reloadServerConfig:(id)sender
@@ -3098,6 +3300,8 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 - (int)numberOfRowsInTableView:(NSTableView *)tableView
 {
     if (tableView == _accountsTableView) return (int)[_accountsItems count];
+    if (tableView == _trackerTableView) return (int)[_trackerItems count];
+    if (tableView == _ignoreFilesTableView) return (int)[_ignoreFileItems count];
     if (tableView == _onlineTableView) return (int)[_onlineUsersItems count];
     if (tableView == _bannedIPsTableView) return (int)[_bannedIPs count];
     if (tableView == _bannedUsersTableView) return (int)[_bannedUsers count];
@@ -3114,6 +3318,14 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
     if (tableView == _accountsTableView) {
         if (row < 0 || row >= (int)[_accountsItems count]) return @"";
         return [_accountsItems objectAtIndex:(unsigned)row];
+    }
+    if (tableView == _trackerTableView) {
+        if (row < 0 || row >= (int)[_trackerItems count]) return @"";
+        return [_trackerItems objectAtIndex:(unsigned)row];
+    }
+    if (tableView == _ignoreFilesTableView) {
+        if (row < 0 || row >= (int)[_ignoreFileItems count]) return @"";
+        return [_ignoreFileItems objectAtIndex:(unsigned)row];
     }
 
     if (tableView == _filesTableView) {
@@ -3184,6 +3396,20 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
     if (tv == _onlineTableView) {
         int sel = [_onlineTableView selectedRow];
         [_onlineBanButton setEnabled:(sel >= 0 && sel < (int)[_onlineUsersItems count])];
+        return;
+    }
+    if (tv == _trackerTableView) {
+        int sel = [_trackerTableView selectedRow];
+        if (_removeTrackerButton) {
+            [_removeTrackerButton setEnabled:(sel >= 0 && sel < (int)[_trackerItems count])];
+        }
+        return;
+    }
+    if (tv == _ignoreFilesTableView) {
+        int sel = [_ignoreFilesTableView selectedRow];
+        if (_removeIgnoreFileButton) {
+            [_removeIgnoreFileButton setEnabled:(sel >= 0 && sel < (int)[_ignoreFileItems count])];
+        }
         return;
     }
     if (tv == _newsCategoriesTableView) {

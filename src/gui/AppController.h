@@ -50,9 +50,19 @@
 
     /* Tracker section */
     NSButton *_trackerCheckbox;
+    NSTableView *_trackerTableView;
+    NSMutableArray *_trackerItems;
+    NSTextField *_newTrackerField;
+    NSButton *_addTrackerButton;
+    NSButton *_removeTrackerButton;
 
     /* Files section */
     NSButton *_preserveForkCheckbox;
+    NSTableView *_ignoreFilesTableView;
+    NSMutableArray *_ignoreFileItems;
+    NSTextField *_newIgnoreFileField;
+    NSButton *_addIgnoreFileButton;
+    NSButton *_removeIgnoreFileButton;
 
     /* Limits section */
     NSTextField *_maxDownloadsField;
@@ -167,6 +177,10 @@
 - (void)chooseBannerFile:(id)sender;
 - (void)editAgreementFile:(id)sender;
 - (void)editMessageBoardFile:(id)sender;
+- (void)addTracker:(id)sender;
+- (void)removeTracker:(id)sender;
+- (void)addIgnoreFilePattern:(id)sender;
+- (void)removeIgnoreFilePattern:(id)sender;
 - (void)saveSettings:(id)sender;
 - (void)clearLogs:(id)sender;
 - (void)refreshAccountsList:(id)sender;
