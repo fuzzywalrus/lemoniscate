@@ -69,6 +69,10 @@
     NSTextField *_maxDLPerClientField;
     NSTextField *_maxConnPerIPField;
 
+    /* News settings section */
+    NSPopUpButton *_newsDateFormatPopup;
+    NSTextField *_newsDelimiterField;
+
     /* Right panel: tab view */
     NSTabView *_tabView;
 
@@ -107,6 +111,11 @@
     NSTextField *_accountNameField;
     NSTextField *_accountFileRootField;
     NSPopUpButton *_accountTemplatePopup;
+    NSScrollView *_accountPermissionsScrollView;
+    NSView *_accountPermissionsContentView;
+    NSMutableDictionary *_accountPermissionCheckboxes;
+    NSTextField *_accountPasswordStatusLabel;
+    NSButton *_accountResetPasswordButton;
     NSButton *_accountNewButton;
     NSButton *_accountDeleteButton;
     NSButton *_accountSaveButton;
@@ -159,7 +168,11 @@
     NSMutableDictionary *_newsCategoriesByKey;
     NSTextField *_newsNewCategoryField;
     NSButton *_newsDeleteCategoryButton;
+    NSButton *_newsAddArticleButton;
+    NSButton *_newsEditArticleButton;
+    NSButton *_newsDeleteArticleButton;
     NSString *_newsSelectedCategoryKey;
+    NSString *_newsSelectedArticleID;
 
     /* Footer */
     NSImageView *_footerStatusDot;
@@ -176,6 +189,20 @@
     NSWindow *_textEditorWindow;
     NSTextView *_textEditorTextView;
     NSString *_textEditorFilePath;
+
+    /* New account sheet */
+    NSWindow *_newAccountWindow;
+    NSTextField *_newAccountLoginField;
+    NSTextField *_newAccountNameField;
+
+    /* Threaded news article editor */
+    NSWindow *_newsArticleEditorWindow;
+    NSTextField *_newsArticleTitleField;
+    NSTextField *_newsArticlePosterField;
+    NSTextField *_newsArticleDateField;
+    NSTextView *_newsArticleBodyTextView;
+    NSString *_newsEditingCategoryKey;
+    NSString *_newsEditingArticleID;
 
     /* Setup wizard window */
     NSWindow *_wizardWindow;
@@ -240,9 +267,13 @@
 - (void)refreshAccountsList:(id)sender;
 - (void)accountsSegmentChanged:(id)sender;
 - (void)newAccount:(id)sender;
+- (void)createNewAccount:(id)sender;
+- (void)cancelNewAccount:(id)sender;
 - (void)saveAccount:(id)sender;
 - (void)deleteAccount:(id)sender;
 - (void)accountTemplateChanged:(id)sender;
+- (void)toggleAccountPermission:(id)sender;
+- (void)resetAccountPassword:(id)sender;
 - (void)addIPBan:(id)sender;
 - (void)removeIPBan:(id)sender;
 - (void)addUserBan:(id)sender;
@@ -260,6 +291,11 @@
 - (void)refreshThreadedNews:(id)sender;
 - (void)addNewsCategory:(id)sender;
 - (void)deleteNewsCategory:(id)sender;
+- (void)addNewsArticle:(id)sender;
+- (void)editNewsArticle:(id)sender;
+- (void)deleteNewsArticle:(id)sender;
+- (void)saveNewsArticleEditor:(id)sender;
+- (void)cancelNewsArticleEditor:(id)sender;
 
 @end
 

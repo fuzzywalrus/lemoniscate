@@ -127,14 +127,28 @@ static int handle_agreed(hl_client_conn_t *cc, const hl_transaction_t *req,
     hl_server_broadcast(cc->server, cc, &notify);
     hl_build_notify_change_user_free(&notify);
 
-    /* Send server banner if configured */
+    /* Send server banner notification with banner type */
     if (cc->server->banner && cc->server->banner_len > 0) {
+        /* Determine banner type from config file extension */
+        const char *banner_type = "JPEG"; /* default */
+        const char *bfile = cc->server->config.banner_file;
+        if (bfile[0]) {
+            const char *ext = strrchr(bfile, '.');
+            if (ext && (strcasecmp(ext, ".gif") == 0))
+                banner_type = "GIFf";
+        }
+
+        hl_field_t bfield;
+        hl_field_new(&bfield, FIELD_BANNER_TYPE,
+                     (const uint8_t *)banner_type, (uint16_t)strlen(banner_type));
         hl_transaction_t banner;
         memset(&banner, 0, sizeof(banner));
         memcpy(banner.type, TRAN_SERVER_BANNER, 2);
-        memcpy(banner.client_id, cc->id, 2);
-        /* Banner is sent via file transfer, not inline — send empty for now */
+        banner.fields = &bfield;
+        banner.field_count = 1;
         hl_server_send_to_client(cc, &banner);
+        hl_field_free(&bfield);
+        banner.fields = NULL;
     }
 
     return reply_empty(cc, req, out, out_count);
@@ -344,11 +358,6 @@ static int handle_get_user_name_list(hl_client_conn_t *cc, const hl_transaction_
         if (fields) {
             int i;
             for (i = 0; i < client_count; i++) {
-                /* Skip users without SHOW_IN_LIST permission */
-                if (clients[i]->account &&
-                    !hl_access_is_set(clients[i]->account->access, ACCESS_SHOW_IN_LIST))
-                    continue;
-
                 hl_user_t u;
                 memcpy(u.id, clients[i]->id, 2);
                 memcpy(u.icon, clients[i]->icon, 2);
@@ -396,7 +405,8 @@ static int handle_get_client_info_text(hl_client_conn_t *cc, const hl_transactio
         return reply_err(cc, req, "You are not allowed to get client info.", out, out_count);
 
     const hl_field_t *f_uid = hl_transaction_get_field(req, FIELD_USER_ID);
-    if (!f_uid) return reply_err(cc, req, "Missing user ID.", out, out_count);
+    if (!f_uid || f_uid->data_len < 2)
+        return reply_err(cc, req, "Missing user ID.", out, out_count);
 
     hl_client_id_t target_id;
     memcpy(target_id, f_uid->data, 2);
@@ -830,6 +840,7 @@ static int handle_new_user(hl_client_conn_t *cc, const hl_transaction_t *req,
         char plaintext[128];
         hl_field_decode_obfuscated_string(f_pass, plaintext, sizeof(plaintext));
         hl_password_hash(plaintext, acct.password, sizeof(acct.password));
+        memset(plaintext, 0, sizeof(plaintext));
     }
 
     cc->server->account_mgr->vt->create(cc->server->account_mgr, &acct);
@@ -991,6 +1002,7 @@ static int handle_update_user(hl_client_conn_t *cc, const hl_transaction_t *req,
                     char pw[128];
                     hl_field_decode_obfuscated_string(sf_pass, pw, sizeof(pw));
                     hl_password_hash(pw, existing->password, sizeof(existing->password));
+                    memset(pw, 0, sizeof(pw));
                 }
             } else {
                 hl_password_hash("", existing->password, sizeof(existing->password));
@@ -1023,6 +1035,7 @@ static int handle_update_user(hl_client_conn_t *cc, const hl_transaction_t *req,
                 char pw[128];
                 hl_field_decode_obfuscated_string(sf_pass, pw, sizeof(pw));
                 hl_password_hash(pw, acct.password, sizeof(acct.password));
+                memset(pw, 0, sizeof(pw));
             }
             srv->account_mgr->vt->create(srv->account_mgr, &acct);
         }

@@ -102,14 +102,14 @@ hl_field_t *hl_get_file_name_list(const char *dir_path, int *out_count)
     return fields;
 }
 
-void hl_calc_total_size(const char *dir_path, uint8_t out[4])
+#define HL_MAX_RECURSE_DEPTH 64
+
+static uint32_t calc_total_size_r(const char *dir_path, int depth)
 {
-    /* Maps to: Go CalcTotalSize() */
+    if (depth > HL_MAX_RECURSE_DEPTH) return 0;
+
     DIR *dir = opendir(dir_path);
-    if (!dir) {
-        hl_write_u32(out, 0);
-        return;
-    }
+    if (!dir) return 0;
 
     uint32_t total = 0;
     struct dirent *entry;
@@ -124,20 +124,25 @@ void hl_calc_total_size(const char *dir_path, uint8_t out[4])
         if (stat(full_path, &st) != 0) continue;
 
         if (S_ISDIR(st.st_mode)) {
-            uint8_t sub_size[4];
-            hl_calc_total_size(full_path, sub_size);
-            total += hl_read_u32(sub_size);
+            total += calc_total_size_r(full_path, depth + 1);
         } else {
             total += (uint32_t)st.st_size;
         }
     }
 
     closedir(dir);
-    hl_write_u32(out, total);
+    return total;
 }
 
-static uint16_t calc_item_count_recursive(const char *dir_path)
+void hl_calc_total_size(const char *dir_path, uint8_t out[4])
 {
+    hl_write_u32(out, calc_total_size_r(dir_path, 0));
+}
+
+static uint16_t calc_item_count_r(const char *dir_path, int depth)
+{
+    if (depth > HL_MAX_RECURSE_DEPTH) return 0;
+
     DIR *dir = opendir(dir_path);
     if (!dir) return 0;
 
@@ -153,7 +158,7 @@ static uint16_t calc_item_count_recursive(const char *dir_path)
 
         struct stat st;
         if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
-            count += calc_item_count_recursive(full_path);
+            count += calc_item_count_r(full_path, depth + 1);
         }
     }
 
@@ -164,7 +169,7 @@ static uint16_t calc_item_count_recursive(const char *dir_path)
 void hl_calc_item_count(const char *dir_path, uint8_t out[2])
 {
     /* Maps to: Go CalcItemCount() — recursive, returns count-1 */
-    uint16_t count = calc_item_count_recursive(dir_path);
+    uint16_t count = calc_item_count_r(dir_path, 0);
     if (count > 0) count--; /* Subtract root */
     hl_write_u16(out, count);
 }

@@ -102,7 +102,7 @@ void hl_server_broadcast(hl_server_t *srv, hl_client_conn_t *sender,
         if (!hl_type_eq(clients[i]->id, sender->id)) {
             /* Set target client ID and send */
             memcpy(t->client_id, clients[i]->id, 2);
-            { int _brc = hl_server_send_transaction(clients[i]->fd, t); fprintf(stderr, "[BCAST] %s -> client %d fd=%d rc=%d\n", hl_transaction_type_name(t->type), hl_read_u16(clients[i]->id), clients[i]->fd, _brc); fflush(stderr); }
+            hl_server_send_transaction(clients[i]->fd, t);
         }
     }
     free(clients);
@@ -113,7 +113,7 @@ void hl_server_broadcast(hl_server_t *srv, hl_client_conn_t *sender,
 void hl_server_send_to_client(hl_client_conn_t *cc, hl_transaction_t *t)
 {
     memcpy(t->client_id, cc->id, 2);
-    int _rc = hl_server_send_transaction(cc->fd, t); fprintf(stderr, "[SEND] %s -> client %d fd=%d rc=%d\n", hl_transaction_type_name(t->type), hl_read_u16(cc->id), cc->fd, _rc); fflush(stderr);
+    hl_server_send_transaction(cc->fd, t);
 }
 
 /* Notify all other clients that this user's visible profile changed.
@@ -833,14 +833,14 @@ static int send_folder_file(int fd, const char *file_path, const char *filename)
     memcpy(filp_hdr, "FILP", 4);
     filp_hdr[4] = 0; filp_hdr[5] = 1;
     filp_hdr[22] = 0; filp_hdr[23] = 2;
-    write_all(fd, filp_hdr, 24);
+    if (write_all(fd, filp_hdr, 24) < 0) { fclose(f); return -1; }
 
     /* INFO fork header */
     uint8_t info_hdr[16];
     memset(info_hdr, 0, sizeof(info_hdr));
     memcpy(info_hdr, "INFO", 4);
     hl_write_u32(info_hdr + 12, info_data_size);
-    write_all(fd, info_hdr, 16);
+    if (write_all(fd, info_hdr, 16) < 0) { fclose(f); return -1; }
 
     /* INFO fork data */
     uint8_t info_data[256];
@@ -853,14 +853,14 @@ static int send_folder_file(int fd, const char *file_path, const char *filename)
     memcpy(info_data + 72, filename, name_len);
     info_data[72 + name_len] = 0;
     info_data[72 + name_len + 1] = 0;
-    write_all(fd, info_data, info_data_size);
+    if (write_all(fd, info_data, info_data_size) < 0) { fclose(f); return -1; }
 
     /* DATA fork header */
     uint8_t data_hdr[16];
     memset(data_hdr, 0, sizeof(data_hdr));
     memcpy(data_hdr, "DATA", 4);
     hl_write_u32(data_hdr + 12, file_size);
-    write_all(fd, data_hdr, 16);
+    if (write_all(fd, data_hdr, 16) < 0) { fclose(f); return -1; }
 
     /* DATA fork data */
     uint8_t fbuf[8192];
@@ -1091,8 +1091,6 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd)
                     ft->file_root, total_sent,
                     resuming ? ", resumed" : "");
 
-        srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
-                                         hdr.reference_number);
         srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
                                          hdr.reference_number);
         close(client_fd);
