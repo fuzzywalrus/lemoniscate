@@ -1926,7 +1926,71 @@ static int handle_download_folder(hl_client_conn_t *cc, const hl_transaction_t *
 {
     if (!hl_client_conn_authorize(cc, ACCESS_DOWNLOAD_FOLDER))
         return reply_err(cc, req, "You are not allowed to download folders.", out, out_count);
-    return reply_empty(cc, req, out, out_count);
+
+    hl_server_t *srv = cc->server;
+
+    /* Build full folder path */
+    char dir_path[2048];
+    if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
+        return reply_err(cc, req, "Invalid file path.", out, out_count);
+
+    const hl_field_t *f_name = hl_transaction_get_field(req, FIELD_FILE_NAME);
+    if (!f_name || f_name->data_len == 0)
+        return reply_err(cc, req, "Missing folder name.", out, out_count);
+
+    char foldername[256];
+    size_t nlen = f_name->data_len < sizeof(foldername) - 1 ?
+                  f_name->data_len : sizeof(foldername) - 1;
+    memcpy(foldername, f_name->data, nlen);
+    foldername[nlen] = '\0';
+
+    char full_path[2048];
+    snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, foldername);
+
+    struct stat st;
+    if (stat(full_path, &st) != 0 || !S_ISDIR(st.st_mode))
+        return reply_err(cc, req, "Folder not found.", out, out_count);
+
+    /* Calculate transfer size and item count */
+    uint8_t total_size[4];
+    uint8_t item_count[2];
+    hl_calc_total_size(full_path, total_size);
+    hl_calc_item_count(full_path, item_count);
+
+    /* Create transfer entry */
+    hl_file_transfer_t *ft = (hl_file_transfer_t *)calloc(1, sizeof(hl_file_transfer_t));
+    if (!ft) return reply_empty(cc, req, out, out_count);
+
+    ft->type = HL_XFER_FOLDER_DOWNLOAD;
+    ft->client_conn = cc;
+    ft->active = 1;
+    strncpy(ft->file_root, full_path, sizeof(ft->file_root) - 1);
+    memcpy(ft->transfer_size, total_size, 4);
+    memcpy(ft->folder_item_count, item_count, 2);
+
+    if (srv->file_transfer_mgr)
+        srv->file_transfer_mgr->vt->add(srv->file_transfer_mgr, ft);
+
+    /* Reply with ref_num, transfer_size, folder_item_count, waiting_count */
+    uint8_t wait_count[2] = {0, 0};
+    hl_field_t fields[4];
+    hl_field_new(&fields[0], FIELD_REF_NUM, ft->ref_num, 4);
+    hl_field_new(&fields[1], FIELD_TRANSFER_SIZE, ft->transfer_size, 4);
+    hl_field_new(&fields[2], FIELD_FOLDER_ITEM_COUNT, ft->folder_item_count, 2);
+    hl_field_new(&fields[3], FIELD_WAITING_COUNT, wait_count, 2);
+
+    hl_transaction_t *reply = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
+    hl_transaction_new(reply, req->type, cc->id, fields, 4);
+    reply->is_reply = 1;
+    memcpy(reply->id, req->id, 4);
+
+    int k;
+    for (k = 0; k < 4; k++) hl_field_free(&fields[k]);
+    free(ft);
+
+    *out = reply;
+    *out_count = 1;
+    return 0;
 }
 
 static int handle_upload_folder(hl_client_conn_t *cc, const hl_transaction_t *req,
@@ -2031,4 +2095,6 @@ void mobius_register_handlers(hl_server_t *srv)
     hl_server_handle_func(srv, TRAN_NEW_FOLDER,          handle_new_folder);
     hl_server_handle_func(srv, TRAN_MAKE_FILE_ALIAS,     handle_make_alias);
     hl_server_handle_func(srv, TRAN_DOWNLOAD_FILE,       handle_download_file);
-    hl                                                                                                                                                                                                                                                                                                                              
+    hl_server_handle_func(srv, TRAN_UPLOAD_FLDR,         handle_upload_folder);
+    hl_server_handle_func(srv, TRAN_DOWNLOAD_BANNER,     handle_download_banner);
+}

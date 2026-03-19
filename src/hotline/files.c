@@ -136,25 +136,35 @@ void hl_calc_total_size(const char *dir_path, uint8_t out[4])
     hl_write_u32(out, total);
 }
 
-void hl_calc_item_count(const char *dir_path, uint8_t out[2])
+static uint16_t calc_item_count_recursive(const char *dir_path)
 {
-    /* Maps to: Go CalcItemCount() — returns count-1 */
     DIR *dir = opendir(dir_path);
-    if (!dir) {
-        hl_write_u16(out, 0);
-        return;
-    }
+    if (!dir) return 0;
 
     uint16_t count = 0;
     struct dirent *entry;
 
     while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] != '.') count++;
+        if (entry->d_name[0] == '.') continue;
+        count++;
+
+        char full_path[2048];
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
+
+        struct stat st;
+        if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+            count += calc_item_count_recursive(full_path);
+        }
     }
 
     closedir(dir);
+    return count;
+}
 
-    /* Go returns count-1 (for folder download item counting) */
-    if (count > 0) count--;
+void hl_calc_item_count(const char *dir_path, uint8_t out[2])
+{
+    /* Maps to: Go CalcItemCount() — recursive, returns count-1 */
+    uint16_t count = calc_item_count_recursive(dir_path);
+    if (count > 0) count--; /* Subtract root */
     hl_write_u16(out, count);
 }

@@ -30,6 +30,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
 /* Constants — maps to Go server.go constants */
 #define HL_PER_IP_RATE_INTERVAL  2   /* seconds between allowed connections per IP */
@@ -766,6 +768,176 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
 
 /* --- Handle file transfer connection --- */
 
+/* --- Folder download helpers --- */
+
+/* Encode a relative path into the Hotline folder download FileHeader format:
+ * [2 bytes] path_item_count
+ * For each segment: [2 bytes reserved][1 byte name_len][N bytes name]
+ * Returns bytes written to buf. */
+static int encode_file_path(const char *rel_path, uint8_t *buf, size_t buf_len)
+{
+    /* Count segments */
+    int seg_count = 0;
+    const char *p = rel_path;
+    while (*p) {
+        if (*p == '/') { seg_count++; p++; continue; }
+        seg_count++;
+        while (*p && *p != '/') p++;
+    }
+
+    size_t pos = 0;
+    if (pos + 2 > buf_len) return -1;
+    hl_write_u16(buf + pos, (uint16_t)seg_count);
+    pos += 2;
+
+    p = rel_path;
+    while (*p) {
+        if (*p == '/') { p++; continue; }
+        const char *seg_start = p;
+        while (*p && *p != '/') p++;
+        size_t seg_len = (size_t)(p - seg_start);
+        if (seg_len > 255) seg_len = 255;
+        if (pos + 3 + seg_len > buf_len) return -1;
+        buf[pos++] = 0; buf[pos++] = 0; /* reserved */
+        buf[pos++] = (uint8_t)seg_len;
+        memcpy(buf + pos, seg_start, seg_len);
+        pos += seg_len;
+    }
+    return (int)pos;
+}
+
+/* Send a single file's data in FILP format during folder download.
+ * Returns 0 on success, -1 on error. */
+static int send_folder_file(int fd, const char *file_path, const char *filename)
+{
+    FILE *f = fopen(file_path, "rb");
+    if (!f) return -1;
+
+    fseek(f, 0, SEEK_END);
+    uint32_t file_size = (uint32_t)ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    size_t name_len = strlen(filename);
+    if (name_len > 128) name_len = 128;
+
+    /* Calculate and send transfer size (4 bytes) */
+    uint32_t info_data_size = 72 + (uint32_t)name_len + 2;
+    uint32_t xfer_size = 24 + 16 + info_data_size + 16 + file_size;
+    uint8_t xfer_buf[4];
+    hl_write_u32(xfer_buf, xfer_size);
+    if (write_all(fd, xfer_buf, 4) < 0) { fclose(f); return -1; }
+
+    /* FILP header */
+    uint8_t filp_hdr[24];
+    memset(filp_hdr, 0, sizeof(filp_hdr));
+    memcpy(filp_hdr, "FILP", 4);
+    filp_hdr[4] = 0; filp_hdr[5] = 1;
+    filp_hdr[22] = 0; filp_hdr[23] = 2;
+    write_all(fd, filp_hdr, 24);
+
+    /* INFO fork header */
+    uint8_t info_hdr[16];
+    memset(info_hdr, 0, sizeof(info_hdr));
+    memcpy(info_hdr, "INFO", 4);
+    hl_write_u32(info_hdr + 12, info_data_size);
+    write_all(fd, info_hdr, 16);
+
+    /* INFO fork data */
+    uint8_t info_data[256];
+    memset(info_data, 0, sizeof(info_data));
+    memcpy(info_data, "AMAC", 4);
+    memcpy(info_data + 4, "TEXT", 4);
+    memcpy(info_data + 8, "ttxt", 4);
+    info_data[40] = 0; info_data[41] = 0x01;
+    hl_write_u16(info_data + 70, (uint16_t)name_len);
+    memcpy(info_data + 72, filename, name_len);
+    info_data[72 + name_len] = 0;
+    info_data[72 + name_len + 1] = 0;
+    write_all(fd, info_data, info_data_size);
+
+    /* DATA fork header */
+    uint8_t data_hdr[16];
+    memset(data_hdr, 0, sizeof(data_hdr));
+    memcpy(data_hdr, "DATA", 4);
+    hl_write_u32(data_hdr + 12, file_size);
+    write_all(fd, data_hdr, 16);
+
+    /* DATA fork data */
+    uint8_t fbuf[8192];
+    size_t n;
+    while ((n = fread(fbuf, 1, sizeof(fbuf), f)) > 0) {
+        if (write_all(fd, fbuf, n) < 0) { fclose(f); return -1; }
+    }
+    fclose(f);
+    return 0;
+}
+
+/* Recursively send folder contents using the interactive folder download protocol.
+ * root_path: the base folder path (for computing relative paths)
+ * dir_path: current directory being enumerated
+ * Returns 0 on success, -1 on error/disconnect. */
+static int send_folder_recursive(hl_server_t *srv, int fd,
+                                  const char *root_path, const char *dir_path)
+{
+    DIR *dir = opendir(dir_path);
+    if (!dir) return -1;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+
+        char full_path[2048];
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
+
+        /* Compute relative path from root */
+        const char *rel = full_path + strlen(root_path) + 1;
+
+        struct stat st;
+        if (stat(full_path, &st) != 0) continue;
+
+        int is_dir = S_ISDIR(st.st_mode);
+
+        /* Build and send FileHeader: [2-byte size][2-byte type][encoded path] */
+        uint8_t path_buf[1024];
+        int path_len = encode_file_path(rel, path_buf, sizeof(path_buf));
+        if (path_len < 0) continue;
+
+        uint16_t header_size = 2 + (uint16_t)path_len; /* type(2) + path */
+        uint8_t file_header[1030];
+        size_t hpos = 0;
+        hl_write_u16(file_header + hpos, header_size); hpos += 2;
+        hl_write_u16(file_header + hpos, is_dir ? 1 : 0); hpos += 2;
+        memcpy(file_header + hpos, path_buf, (size_t)path_len); hpos += (size_t)path_len;
+
+        if (write_all(fd, file_header, hpos) < 0) { closedir(dir); return -1; }
+
+        /* Read client action */
+        uint8_t action[2];
+        if (read_full(fd, action, 2) < 0) { closedir(dir); return -1; }
+
+        if (is_dir) {
+            /* Recurse into subdirectory */
+            if (send_folder_recursive(srv, fd, root_path, full_path) < 0) {
+                closedir(dir);
+                return -1;
+            }
+        } else if (action[1] == HL_DL_FLDR_ACTION_SEND_FILE) {
+            /* Send file data */
+            if (send_folder_file(fd, full_path, entry->d_name) < 0) {
+                hl_log_error(srv->logger, "Folder download: failed to send %s", rel);
+                closedir(dir);
+                return -1;
+            }
+            /* Read next action (client acknowledges receipt) */
+            if (read_full(fd, action, 2) < 0) { closedir(dir); return -1; }
+        }
+        /* action[1] == DL_FLDR_ACTION_NEXT_FILE (3) — skip, continue loop */
+    }
+
+    closedir(dir);
+    return 0;
+}
+
 static void handle_file_transfer_connection(hl_server_t *srv, int client_fd)
 {
     /* Read 16-byte HTXF header to get reference number */
@@ -1028,6 +1200,25 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd)
         }
 
 upload_cleanup:
+        srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
+                                         hdr.reference_number);
+        close(client_fd);
+        return;
+    }
+
+    /* Handle folder download — interactive multi-file protocol */
+    if (ft->type == HL_XFER_FOLDER_DOWNLOAD) {
+        hl_log_info(srv->logger, "Folder download: %s", ft->file_root);
+        /* Read initial 2-byte action from client */
+        uint8_t init_action[2];
+        if (read_full(client_fd, init_action, 2) < 0) {
+            hl_log_error(srv->logger, "Folder download: client didn't send initial action");
+            srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
+                                             hdr.reference_number);
+            close(client_fd);
+            return;
+        }
+        send_folder_recursive(srv, client_fd, ft->file_root, ft->file_root);
         srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
                                          hdr.reference_number);
         close(client_fd);
