@@ -50,6 +50,7 @@ typedef enum {
 - (void)startWithConfigDir:(NSString *)configDir port:(int)port;
 - (void)stop;
 - (void)restartWithConfigDir:(NSString *)configDir port:(int)port;
+- (void)reloadConfiguration;
 
 /* Accessors */
 - (ServerStatus)status;
