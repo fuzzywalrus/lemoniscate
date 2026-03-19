@@ -45,6 +45,9 @@ core.*
 .idea/
 *.iml
 
+# Claude / local AI workspace artifacts
+.claude/
+
 # Local per-user config (repo should not keep user-specific state)
 config/Users/
 
