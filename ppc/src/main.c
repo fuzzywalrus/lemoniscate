@@ -338,6 +338,21 @@ int main(int argc, char **argv)
             hl_log_info(srv->logger, "No config found at %s, using defaults", config_dir);
         }
 
+        /* Resolve relative FileRoot against config directory */
+        if (srv->config.file_root[0] != '\0' &&
+            srv->config.file_root[0] != '/') {
+            char combined[2048];
+            char resolved[1024];
+            snprintf(combined, sizeof(combined), "%s/%s",
+                     config_dir, srv->config.file_root);
+            if (realpath(combined, resolved) != NULL) {
+                strncpy(srv->config.file_root, resolved,
+                        sizeof(srv->config.file_root) - 1);
+                srv->config.file_root[sizeof(srv->config.file_root) - 1] = '\0';
+            }
+            hl_log_info(srv->logger, "File root: %s", srv->config.file_root);
+        }
+
         /* Load accounts */
         char path[2048];
         snprintf(path, sizeof(path), "%s/Users", config_dir);

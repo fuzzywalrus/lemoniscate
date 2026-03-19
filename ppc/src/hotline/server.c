@@ -831,7 +831,93 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd)
         return;
     }
 
-    /* TODO: Handle file downloads/uploads */
+    /* Handle file download — send FILP-wrapped file data */
+    if (ft->type == HL_XFER_FILE_DOWNLOAD) {
+        FILE *f = fopen(ft->file_root, "rb");
+        if (!f) {
+            hl_log_error(srv->logger, "Failed to open file: %s", ft->file_root);
+            srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
+                                             hdr.reference_number);
+            free(ft);
+            close(client_fd);
+            return;
+        }
+
+        /* Get file size */
+        fseek(f, 0, SEEK_END);
+        uint32_t file_size = (uint32_t)ftell(f);
+        fseek(f, 0, SEEK_SET);
+
+        /* Extract filename from path */
+        const char *filename = strrchr(ft->file_root, '/');
+        filename = filename ? filename + 1 : ft->file_root;
+        size_t name_len = strlen(filename);
+        if (name_len > 128) name_len = 128;
+
+        /* Build FILP header + INFO fork + DATA fork header */
+        /* FILP header: "FILP" + version(2) + reserved(16) + fork_count(2) = 24 */
+        uint8_t filp_hdr[24];
+        memset(filp_hdr, 0, sizeof(filp_hdr));
+        memcpy(filp_hdr, "FILP", 4);
+        filp_hdr[4] = 0; filp_hdr[5] = 1; /* version 1 */
+        filp_hdr[22] = 0; filp_hdr[23] = 2; /* 2 forks (INFO + DATA) */
+
+        /* INFO fork header: "INFO" + compression(4) + rsvd(4) + data_size(4) = 16 */
+        uint32_t info_data_size = 72 + (uint32_t)name_len + 2; /* fixed(72) + name + comment_size(2) */
+        uint8_t info_fork_hdr[16];
+        memset(info_fork_hdr, 0, sizeof(info_fork_hdr));
+        memcpy(info_fork_hdr, "INFO", 4);
+        hl_write_u32(info_fork_hdr + 12, info_data_size);
+
+        /* INFO fork data: platform(4) + type(4) + creator(4) + flags(4) +
+         * platform_flags(4) + rsvd(32) + create_date(8) + modify_date(8) +
+         * name_script(2) + name_size(2) + name(n) + comment_size(2) */
+        uint8_t info_data[256];
+        memset(info_data, 0, sizeof(info_data));
+        memcpy(info_data, "AMAC", 4); /* platform */
+        memcpy(info_data + 4, "TEXT", 4); /* type */
+        memcpy(info_data + 8, "ttxt", 4); /* creator */
+        /* flags, platform_flags, rsvd, dates all zero for simplicity */
+        info_data[40] = 0; info_data[41] = 0x01; /* platform flags */
+        /* name_script = 0 */
+        hl_write_u16(info_data + 70, (uint16_t)name_len);
+        memcpy(info_data + 72, filename, name_len);
+        /* comment_size = 0 */
+        info_data[72 + name_len] = 0;
+        info_data[72 + name_len + 1] = 0;
+
+        /* DATA fork header: "DATA" + compression(4) + rsvd(4) + data_size(4) = 16 */
+        uint8_t data_fork_hdr[16];
+        memset(data_fork_hdr, 0, sizeof(data_fork_hdr));
+        memcpy(data_fork_hdr, "DATA", 4);
+        hl_write_u32(data_fork_hdr + 12, file_size);
+
+        /* Send everything */
+        write_all(client_fd, filp_hdr, 24);
+        write_all(client_fd, info_fork_hdr, 16);
+        write_all(client_fd, info_data, info_data_size);
+        write_all(client_fd, data_fork_hdr, 16);
+
+        /* Send file data */
+        uint8_t fbuf[8192];
+        size_t total_sent = 0;
+        size_t n;
+        while ((n = fread(fbuf, 1, sizeof(fbuf), f)) > 0) {
+            if (write_all(client_fd, fbuf, n) < 0) break;
+            total_sent += n;
+        }
+        fclose(f);
+
+        hl_log_info(srv->logger, "File sent: %s (%zu bytes + FILP headers)",
+                    ft->file_root, total_sent);
+
+        srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
+                                         hdr.reference_number);
+        free(ft);
+        close(client_fd);
+        return;
+    }
+
     hl_log_info(srv->logger, "Unhandled transfer type %d", ft->type);
     srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
                                      hdr.reference_number);
