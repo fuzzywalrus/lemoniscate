@@ -1056,15 +1056,97 @@ static int handle_old_post_news(hl_client_conn_t *cc, const hl_transaction_t *re
     return reply_empty(cc, req, out, out_count);
 }
 
-/* Threaded news handlers — all return empty replies with correct access checks.
- * Full implementation requires the threaded news YAML manager. */
+/* === Threaded news handlers ===
+ * Uses the in-memory threaded news manager (mobius_threaded_news_t).
+ * Maps to: Go HandleGetNewsCatNameList, HandlePostNewsArt, etc. */
+
+/* Helper: decode news path from FIELD_NEWS_PATH into category name.
+ * News path is: {padding(2) + nameLen(1) + name(n)}+
+ * Returns the first path component name, or "General" if empty. */
+static const char *decode_news_path_cat(const hl_transaction_t *req, char *buf, size_t buflen)
+{
+    const hl_field_t *path_field = hl_transaction_get_field(req, FIELD_NEWS_PATH);
+    if (!path_field || path_field->data_len < 5) {
+        strncpy(buf, "General", buflen - 1);
+        buf[buflen - 1] = '\0';
+        return buf;
+    }
+
+    /* Skip count(2), then first component: padding(2) + nameLen(1) + name */
+    const uint8_t *p = path_field->data;
+    /* uint16_t count = hl_read_u16(p); */ p += 2;
+    /* skip padding */ p += 2;
+    uint8_t name_len = *p; p++;
+
+    if (name_len == 0 || name_len >= buflen) {
+        strncpy(buf, "General", buflen - 1);
+        buf[buflen - 1] = '\0';
+        return buf;
+    }
+
+    memcpy(buf, p, name_len);
+    buf[name_len] = '\0';
+    return buf;
+}
 
 static int handle_get_news_cat_name_list(hl_client_conn_t *cc, const hl_transaction_t *req,
                                          hl_transaction_t **out, int *out_count)
 {
     if (!hl_client_conn_authorize(cc, ACCESS_NEWS_READ_ART))
         return reply_err(cc, req, "You are not allowed to read news.", out, out_count);
-    return reply_empty(cc, req, out, out_count);
+
+    hl_server_t *srv = cc->server;
+    if (!srv->threaded_news)
+        return reply_empty(cc, req, out, out_count);
+
+    uint8_t *cat_data = NULL;
+    size_t cat_len = 0;
+    int cat_count = 0;
+
+    if (tn_get_categories(srv->threaded_news, &cat_data, &cat_len, &cat_count) < 0)
+        return reply_empty(cc, req, out, out_count);
+
+    if (cat_count == 0 || cat_len == 0) {
+        free(cat_data);
+        return reply_empty(cc, req, out, out_count);
+    }
+
+    /* Each category is a separate FIELD_NEWS_CAT_LIST_DATA15 field.
+     * We need to split the serialized data into individual fields. */
+    /* For simplicity, send the entire blob as one field per category.
+     * Re-parse the buffer to split into individual entries. */
+    hl_field_t *fields = (hl_field_t *)calloc((size_t)cat_count, sizeof(hl_field_t));
+    size_t off = 0;
+    int fi = 0;
+    while (off < cat_len && fi < cat_count) {
+        /* Parse entry to find its length */
+        if (off + 4 > cat_len) break;
+        uint8_t entry_type = cat_data[off + 1];
+        size_t hdr_size = 4; /* type(2) + count(2) */
+        if (entry_type == 3) hdr_size += 24; /* GUID + AddSN + DeleteSN */
+        if (off + hdr_size >= cat_len) break;
+        uint8_t name_len = cat_data[off + hdr_size];
+        size_t entry_len = hdr_size + 1 + name_len;
+
+        hl_field_new(&fields[fi], FIELD_NEWS_CAT_LIST_DATA15,
+                     cat_data + off, (uint16_t)entry_len);
+        off += entry_len;
+        fi++;
+    }
+
+    hl_transaction_t *reply = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
+    hl_transaction_new(reply, req->type, cc->id, fields, (uint16_t)fi);
+    reply->is_reply = 1;
+    memcpy(reply->id, req->id, 4);
+
+    int k;
+    for (k = 0; k < fi; k++) hl_field_free(&fields[k]);
+    free(fields);
+    free(cat_data);
+
+    *out = reply;
+    *out_count = 1;
+    return 0;
 }
 
 static int handle_get_news_art_name_list(hl_client_conn_t *cc, const hl_transaction_t *req,
@@ -1072,7 +1154,37 @@ static int handle_get_news_art_name_list(hl_client_conn_t *cc, const hl_transact
 {
     if (!hl_client_conn_authorize(cc, ACCESS_NEWS_READ_ART))
         return reply_err(cc, req, "You are not allowed to read news.", out, out_count);
-    return reply_empty(cc, req, out, out_count);
+
+    hl_server_t *srv = cc->server;
+    if (!srv->threaded_news)
+        return reply_empty(cc, req, out, out_count);
+
+    char cat_name[TN_MAX_NAME_LEN];
+    decode_news_path_cat(req, cat_name, sizeof(cat_name));
+
+    uint8_t *art_data = NULL;
+    size_t art_len = 0;
+    if (tn_get_article_list(srv->threaded_news, cat_name, &art_data, &art_len) < 0)
+        return reply_empty(cc, req, out, out_count);
+
+    if (art_len == 0) {
+        free(art_data);
+        return reply_empty(cc, req, out, out_count);
+    }
+
+    hl_field_t field;
+    hl_field_new(&field, FIELD_NEWS_ART_LIST_DATA, art_data, (uint16_t)art_len);
+
+    hl_transaction_t *reply = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
+    hl_transaction_new(reply, req->type, cc->id, &field, 1);
+    reply->is_reply = 1;
+    memcpy(reply->id, req->id, 4);
+    hl_field_free(&field);
+    free(art_data);
+
+    *out = reply;
+    *out_count = 1;
+    return 0;
 }
 
 static int handle_get_news_art_data(hl_client_conn_t *cc, const hl_transaction_t *req,
@@ -1080,7 +1192,63 @@ static int handle_get_news_art_data(hl_client_conn_t *cc, const hl_transaction_t
 {
     if (!hl_client_conn_authorize(cc, ACCESS_NEWS_READ_ART))
         return reply_err(cc, req, "You are not allowed to read news.", out, out_count);
-    return reply_empty(cc, req, out, out_count);
+
+    hl_server_t *srv = cc->server;
+    if (!srv->threaded_news)
+        return reply_empty(cc, req, out, out_count);
+
+    char cat_name[TN_MAX_NAME_LEN];
+    decode_news_path_cat(req, cat_name, sizeof(cat_name));
+
+    /* Decode article ID — can be 2 or 4 bytes */
+    const hl_field_t *id_field = hl_transaction_get_field(req, FIELD_NEWS_ART_ID);
+    if (!id_field || id_field->data_len < 2)
+        return reply_empty(cc, req, out, out_count);
+
+    uint32_t article_id;
+    if (id_field->data_len >= 4)
+        article_id = hl_read_u32(id_field->data);
+    else
+        article_id = (uint32_t)hl_read_u16(id_field->data);
+
+    uint8_t *title = NULL, *poster = NULL, *data = NULL;
+    uint16_t title_len = 0, poster_len = 0, data_len = 0;
+    uint8_t date[8];
+
+    if (tn_get_article(srv->threaded_news, cat_name, article_id,
+                       &title, &title_len, &poster, &poster_len,
+                       &data, &data_len, date) < 0)
+        return reply_empty(cc, req, out, out_count);
+
+    /* Build reply matching Go: title, poster, date, prev/next/parent/child IDs,
+     * data flavor, data */
+    uint8_t zero4[4] = {0, 0, 0, 0};
+
+    hl_field_t fields[9];
+    int fc = 0;
+    hl_field_new(&fields[fc++], FIELD_NEWS_ART_TITLE, title, title_len);
+    hl_field_new(&fields[fc++], FIELD_NEWS_ART_POSTER, poster, poster_len);
+    hl_field_new(&fields[fc++], FIELD_NEWS_ART_DATE, date, 8);
+    hl_field_new(&fields[fc++], FIELD_NEWS_ART_PREV_ART, zero4, 4);
+    hl_field_new(&fields[fc++], FIELD_NEWS_ART_NEXT_ART, zero4, 4);
+    hl_field_new(&fields[fc++], FIELD_NEWS_ART_PARENT_ART, zero4, 4);
+    hl_field_new(&fields[fc++], FIELD_NEWS_ART_1ST_CHILD, zero4, 4);
+    hl_field_new(&fields[fc++], FIELD_NEWS_ART_DATA_FLAV,
+                 (const uint8_t *)"text/plain", 10);
+    hl_field_new(&fields[fc++], FIELD_NEWS_ART_DATA, data, data_len);
+
+    hl_transaction_t *reply = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
+    hl_transaction_new(reply, req->type, cc->id, fields, (uint16_t)fc);
+    reply->is_reply = 1;
+    memcpy(reply->id, req->id, 4);
+
+    int k;
+    for (k = 0; k < fc; k++) hl_field_free(&fields[k]);
+    free(title); free(poster); free(data);
+
+    *out = reply;
+    *out_count = 1;
+    return 0;
 }
 
 static int handle_new_news_cat(hl_client_conn_t *cc, const hl_transaction_t *req,
@@ -1088,6 +1256,21 @@ static int handle_new_news_cat(hl_client_conn_t *cc, const hl_transaction_t *req
 {
     if (!hl_client_conn_authorize(cc, ACCESS_NEWS_CREATE_CAT))
         return reply_err(cc, req, "You are not allowed to create news categories.", out, out_count);
+
+    hl_server_t *srv = cc->server;
+    const hl_field_t *name_field = hl_transaction_get_field(req, FIELD_NEWS_CAT_NAME);
+    if (!name_field || name_field->data_len == 0 || !srv->threaded_news)
+        return reply_empty(cc, req, out, out_count);
+
+    char name[TN_MAX_NAME_LEN];
+    size_t len = name_field->data_len < sizeof(name) - 1 ?
+                 name_field->data_len : sizeof(name) - 1;
+    memcpy(name, name_field->data, len);
+    name[len] = '\0';
+
+    uint8_t cat_type[2] = {0x00, 0x03}; /* Category */
+    tn_create_category(srv->threaded_news, name, cat_type);
+
     return reply_empty(cc, req, out, out_count);
 }
 
@@ -1096,6 +1279,21 @@ static int handle_new_news_fldr(hl_client_conn_t *cc, const hl_transaction_t *re
 {
     if (!hl_client_conn_authorize(cc, ACCESS_NEWS_CREATE_FLDR))
         return reply_err(cc, req, "You are not allowed to create news bundles.", out, out_count);
+
+    hl_server_t *srv = cc->server;
+    const hl_field_t *name_field = hl_transaction_get_field(req, FIELD_NEWS_CAT_NAME);
+    if (!name_field || name_field->data_len == 0 || !srv->threaded_news)
+        return reply_empty(cc, req, out, out_count);
+
+    char name[TN_MAX_NAME_LEN];
+    size_t len = name_field->data_len < sizeof(name) - 1 ?
+                 name_field->data_len : sizeof(name) - 1;
+    memcpy(name, name_field->data, len);
+    name[len] = '\0';
+
+    uint8_t bundle_type[2] = {0x00, 0x02}; /* Bundle */
+    tn_create_category(srv->threaded_news, name, bundle_type);
+
     return reply_empty(cc, req, out, out_count);
 }
 
@@ -1104,6 +1302,44 @@ static int handle_post_news_art(hl_client_conn_t *cc, const hl_transaction_t *re
 {
     if (!hl_client_conn_authorize(cc, ACCESS_NEWS_POST_ART))
         return reply_err(cc, req, "You are not allowed to post articles.", out, out_count);
+
+    hl_server_t *srv = cc->server;
+    if (!srv->threaded_news)
+        return reply_empty(cc, req, out, out_count);
+
+    char cat_name[TN_MAX_NAME_LEN];
+    decode_news_path_cat(req, cat_name, sizeof(cat_name));
+
+    /* Get parent article ID (can be 2 or 4 bytes) */
+    uint32_t parent_id = 0;
+    const hl_field_t *id_field = hl_transaction_get_field(req, FIELD_NEWS_ART_ID);
+    if (id_field && id_field->data_len >= 4)
+        parent_id = hl_read_u32(id_field->data);
+    else if (id_field && id_field->data_len >= 2)
+        parent_id = (uint32_t)hl_read_u16(id_field->data);
+
+    /* Get title */
+    char title[TN_MAX_TITLE_LEN] = "";
+    const hl_field_t *title_field = hl_transaction_get_field(req, FIELD_NEWS_ART_TITLE);
+    if (title_field && title_field->data_len > 0) {
+        size_t tl = title_field->data_len < sizeof(title) - 1 ?
+                    title_field->data_len : sizeof(title) - 1;
+        memcpy(title, title_field->data, tl);
+        title[tl] = '\0';
+    }
+
+    /* Get data */
+    const hl_field_t *data_field = hl_transaction_get_field(req, FIELD_NEWS_ART_DATA);
+    const char *data = "";
+    uint16_t data_len = 0;
+    if (data_field && data_field->data_len > 0) {
+        data = (const char *)data_field->data;
+        data_len = data_field->data_len;
+    }
+
+    tn_post_article(srv->threaded_news, cat_name, parent_id,
+                    title, cc->user_name, data, data_len);
+
     return reply_empty(cc, req, out, out_count);
 }
 
@@ -1113,6 +1349,15 @@ static int handle_del_news_item(hl_client_conn_t *cc, const hl_transaction_t *re
     if (!hl_client_conn_authorize(cc, ACCESS_NEWS_DELETE_CAT) &&
         !hl_client_conn_authorize(cc, ACCESS_NEWS_DELETE_FLDR))
         return reply_err(cc, req, "You are not allowed to delete news items.", out, out_count);
+
+    hl_server_t *srv = cc->server;
+    if (!srv->threaded_news)
+        return reply_empty(cc, req, out, out_count);
+
+    char cat_name[TN_MAX_NAME_LEN];
+    decode_news_path_cat(req, cat_name, sizeof(cat_name));
+    tn_delete_news_item(srv->threaded_news, cat_name);
+
     return reply_empty(cc, req, out, out_count);
 }
 
@@ -1121,6 +1366,25 @@ static int handle_del_news_art(hl_client_conn_t *cc, const hl_transaction_t *req
 {
     if (!hl_client_conn_authorize(cc, ACCESS_NEWS_DELETE_ART))
         return reply_err(cc, req, "You are not allowed to delete articles.", out, out_count);
+
+    hl_server_t *srv = cc->server;
+    if (!srv->threaded_news)
+        return reply_empty(cc, req, out, out_count);
+
+    char cat_name[TN_MAX_NAME_LEN];
+    decode_news_path_cat(req, cat_name, sizeof(cat_name));
+
+    const hl_field_t *id_field = hl_transaction_get_field(req, FIELD_NEWS_ART_ID);
+    if (!id_field || id_field->data_len < 2)
+        return reply_empty(cc, req, out, out_count);
+
+    uint32_t article_id;
+    if (id_field->data_len >= 4)
+        article_id = hl_read_u32(id_field->data);
+    else
+        article_id = (uint32_t)hl_read_u16(id_field->data);
+    tn_delete_article(srv->threaded_news, cat_name, article_id);
+
     return reply_empty(cc, req, out, out_count);
 }
 

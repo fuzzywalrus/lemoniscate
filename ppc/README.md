@@ -26,36 +26,111 @@ The Hotline protocol is a binary, big-endian, TCP-based protocol. This is actual
 
 The codebase is split into two layers that mirror the Go package structure:
 
-- `include/hotline/` and `src/hotline/` -- The core protocol library. Wire format parsing, serialization, handshake, user and access types, text encoding, and the Objective-C client. This compiles into `libhotline.a`.
-- `include/mobius/` and `src/mobius/` -- The server application. Transaction handlers, YAML-based persistence (accounts, bans, threaded news), configuration loading, and the REST API. This is where the business logic lives.
+- `include/hotline/` and `src/hotline/` -- Core protocol library: wire format parsing, serialization, handshake, user/access types, text encoding, and the Objective-C client. Builds into `libhotline.a`.
+- `include/mobius/` and `src/mobius/` -- Server application: transaction handlers, YAML-based persistence (accounts, bans, threaded news), configuration loading, and runtime server behavior.
+- `src/gui/` -- Native AppKit admin GUI (`lemoniscate-gui`) that launches and supervises `lemoniscate`.
+- `docs/` -- Operator and implementation documentation.
 
-Each Go source file has a corresponding C or Objective-C file. A mapping table is maintained in the [plan document](.claude/plans/mighty-tickling-feather.md) and will eventually live in a standalone MAPPING.md.
+## Quickstart (CLI server)
 
-## What works today
+### 1) Build
 
-- TBA
+On modern macOS:
+
+```bash
+make all
+```
+
+### 2) Initialize config directory
+
+```bash
+./lemoniscate --init -c ./config
+```
+
+This creates:
+- `config/config.yaml`
+- `config/Users/*.yaml` (including `admin` and `guest`)
+- `config/Agreement.txt`
+- `config/MessageBoard.txt`
+- `config/Banlist.yaml`
+- `config/Files/`
+
+### 3) Start server
+
+```bash
+./lemoniscate -p 5500 -c ./config
+```
+
+Clients connect on port `5500` (file transfers use `5501`).
+
+## Quickstart (GUI)
+
+### 1) Build GUI and app bundle
+
+```bash
+make gui
+make app
+```
+
+### 2) Launch app bundle
+
+```bash
+open Lemoniscate.app
+```
+
+The app launches `Lemoniscate.app/Contents/MacOS/lemoniscate-server` through `NSTask`.
+
+Important caveats:
+- `make app` checks that `lemoniscate` and `lemoniscate-gui` have matching CPU architectures.
+- Use `APP_SKIP_ARCH_CHECK=1 make app` only when intentionally bypassing that safety check.
+- The GUI creates the config directory if missing, but does not scaffold full default files; run `--init` first for a complete setup.
+
+## Feature status
+
+- Implemented:
+  - Core Hotline handshake/login, chat, users/accounts, flat message board, and base server lifecycle.
+  - Config loading from YAML and account/ban/agreement/message board file loading.
+  - Native AppKit GUI for start/stop/restart and runtime logs.
+- Partial:
+  - `SIGHUP` reload path exists but is not yet integrated into the active event loop.
+  - Threaded news handlers exist with access checks but currently return empty responses.
+  - File transfer-related handlers are present, but transfer-port data path is still stubbed.
+  - GUI settings persistence is currently focused on UI defaults/process launch, not full `config.yaml` authoring.
+- Planned:
+  - REST API parity with Mobius `/api/v1/` style endpoints.
 
 ## Building
 
 On modern macOS for development and testing:
 
-```
-make test      # build and run all tests
-make all       # build libhotline.a
+```bash
+make all       # build libhotline.a + lemoniscate
+make test      # build and run tests
+make gui       # build GUI binary
+make app       # build Lemoniscate.app bundle
 ```
 
-On Tiger with Xcode 2.x, uncomment the Tiger flags in the Makefile:
+On Tiger with Xcode 2.x, uncomment Tiger flags in `Makefile`:
 
-```
+```bash
 CC = gcc-4.0
-CFLAGS += -mmacosx-version-min=10.4
+CFLAGS += -mmacosx-version-min=10.4 -I/usr/local/include
+OBJCFLAGS += -mmacosx-version-min=10.4 -I/usr/local/include
+YAML_LDFLAGS = -L/usr/local/lib -lyaml
 ```
 
 Dependencies:
 - CoreFoundation (ships with Tiger)
 - Foundation (ships with Tiger)
+- AppKit (for GUI)
 - pthreads (ships with Tiger)
-- libyaml (via Tigerbrew, needed for Phase 4+)
+- libyaml (via Tigerbrew or source build)
+
+## Documentation
+
+- [Server reference](docs/SERVER.md)
+- [GUI reference](docs/GUI.md)
+- [Docs index](docs/README.md)
 
 ## Related projects
 

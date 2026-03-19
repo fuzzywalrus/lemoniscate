@@ -138,25 +138,36 @@ int tn_get_article_list(mobius_threaded_news_t *tn,
         return -1;
     }
 
-    /* NewsArtListData wire format:
-     * For each article:
+    /* NewsArtListData wire format (maps to Go NewsArtListData.Read()):
+     *   ID(4) + Count(4) + NameLen(1) + Name(n) + DescLen(1) + Desc(n)
+     *   + [ArticleEntries...]
+     *
+     * Each article entry (maps to Go NewsArtList.Read()):
      *   ID(4) + TimeStamp(8) + ParentID(4) + Flags(4) +
      *   FlavorCount(2) + TitleLen(1) + Title(n) +
      *   PosterLen(1) + Poster(n) + FlavorNameLen(1) +
      *   FlavorName(n) + ArticleSize(2) */
 
-    /* Calculate size */
-    size_t total = 0;
+    /* Count active articles */
+    int active_count = 0;
     int i;
+    for (i = 0; i < cat->article_count; i++) {
+        if (cat->articles[i].active) active_count++;
+    }
+
+    /* Calculate size: header + articles */
+    size_t header_size = 4 + 4 + 1 + 0 + 1 + 0; /* ID + Count + NameLen + DescLen */
+    size_t articles_size = 0;
     for (i = 0; i < cat->article_count; i++) {
         tn_article_t *art = &cat->articles[i];
         if (!art->active) continue;
-        total += 4 + 8 + 4 + 4 + 2; /* fixed fields */
-        total += 1 + strlen(art->title);
-        total += 1 + strlen(art->poster);
-        total += 1 + strlen(NEWS_FLAVOR) + 2; /* flavor + article size */
+        articles_size += 4 + 8 + 4 + 4 + 2; /* fixed fields */
+        articles_size += 1 + strlen(art->title);
+        articles_size += 1 + strlen(art->poster);
+        articles_size += 1 + strlen(NEWS_FLAVOR) + 2; /* flavor + article size */
     }
 
+    size_t total = header_size + articles_size;
     uint8_t *buf = (uint8_t *)malloc(total > 0 ? total : 1);
     if (!buf) {
         pthread_mutex_unlock(&tn->mu);
@@ -164,6 +175,17 @@ int tn_get_article_list(mobius_threaded_news_t *tn,
     }
 
     size_t offset = 0;
+
+    /* Header: ID (4 bytes, all zero for root) */
+    memset(buf + offset, 0, 4); offset += 4;
+    /* Count */
+    hl_write_u32(buf + offset, (uint32_t)active_count); offset += 4;
+    /* NameLen + Name (empty) */
+    buf[offset++] = 0;
+    /* DescLen + Desc (empty) */
+    buf[offset++] = 0;
+
+    /* Article entries */
     for (i = 0; i < cat->article_count; i++) {
         tn_article_t *art = &cat->articles[i];
         if (!art->active) continue;
@@ -284,7 +306,7 @@ int tn_post_article(mobius_threaded_news_t *tn,
 
     /* Set timestamp to now using Hotline date format */
     time_t now = time(NULL);
-    hl_time_to_hotline(now, art->date);
+    hl_time_from_timet(art->date, now);
 
     cat->article_count++;
 

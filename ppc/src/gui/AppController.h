@@ -66,6 +66,7 @@
     NSImageView *_statusIndicator;
     NSTextField *_statusLabel;
     NSTextField *_portInfoLabel;
+    NSView *_serverButtonsRow;
     NSButton *_startButton;
     NSButton *_stopButton;
     NSButton *_restartButton;

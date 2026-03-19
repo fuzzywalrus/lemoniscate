@@ -324,6 +324,9 @@ int main(int argc, char **argv)
     /* Initialize file transfer manager */
     srv->file_transfer_mgr = hl_mem_xfer_mgr_new();
 
+    /* Initialize threaded news */
+    srv->threaded_news = mobius_threaded_news_new(NULL);
+
     /* Set text encoding from config (default MacRoman for PPC) */
     srv->use_mac_roman = (strcmp(srv->config.encoding, "utf-8") != 0);
 

@@ -12,6 +12,7 @@ lemoniscate [options]
 |------|------|----------|---------|-------------|
 | `-i` | `--interface` | ADDR | all | IP address to listen on |
 | `-p` | `--port` | PORT | 5500 | Base port (transfers on PORT+1) |
+| | `--bind` | PORT | 5500 | Alias for `--port` (used by GUI launcher) |
 | `-c` | `--config` | DIR | auto | Configuration directory path |
 | `-f` | `--log-file` | PATH | stderr | Log file path (enables file logging) |
 | `-l` | `--log-level` | LEVEL | info | Log level: `debug`, `info`, `error` |
@@ -43,7 +44,7 @@ lemoniscate [options]
 | Signal | Action |
 |--------|--------|
 | `SIGINT` / `SIGTERM` | Graceful shutdown |
-| `SIGHUP` | Reload config, agreement, and ban list from disk |
+| `SIGHUP` | Reload path exists, but live event-loop integration is currently incomplete |
 | `SIGPIPE` | Ignored (prevents crash on broken client connections) |
 
 ---
@@ -56,6 +57,7 @@ Created by `--init` or manually:
 config/
 ├── config.yaml          # Server configuration
 ├── Agreement.txt        # Login agreement shown to connecting clients
+├── MessageBoard.txt     # Flat message board (news)
 ├── Banlist.yaml         # IP, username, and nickname bans
 ├── banner.jpg           # Server banner image (optional, JPG or GIF)
 ├── Files/               # Shared file directory (file root)
@@ -205,30 +207,30 @@ The flat message board (news). Posts are prepended to the top. Uses `\r` (carria
 
 | Type | Name | Description |
 |------|------|-------------|
-| 370 | GetNewsCatNameList | List news categories |
-| 371 | GetNewsArtNameList | List articles in category |
-| 400 | GetNewsArtData | Read article content |
-| 410 | PostNewsArt | Post new article |
-| 411 | DelNewsArt | Delete article |
-| 380 | DelNewsItem | Delete category/folder |
-| 381 | NewNewsFldr | Create news folder |
-| 382 | NewNewsCat | Create news category |
+| 370 | GetNewsCatNameList | Partial: handler currently returns empty reply with access checks |
+| 371 | GetNewsArtNameList | Partial: handler currently returns empty reply with access checks |
+| 400 | GetNewsArtData | Partial: handler currently returns empty reply with access checks |
+| 410 | PostNewsArt | Partial: handler currently returns empty reply with access checks |
+| 411 | DelNewsArt | Partial: handler currently returns empty reply with access checks |
+| 380 | DelNewsItem | Partial: handler currently returns empty reply with access checks |
+| 381 | NewNewsFldr | Partial: handler currently returns empty reply with access checks |
+| 382 | NewNewsCat | Partial: handler currently returns empty reply with access checks |
 
 ### File Operations
 
 | Type | Name | Description |
 |------|------|-------------|
 | 200 | GetFileNameList | List files in directory |
-| 202 | DownloadFile | Request file download |
-| 203 | UploadFile | Request file upload |
+| 202 | DownloadFile | Partial: transfer setup only; transfer-port data path is currently stubbed |
+| 203 | UploadFile | Partial: transfer setup only; transfer-port data path is currently stubbed |
 | 204 | DeleteFile | Delete file/folder |
 | 205 | NewFolder | Create folder |
 | 206 | GetFileInfo | Get file metadata |
 | 207 | SetFileInfo | Set file metadata |
 | 208 | MoveFile | Move/rename file |
 | 209 | MakeFileAlias | Create file alias |
-| 210 | DownloadFolder | Download folder |
-| 213 | UploadFolder | Upload folder |
+| 210 | DownloadFolder | Partial: transfer setup only; transfer-port data path is currently stubbed |
+| 213 | UploadFolder | Partial: transfer setup only; transfer-port data path is currently stubbed |
 | 212 | DownloadBanner | Download server banner |
 
 ---
@@ -238,10 +240,12 @@ The flat message board (news). Posts are prepended to the top. Uses `\r` (carria
 **There is currently no REST API.** All server management is done through:
 
 1. CLI flags at startup
-2. Config file editing + SIGHUP reload
+2. Config file editing + restart (or future SIGHUP integration)
 3. The Lemoniscate.app GUI (which manages the server process via NSTask)
 
 A REST API (matching the Mobius Go server's `/api/v1/` endpoints) is planned for a future version.
+
+See also: [GUI reference](GUI.md)
 
 ---
 

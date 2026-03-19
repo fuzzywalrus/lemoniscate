@@ -21,10 +21,11 @@
 @end
 
 /* ===== Layout constants ===== */
-#define LEFT_PANEL_WIDTH  340
+#define LEFT_PANEL_WIDTH  560
 #define SECTION_MARGIN    12
-#define LABEL_WIDTH       110
+#define LABEL_WIDTH       100
 #define FIELD_X           (SECTION_MARGIN + LABEL_WIDTH + 6)
+#define ROW_RIGHT_PAD     8
 #define ROW_HEIGHT        28
 
 /* ===== Helpers ===== */
@@ -77,7 +78,8 @@ static float addRow(NSView *parent, NSString *labelText,
     [parent addSubview:label];
     [label release];
 
-    [field setFrame:NSMakeRect(LABEL_WIDTH - 4, y, fieldWidth, 22)];
+    [field setFrame:NSMakeRect(LABEL_WIDTH - 4, y,
+                               fieldWidth - ROW_RIGHT_PAD, 22)];
     [parent addSubview:field];
     return y + ROW_HEIGHT;
 }
@@ -94,14 +96,21 @@ static float addRowWithButton(NSView *parent, NSString *labelText,
     [parent addSubview:label];
     [label release];
 
-    float btnWidth = 72;
+    [btn setFont:[NSFont systemFontOfSize:11.0]];
+    [btn sizeToFit];
+    NSRect bf = [btn frame];
+    float btnWidth = bf.size.width + 12.0f;
+    if (btnWidth < 70.0f) btnWidth = 70.0f;
+    if (btnWidth > 110.0f) btnWidth = 110.0f;
+
+    float rightPad = ROW_RIGHT_PAD;
+    float gap = 4.0f;
     [field setFrame:NSMakeRect(LABEL_WIDTH - 4, y,
-                               fieldWidth - btnWidth - 4, 22)];
+                               fieldWidth - btnWidth - gap - rightPad, 22)];
     [parent addSubview:field];
 
-    [btn setFrame:NSMakeRect(LABEL_WIDTH - 4 + fieldWidth - btnWidth, y - 1,
+    [btn setFrame:NSMakeRect(LABEL_WIDTH - 4 + fieldWidth - btnWidth - rightPad, y - 1,
                              btnWidth, 24)];
-    [btn setFont:[NSFont systemFontOfSize:11.0]];
     [parent addSubview:btn];
     return y + ROW_HEIGHT;
 }
@@ -327,7 +336,7 @@ static NSBox *makeSection(NSString *title, float x, float y,
                     backing:NSBackingStoreBuffered
                       defer:NO];
     [_mainWindow setTitle:@"Lemoniscate"];
-    [_mainWindow setMinSize:NSMakeSize(800, 500)];
+    [_mainWindow setMinSize:NSMakeSize(920, 500)];
 
     _splitView = [[NSSplitView alloc]
         initWithFrame:[[_mainWindow contentView] bounds]];
@@ -353,7 +362,7 @@ constrainMinCoordinate:(float)proposed
 {
     (void)splitView;
     (void)dividerIndex;
-    if (proposed < 220.0f) return 220.0f;
+    if (proposed < 430.0f) return 430.0f;
     return proposed;
 }
 
@@ -365,7 +374,7 @@ constrainMaxCoordinate:(float)proposed
     float minRightWidth = 420.0f;
     float maxLeft = [splitView bounds].size.width
         - [splitView dividerThickness] - minRightWidth;
-    if (maxLeft < 220.0f) maxLeft = 220.0f;
+    if (maxLeft < 430.0f) maxLeft = 430.0f;
     if (proposed > maxLeft) return maxLeft;
     return proposed;
 }
@@ -386,7 +395,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     float divider = [splitView dividerThickness];
 
     float leftWidth = [left frame].size.width;
-    float minLeft = 220.0f;
+    float minLeft = 430.0f;
     float minRight = 420.0f;
     float maxLeft = b.size.width - divider - minRight;
     if (maxLeft < minLeft) maxLeft = minLeft;
@@ -419,6 +428,17 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         NSView *tabView = [item view];
         [tabView setFrame:content];
         [tabView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    }
+
+    if (_serverButtonsRow) {
+        NSView *serverView = [_serverButtonsRow superview];
+        if (serverView) {
+            NSRect vf = [serverView bounds];
+            NSRect bf = [_serverButtonsRow frame];
+            bf.origin.x = (vf.size.width - bf.size.width) / 2.0f;
+            if (bf.origin.x < 20.0f) bf.origin.x = 20.0f;
+            [_serverButtonsRow setFrame:bf];
+        }
     }
 }
 
@@ -747,9 +767,9 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     NSView *buttonRow = [[NSView alloc]
         initWithFrame:NSMakeRect(([view bounds].size.width - totalBtnW) / 2.0,
                                  222, totalBtnW, btnH)];
-    [buttonRow setAutoresizingMask:(NSViewMinXMargin | NSViewMaxXMargin |
-                                    NSViewMinYMargin | NSViewMaxYMargin)];
+    [buttonRow setAutoresizingMask:(NSViewMinYMargin | NSViewMaxYMargin)];
     [view addSubview:buttonRow];
+    _serverButtonsRow = buttonRow;
 
     [_startButton setFrame:NSMakeRect(0, 0, startW, btnH)];
     [buttonRow addSubview:_startButton];
