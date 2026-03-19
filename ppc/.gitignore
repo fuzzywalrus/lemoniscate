@@ -53,3 +53,5 @@ libhotline.a
 test_runner
 test_client
 lemoniscate
+lemoniscate-gui
+Lemoniscate.app/
