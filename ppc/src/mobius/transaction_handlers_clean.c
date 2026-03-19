@@ -868,14 +868,164 @@ static int handle_set_user(hl_client_conn_t *cc, const hl_transaction_t *req,
     return reply_empty(cc, req, out, out_count);
 }
 
+/* Parse nested subfields from a FieldData blob.
+ * Format: [2-byte count][field1: type(2) + size(2) + data(N)]...
+ * Returns number of subfields parsed, stores them in out (caller frees). */
+static int parse_subfields(const uint8_t *data, uint16_t data_len,
+                            hl_field_t *out, int max_fields)
+{
+    if (data_len < 2) return 0;
+    uint16_t count = hl_read_u16(data);
+    size_t pos = 2;
+    int parsed = 0;
+
+    uint16_t i;
+    for (i = 0; i < count && parsed < max_fields; i++) {
+        if (pos + 4 > data_len) break;
+        uint8_t ftype[2];
+        ftype[0] = data[pos]; ftype[1] = data[pos + 1];
+        uint16_t fsize = hl_read_u16(data + pos + 2);
+        pos += 4;
+        if (pos + fsize > data_len) break;
+        hl_field_new(&out[parsed], ftype, data + pos, fsize);
+        parsed++;
+        pos += fsize;
+    }
+    return parsed;
+}
+
+/* Find a field by type in a subfield array. Returns NULL if not found. */
+static const hl_field_t *find_subfield(const hl_field_t *fields, int count,
+                                        const hl_field_type_t type)
+{
+    int i;
+    for (i = 0; i < count; i++) {
+        if (hl_type_eq(fields[i].type, type)) return &fields[i];
+    }
+    return NULL;
+}
+
 static int handle_update_user(hl_client_conn_t *cc, const hl_transaction_t *req,
                               hl_transaction_t **out, int *out_count)
 {
-    /* Batch user operation — simplified: just return empty for now */
-    (void)cc; (void)req;
-    *out = NULL;
-    *out_count = 0;
-    return 0;
+    /* Batch user editor (v1.5+). Each top-level FieldData contains nested
+     * subfields for one operation: delete, modify/rename, or create. */
+    hl_server_t *srv = cc->server;
+    if (!srv->account_mgr) return reply_empty(cc, req, out, out_count);
+
+    uint16_t fi;
+    for (fi = 0; fi < req->field_count; fi++) {
+        if (!hl_type_eq(req->fields[fi].type, FIELD_DATA)) continue;
+
+        /* Parse nested subfields */
+        hl_field_t sub[16];
+        int nsub = parse_subfields(req->fields[fi].data, req->fields[fi].data_len,
+                                    sub, 16);
+        if (nsub == 0) continue;
+
+        /* Extract common fields */
+        const hl_field_t *sf_login = find_subfield(sub, nsub, FIELD_USER_LOGIN);
+        const hl_field_t *sf_name = find_subfield(sub, nsub, FIELD_USER_NAME);
+        const hl_field_t *sf_pass = find_subfield(sub, nsub, FIELD_USER_PASSWORD);
+        const hl_field_t *sf_access = find_subfield(sub, nsub, FIELD_USER_ACCESS);
+        const hl_field_t *sf_data = find_subfield(sub, nsub, FIELD_DATA);
+
+        /* DELETE: only 1 subfield present */
+        if (nsub == 1) {
+            if (!hl_client_conn_authorize(cc, ACCESS_DELETE_USER)) {
+                int j; for (j = 0; j < nsub; j++) hl_field_free(&sub[j]);
+                return reply_err(cc, req, "You are not allowed to delete accounts.", out, out_count);
+            }
+            char login[128] = "";
+            if (sf_login) {
+                hl_field_decode_obfuscated_string(sf_login, login, sizeof(login));
+            } else if (sf_data) {
+                hl_field_decode_obfuscated_string(sf_data, login, sizeof(login));
+            }
+            if (login[0]) {
+                srv->account_mgr->vt->del(srv->account_mgr, login);
+            }
+            int j; for (j = 0; j < nsub; j++) hl_field_free(&sub[j]);
+            continue;
+        }
+
+        /* Decode login */
+        char login[128] = "";
+        if (sf_login) hl_field_decode_obfuscated_string(sf_login, login, sizeof(login));
+
+        /* Check for rename: FieldData contains old login */
+        char old_login[128] = "";
+        if (sf_data && sf_data->data_len > 0) {
+            hl_field_decode_obfuscated_string(sf_data, old_login, sizeof(old_login));
+        }
+        int is_rename = (old_login[0] && login[0] && strcmp(old_login, login) != 0);
+
+        /* Check if account exists */
+        const char *lookup = is_rename ? old_login : login;
+        hl_account_t *existing = srv->account_mgr->vt->get(srv->account_mgr, lookup);
+
+        if (existing) {
+            /* MODIFY / RENAME */
+            if (!hl_client_conn_authorize(cc, ACCESS_MODIFY_USER)) {
+                int j; for (j = 0; j < nsub; j++) hl_field_free(&sub[j]);
+                return reply_err(cc, req, "You are not allowed to modify accounts.", out, out_count);
+            }
+
+            if (sf_name && sf_name->data_len > 0) {
+                size_t nlen = sf_name->data_len < sizeof(existing->name) - 1 ?
+                              sf_name->data_len : sizeof(existing->name) - 1;
+                memset(existing->name, 0, sizeof(existing->name));
+                memcpy(existing->name, sf_name->data, nlen);
+            }
+            if (sf_access && sf_access->data_len >= 8) {
+                memcpy(existing->access, sf_access->data, 8);
+            }
+            /* Password: present with data > {0} = new password, {0} = keep, absent = clear */
+            if (sf_pass) {
+                if (!(sf_pass->data_len == 1 && sf_pass->data[0] == 0)) {
+                    char pw[128];
+                    hl_field_decode_obfuscated_string(sf_pass, pw, sizeof(pw));
+                    hl_password_hash(pw, existing->password, sizeof(existing->password));
+                }
+            } else {
+                hl_password_hash("", existing->password, sizeof(existing->password));
+            }
+
+            if (is_rename) {
+                srv->account_mgr->vt->update(srv->account_mgr, existing, login);
+            } else {
+                srv->account_mgr->vt->update(srv->account_mgr, existing, NULL);
+            }
+        } else {
+            /* CREATE */
+            if (!hl_client_conn_authorize(cc, ACCESS_CREATE_USER)) {
+                int j; for (j = 0; j < nsub; j++) hl_field_free(&sub[j]);
+                return reply_err(cc, req, "You are not allowed to create accounts.", out, out_count);
+            }
+
+            hl_account_t acct;
+            memset(&acct, 0, sizeof(acct));
+            strncpy(acct.login, login, sizeof(acct.login) - 1);
+            if (sf_name && sf_name->data_len > 0) {
+                size_t nlen = sf_name->data_len < sizeof(acct.name) - 1 ?
+                              sf_name->data_len : sizeof(acct.name) - 1;
+                memcpy(acct.name, sf_name->data, nlen);
+            }
+            if (sf_access && sf_access->data_len >= 8) {
+                memcpy(acct.access, sf_access->data, 8);
+            }
+            if (sf_pass && sf_pass->data_len > 0) {
+                char pw[128];
+                hl_field_decode_obfuscated_string(sf_pass, pw, sizeof(pw));
+                hl_password_hash(pw, acct.password, sizeof(acct.password));
+            }
+            srv->account_mgr->vt->create(srv->account_mgr, &acct);
+        }
+
+        int j; for (j = 0; j < nsub; j++) hl_field_free(&sub[j]);
+    }
+
+    return reply_empty(cc, req, out, out_count);
 }
 
 static int handle_list_users(hl_client_conn_t *cc, const hl_transaction_t *req,
@@ -1998,7 +2148,65 @@ static int handle_upload_folder(hl_client_conn_t *cc, const hl_transaction_t *re
 {
     if (!hl_client_conn_authorize(cc, ACCESS_UPLOAD_FOLDER))
         return reply_err(cc, req, "You are not allowed to upload folders.", out, out_count);
-    return reply_empty(cc, req, out, out_count);
+
+    hl_server_t *srv = cc->server;
+
+    /* Build destination directory path */
+    char dir_path[2048];
+    if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
+        return reply_err(cc, req, "Invalid file path.", out, out_count);
+
+    const hl_field_t *f_name = hl_transaction_get_field(req, FIELD_FILE_NAME);
+    if (!f_name || f_name->data_len == 0)
+        return reply_err(cc, req, "Missing folder name.", out, out_count);
+
+    char foldername[256];
+    size_t nlen = f_name->data_len < sizeof(foldername) - 1 ?
+                  f_name->data_len : sizeof(foldername) - 1;
+    memcpy(foldername, f_name->data, nlen);
+    foldername[nlen] = '\0';
+
+    char full_path[2048];
+    snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, foldername);
+
+    /* Create the root folder */
+    mkdir(full_path, 0755);
+
+    /* Get item count and transfer size from request */
+    const hl_field_t *f_count = hl_transaction_get_field(req, FIELD_FOLDER_ITEM_COUNT);
+    const hl_field_t *f_size = hl_transaction_get_field(req, FIELD_TRANSFER_SIZE);
+
+    /* Create transfer entry */
+    hl_file_transfer_t *ft = (hl_file_transfer_t *)calloc(1, sizeof(hl_file_transfer_t));
+    if (!ft) return reply_empty(cc, req, out, out_count);
+
+    ft->type = HL_XFER_FOLDER_UPLOAD;
+    ft->client_conn = cc;
+    ft->active = 1;
+    strncpy(ft->file_root, full_path, sizeof(ft->file_root) - 1);
+
+    if (f_count && f_count->data_len >= 2)
+        memcpy(ft->folder_item_count, f_count->data, 2);
+    if (f_size && f_size->data_len >= 4)
+        memcpy(ft->transfer_size, f_size->data, 4);
+
+    if (srv->file_transfer_mgr)
+        srv->file_transfer_mgr->vt->add(srv->file_transfer_mgr, ft);
+
+    /* Reply with ref_num */
+    hl_field_t fields[1];
+    hl_field_new(&fields[0], FIELD_REF_NUM, ft->ref_num, 4);
+
+    hl_transaction_t *reply = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
+    hl_transaction_new(reply, req->type, cc->id, fields, 1);
+    reply->is_reply = 1;
+    memcpy(reply->id, req->id, 4);
+    hl_field_free(&fields[0]);
+    free(ft);
+
+    *out = reply;
+    *out_count = 1;
+    return 0;
 }
 
 static int handle_download_banner(hl_client_conn_t *cc, const hl_transaction_t *req,

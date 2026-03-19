@@ -158,6 +158,11 @@
     NSImageView *_footerStatusDot;
     NSTextField *_footerStatusLabel;
     NSTextField *_footerPortLabel;
+
+    /* Native text editor window */
+    NSWindow *_textEditorWindow;
+    NSTextView *_textEditorTextView;
+    NSString *_textEditorFilePath;
 }
 
 /* App lifecycle */

@@ -253,6 +253,8 @@ static NSString *humanFileSize(unsigned long long size)
 - (void)refreshThreadedNewsArticles;
 - (void)setMessageBoardDirty:(BOOL)dirty;
 - (void)openTextConfigFileNamed:(NSString *)filename title:(NSString *)title;
+- (void)saveTextEditor:(id)sender;
+- (void)closeTextEditor:(id)sender;
 - (void)loadConfigFromDisk;
 - (void)writeConfigToDisk;
 - (void)ensureConfigScaffolding;
@@ -292,6 +294,9 @@ static NSString *humanFileSize(unsigned long long size)
         _newsSelectedCategoryKey = nil;
         _filesCurrentPath = nil;
         _messageBoardDirty = NO;
+        _textEditorWindow = nil;
+        _textEditorTextView = nil;
+        _textEditorFilePath = nil;
 
         /* Find server binary (supports Lemoniscate + MobiusAdmin names). */
         NSBundle *bundle = [NSBundle mainBundle];
@@ -368,6 +373,8 @@ static NSString *humanFileSize(unsigned long long size)
     [_newsArticleItems release];
     [_newsCategoriesByKey release];
     [_newsSelectedCategoryKey release];
+    [_textEditorFilePath release];
+    [_textEditorWindow release];
     [_filesCurrentPath release];
     [_processManager release];
     [_configDir release];
@@ -2584,11 +2591,96 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [@"" writeToFile:path atomically:YES
                 encoding:NSUTF8StringEncoding error:nil];
     }
-    if (![[NSWorkspace sharedWorkspace] openFile:path]) {
-        NSString *msg = [NSString stringWithFormat:@"Could not open %@.", title];
-        NSRunAlertPanel(@"Unable to Open File",
-                        @"%@",
-                        @"OK", nil, nil, msg);
+
+    NSString *text = [NSString stringWithContentsOfFile:path
+                                                encoding:NSUTF8StringEncoding
+                                                   error:nil];
+    if (!text) text = @"";
+
+    if (!_textEditorWindow) {
+        _textEditorWindow = [[NSWindow alloc]
+            initWithContentRect:NSMakeRect(0, 0, 640, 500)
+                      styleMask:(NSTitledWindowMask | NSClosableWindowMask |
+                                 NSMiniaturizableWindowMask | NSResizableWindowMask)
+                        backing:NSBackingStoreBuffered
+                          defer:NO];
+        [_textEditorWindow setReleasedWhenClosed:NO];
+        [_textEditorWindow setDelegate:(id)self];
+
+        NSView *content = [_textEditorWindow contentView];
+
+        NSScrollView *sv = [[NSScrollView alloc]
+            initWithFrame:NSMakeRect(8, 40, 624, 452)];
+        [sv setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+        [sv setHasVerticalScroller:YES];
+        [sv setBorderType:NSBezelBorder];
+
+        NSSize cs = [sv contentSize];
+        _textEditorTextView = [[NSTextView alloc]
+            initWithFrame:NSMakeRect(0, 0, cs.width, cs.height)];
+        [_textEditorTextView setMinSize:NSMakeSize(0, cs.height)];
+        [_textEditorTextView setMaxSize:NSMakeSize(1e7, 1e7)];
+        [_textEditorTextView setVerticallyResizable:YES];
+        [_textEditorTextView setHorizontallyResizable:NO];
+        [_textEditorTextView setAutoresizingMask:NSViewWidthSizable];
+        [[_textEditorTextView textContainer]
+            setContainerSize:NSMakeSize(cs.width, 1e7)];
+        [[_textEditorTextView textContainer] setWidthTracksTextView:YES];
+        [_textEditorTextView setFont:[NSFont fontWithName:@"Monaco" size:10.0]];
+        [sv setDocumentView:_textEditorTextView];
+        [content addSubview:sv];
+        [sv release];
+
+        NSButton *saveBtn = makeButton(@"Save", self, @selector(saveTextEditor:));
+        [saveBtn setFrame:NSMakeRect(552, 8, 80, 24)];
+        [saveBtn setAutoresizingMask:(NSViewMinXMargin | NSViewMaxYMargin)];
+        [content addSubview:saveBtn];
+        [saveBtn release];
+
+        NSButton *closeBtn = makeButton(@"Close", self, @selector(closeTextEditor:));
+        [closeBtn setFrame:NSMakeRect(466, 8, 80, 24)];
+        [closeBtn setAutoresizingMask:(NSViewMinXMargin | NSViewMaxYMargin)];
+        [content addSubview:closeBtn];
+        [closeBtn release];
+    }
+
+    [_textEditorFilePath release];
+    _textEditorFilePath = [path retain];
+    [_textEditorTextView setString:text];
+
+    NSString *winTitle = [NSString stringWithFormat:@"%@ - %@", title, [_mainWindow title]];
+    [_textEditorWindow setTitle:winTitle];
+    [_textEditorWindow makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+}
+
+- (void)saveTextEditor:(id)sender
+{
+    (void)sender;
+    if (!_textEditorFilePath || !_textEditorTextView) return;
+    NSString *text = [_textEditorTextView string];
+    if (![text writeToFile:_textEditorFilePath atomically:YES
+                  encoding:NSUTF8StringEncoding error:nil]) {
+        NSRunAlertPanel(@"Unable to Save", @"Could not save the file.", @"OK", nil, nil);
+        return;
+    }
+
+    if ([[_textEditorFilePath lastPathComponent] isEqualToString:@"MessageBoard.txt"]) {
+        [self loadMessageBoardText];
+    }
+}
+
+- (void)closeTextEditor:(id)sender
+{
+    (void)sender;
+    if (_textEditorWindow) [_textEditorWindow orderOut:nil];
+}
+
+- (void)windowWillClose:(NSNotification *)note
+{
+    if ([note object] == _textEditorWindow) {
+        [_textEditorFilePath release];
+        _textEditorFilePath = nil;
     }
 }
 
