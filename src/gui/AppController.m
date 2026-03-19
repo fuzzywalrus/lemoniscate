@@ -248,6 +248,63 @@ static unsigned long long parseLogByteCount(NSString *text)
     return value;
 }
 
+typedef struct {
+    const char *group;
+    const char *label;
+    const char *key;
+} AccountPermissionDef;
+
+static const AccountPermissionDef kAccountPermissionDefs[] = {
+    {"Files", "Download Files", "DownloadFile"},
+    {"Files", "Download Folders", "DownloadFolder"},
+    {"Files", "Upload Files", "UploadFile"},
+    {"Files", "Upload Folders", "UploadFolder"},
+    {"Files", "Upload Anywhere", "UploadAnywhere"},
+    {"Files", "Delete Files", "DeleteFile"},
+    {"Files", "Delete Folders", "DeleteFolder"},
+    {"Files", "Rename Files", "RenameFile"},
+    {"Files", "Rename Folders", "RenameFolder"},
+    {"Files", "Move Files", "MoveFile"},
+    {"Files", "Move Folders", "MoveFolder"},
+    {"Files", "Create Folders", "CreateFolder"},
+    {"Files", "Set File Comments", "SetFileComment"},
+    {"Files", "Set Folder Comments", "SetFolderComment"},
+    {"Files", "View Drop Boxes", "ViewDropBoxes"},
+    {"Files", "Make Aliases", "MakeAlias"},
+
+    {"Chat", "Read Chat", "ReadChat"},
+    {"Chat", "Send Chat", "SendChat"},
+    {"Chat", "Open Private Chat", "OpenChat"},
+    {"Chat", "Close Chat", "CloseChat"},
+
+    {"Users", "Create Accounts", "CreateUser"},
+    {"Users", "Delete Accounts", "DeleteUser"},
+    {"Users", "Read Accounts", "OpenUser"},
+    {"Users", "Modify Accounts", "ModifyUser"},
+    {"Users", "Change Own Password", "ChangeOwnPass"},
+    {"Users", "Disconnect Users", "DisconnectUser"},
+    {"Users", "Cannot Be Disconnected", "CannotBeDisconnected"},
+    {"Users", "Get Client Info", "GetClientInfo"},
+    {"Users", "Show In List", "ShowInList"},
+
+    {"News", "Read Articles", "NewsReadArt"},
+    {"News", "Post Articles", "NewsPostArt"},
+    {"News", "Delete Articles", "NewsDeleteArt"},
+    {"News", "Create Categories", "NewsCreateCat"},
+    {"News", "Delete Categories", "NewsDeleteCat"},
+    {"News", "Create News Bundles", "NewsCreateFldr"},
+    {"News", "Delete News Bundles", "NewsDeleteFldr"},
+
+    {"Messaging", "Send Private Messages", "SendPrivMsg"},
+    {"Messaging", "Broadcast", "Broadcast"},
+
+    {"Misc", "Use Any Name", "AnyName"},
+    {"Misc", "No Agreement Required", "NoAgreement"}
+};
+
+static const unsigned kAccountPermissionDefCount =
+    sizeof(kAccountPermissionDefs) / sizeof(kAccountPermissionDefs[0]);
+
 @interface AppController ()
 - (NSView *)createSettingsPanel;
 - (NSView *)createRightPanel;
@@ -270,6 +327,9 @@ static unsigned long long parseLogByteCount(NSString *text)
 - (NSDictionary *)loadAccountDataForLogin:(NSString *)login;
 - (void)populateAccountEditorFromData:(NSDictionary *)acct;
 - (void)populateAccountEditorForNewAccount;
+- (void)rebuildAccountPermissionUI;
+- (void)syncPermissionCheckboxesFromAccess;
+- (void)updateAccountPasswordStatus;
 - (void)updateAccountTemplateFromAccessKeys;
 - (NSMutableSet *)guestAccessTemplate;
 - (NSMutableSet *)adminAccessTemplate;
@@ -281,6 +341,8 @@ static unsigned long long parseLogByteCount(NSString *text)
 - (void)loadThreadedNewsCategories;
 - (void)writeThreadedNewsCategories;
 - (void)refreshThreadedNewsArticles;
+- (NSString *)nextThreadedNewsArticleIDForCategory:(NSDictionary *)category;
+- (void)openNewsArticleEditorForNew:(BOOL)isNew;
 - (void)setMessageBoardDirty:(BOOL)dirty;
 - (void)openTextConfigFileNamed:(NSString *)filename title:(NSString *)title;
 - (void)saveTextEditor:(id)sender;
@@ -322,6 +384,7 @@ static unsigned long long parseLogByteCount(NSString *text)
         _accountsItems = [[NSMutableArray alloc] init];
         _logEntries = [[NSMutableArray alloc] init];
         _accountAccessKeys = [[NSMutableSet alloc] init];
+        _accountPermissionCheckboxes = [[NSMutableDictionary alloc] init];
         _trackerItems = [[NSMutableArray alloc] init];
         _ignoreFileItems = [[NSMutableArray alloc] init];
         _bannedIPs = [[NSMutableArray alloc] init];
@@ -340,11 +403,24 @@ static unsigned long long parseLogByteCount(NSString *text)
         _newsArticleItems = [[NSMutableArray alloc] init];
         _newsCategoriesByKey = [[NSMutableDictionary alloc] init];
         _newsSelectedCategoryKey = nil;
+        _newsSelectedArticleID = nil;
         _filesCurrentPath = nil;
         _messageBoardDirty = NO;
+        _newsDateFormatPopup = nil;
+        _newsDelimiterField = nil;
         _textEditorWindow = nil;
         _textEditorTextView = nil;
         _textEditorFilePath = nil;
+        _newAccountWindow = nil;
+        _newAccountLoginField = nil;
+        _newAccountNameField = nil;
+        _newsArticleEditorWindow = nil;
+        _newsArticleTitleField = nil;
+        _newsArticlePosterField = nil;
+        _newsArticleDateField = nil;
+        _newsArticleBodyTextView = nil;
+        _newsEditingCategoryKey = nil;
+        _newsEditingArticleID = nil;
         _wizardWindow = nil;
         _wizardStepContainer = nil;
         _wizardStepLabel = nil;
@@ -429,6 +505,7 @@ static unsigned long long parseLogByteCount(NSString *text)
     [_accountsItems release];
     [_logEntries release];
     [_accountAccessKeys release];
+    [_accountPermissionCheckboxes release];
     [_trackerItems release];
     [_ignoreFileItems release];
     [_bannedIPs release];
@@ -448,8 +525,13 @@ static unsigned long long parseLogByteCount(NSString *text)
     [_newsArticleItems release];
     [_newsCategoriesByKey release];
     [_newsSelectedCategoryKey release];
+    [_newsSelectedArticleID release];
+    [_newsEditingCategoryKey release];
+    [_newsEditingArticleID release];
     [_textEditorFilePath release];
     [_textEditorWindow release];
+    [_newAccountWindow release];
+    [_newsArticleEditorWindow release];
     [_wizardWindow release];
     [_aboutWindow release];
     [_filesCurrentPath release];
@@ -607,6 +689,17 @@ static unsigned long long parseLogByteCount(NSString *text)
             } else if (![rawVal isEqualToString:@"[]"]) {
                 parseInlineYAMLArray(rawVal, _ignoreFileItems);
             }
+        } else if ([key isEqualToString:@"NewsDateFormat"]) {
+            if (_newsDateFormatPopup) {
+                NSInteger idx = [_newsDateFormatPopup indexOfItemWithTitle:val];
+                if (idx < 0 && [val length] > 0) {
+                    [_newsDateFormatPopup addItemWithTitle:val];
+                    idx = [_newsDateFormatPopup indexOfItemWithTitle:val];
+                }
+                if (idx >= 0) [_newsDateFormatPopup selectItemAtIndex:idx];
+            }
+        } else if ([key isEqualToString:@"NewsDelimiter"]) {
+            if (_newsDelimiterField) [_newsDelimiterField setStringValue:val];
         } else if ([key isEqualToString:@"PreserveResourceForks"]) {
             if (_preserveForkCheckbox) {
                 [_preserveForkCheckbox setState:yamlBoolValue(val) ? NSOnState : NSOffState];
@@ -644,6 +737,16 @@ static unsigned long long parseLogByteCount(NSString *text)
     NSString *fileRoot = _fileRootField ? [_fileRootField stringValue] : @"";
     BOOL enableBonjour = _bonjourCheckbox ? ([_bonjourCheckbox state] == NSOnState) : YES;
     BOOL enableTracker = _trackerCheckbox ? ([_trackerCheckbox state] == NSOnState) : NO;
+    NSString *newsDateFormat = _newsDateFormatPopup ?
+        [_newsDateFormatPopup titleOfSelectedItem] : @"Jan02 15:04";
+    NSString *newsDelimiter = _newsDelimiterField ?
+        [_newsDelimiterField stringValue] : @"__________________________________________________________";
+    if (!newsDateFormat || [newsDateFormat length] == 0) {
+        newsDateFormat = @"Jan02 15:04";
+    }
+    if (!newsDelimiter || [newsDelimiter length] == 0) {
+        newsDelimiter = @"__________________________________________________________";
+    }
     BOOL preserveForks = _preserveForkCheckbox ? ([_preserveForkCheckbox state] == NSOnState) : NO;
     int maxDownloads = _maxDownloadsField ? [_maxDownloadsField intValue] : 0;
     int maxDLPerClient = _maxDLPerClientField ? [_maxDLPerClientField intValue] : 0;
@@ -664,6 +767,8 @@ static unsigned long long parseLogByteCount(NSString *text)
     NSString *qDesc = [desc stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
     NSString *qBanner = [banner stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
     NSString *qRoot = [fileRoot stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+    NSString *qNewsDate = [newsDateFormat stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+    NSString *qNewsDelim = [newsDelimiter stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
 
     NSMutableString *yaml = [NSMutableString stringWithFormat:
         @"Name: \"%@\"\n"
@@ -697,12 +802,15 @@ static unsigned long long parseLogByteCount(NSString *text)
     }
 
     [yaml appendFormat:
+        @"NewsDateFormat: \"%@\"\n"
+        @"NewsDelimiter: \"%@\"\n"
         @"EnableBonjour: %@\n"
         @"Encoding: macintosh\n"
         @"MaxDownloads: %d\n"
         @"MaxDownloadsPerClient: %d\n"
         @"MaxConnectionsPerIP: %d\n"
         @"PreserveResourceForks: %@\n",
+        qNewsDate, qNewsDelim,
         enableBonjour ? @"true" : @"false",
         maxDownloads, maxDLPerClient, maxConnPerIP,
         preserveForks ? @"true" : @"false"];
@@ -1275,6 +1383,40 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     /* ===== Limits ===== */
     {
+        float boxH = 2 * ROW_HEIGHT + 20;
+        NSBox *box = makeSection(@"News", SECTION_MARGIN, y,
+                                  secWidth, boxH);
+        NSView *c = [box contentView];
+        float iy = 4;
+
+        _newsDateFormatPopup = [[NSPopUpButton alloc]
+            initWithFrame:NSMakeRect(0, 0, 220, 24) pullsDown:NO];
+        [_newsDateFormatPopup addItemWithTitle:@"Jan02 15:04"];
+        [_newsDateFormatPopup addItemWithTitle:@"01/02/2006 3:04 PM"];
+        [_newsDateFormatPopup addItemWithTitle:@"02/01/2006 15:04"];
+        [_newsDateFormatPopup addItemWithTitle:@"2006-01-02 15:04"];
+        [_newsDateFormatPopup addItemWithTitle:@"Mon Jan 2 15:04:05"];
+        [_newsDateFormatPopup selectItemAtIndex:0];
+        NSTextField *dateFmtLabel = makeLabel(@"Date Format:", 11.0, NO);
+        [dateFmtLabel setAlignment:NSRightTextAlignment];
+        [dateFmtLabel setFrame:NSMakeRect(6, iy + 3, LABEL_WIDTH - 12, 17)];
+        [c addSubview:dateFmtLabel];
+        [dateFmtLabel release];
+        [_newsDateFormatPopup setFrame:NSMakeRect(LABEL_WIDTH - 4, iy, 220, 24)];
+        [c addSubview:_newsDateFormatPopup];
+        iy += ROW_HEIGHT;
+
+        _newsDelimiterField = makeEditField(fieldWidth);
+        [_newsDelimiterField setStringValue:@"__________________________________________________________"];
+        iy = addRow(c, @"Delimiter:", _newsDelimiterField, iy, fieldWidth);
+
+        [doc addSubview:box];
+        [box release];
+        y += boxH + 8;
+    }
+
+    /* ===== Limits ===== */
+    {
         float boxH = 3 * ROW_HEIGHT + 24;
         NSBox *box = makeSection(@"Limits", SECTION_MARGIN, y,
                                   secWidth, boxH);
@@ -1758,22 +1900,46 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [ec addSubview:_accountTemplatePopup];
 
     _accountNewButton = makeButton(@"New", self, @selector(newAccount:));
-    [_accountNewButton setFrame:NSMakeRect(84, 356, 70, 24)];
+    [_accountNewButton setFrame:NSMakeRect(84, 356, 64, 24)];
     [ec addSubview:_accountNewButton];
 
     _accountDeleteButton = makeButton(@"Delete", self, @selector(deleteAccount:));
-    [_accountDeleteButton setFrame:NSMakeRect(160, 356, 70, 24)];
+    [_accountDeleteButton setFrame:NSMakeRect(152, 356, 64, 24)];
     [ec addSubview:_accountDeleteButton];
 
     _accountSaveButton = makeButton(@"Save", self, @selector(saveAccount:));
-    [_accountSaveButton setFrame:NSMakeRect(236, 356, 70, 24)];
+    [_accountSaveButton setFrame:NSMakeRect(220, 356, 64, 24)];
     [ec addSubview:_accountSaveButton];
 
-    l = makeLabel(@"Templates apply common permission sets. Custom preserves existing Access flags.", 10.0, NO);
+    _accountResetPasswordButton = makeButton(@"Reset Password", self,
+                                             @selector(resetAccountPassword:));
+    [_accountResetPasswordButton setFrame:NSMakeRect(288, 356, 102, 24)];
+    [ec addSubview:_accountResetPasswordButton];
+
+    _accountPasswordStatusLabel = makeLabel(@"Password: none", 10.0, NO);
+    [_accountPasswordStatusLabel setFrame:NSMakeRect(84, 334, 306, 14)];
+    [_accountPasswordStatusLabel setTextColor:[NSColor grayColor]];
+    [ec addSubview:_accountPasswordStatusLabel];
+
+    l = makeLabel(@"Templates and permissions map directly to YAML Access keys.", 10.0, NO);
     [l setTextColor:[NSColor grayColor]];
-    [l setFrame:NSMakeRect(84, 330, 290, 30)];
+    [l setFrame:NSMakeRect(84, 318, 306, 14)];
     [ec addSubview:l];
     [l release];
+
+    _accountPermissionsScrollView = [[NSScrollView alloc]
+        initWithFrame:NSMakeRect(10, 8, 386, 304)];
+    [_accountPermissionsScrollView setHasVerticalScroller:YES];
+    [_accountPermissionsScrollView setBorderType:NSBezelBorder];
+    [_accountPermissionsScrollView setAutoresizingMask:
+        (NSViewWidthSizable | NSViewHeightSizable)];
+
+    _accountPermissionsContentView = [[FlippedView alloc]
+        initWithFrame:NSMakeRect(0, 0, 366, 640)];
+    [_accountPermissionsContentView setAutoresizingMask:NSViewWidthSizable];
+    [_accountPermissionsScrollView setDocumentView:_accountPermissionsContentView];
+    [ec addSubview:_accountPermissionsScrollView];
+    [self rebuildAccountPermissionUI];
 
     [editor release];
 
@@ -2161,31 +2327,45 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         initWithFrame:NSMakeRect(0, 0, 630, 560)];
     [_newsThreadedView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
 
-    _newsNewCategoryField = makeEditField(180);
-    [_newsNewCategoryField setFrame:NSMakeRect(8, 530, 180, 22)];
+    _newsNewCategoryField = makeEditField(170);
+    [_newsNewCategoryField setFrame:NSMakeRect(8, 530, 170, 22)];
     [_newsNewCategoryField setAutoresizingMask:NSViewMaxXMargin];
     [_newsThreadedView addSubview:_newsNewCategoryField];
 
     NSButton *addCatBtn = makeButton(@"Add Category", self,
                                      @selector(addNewsCategory:));
-    [addCatBtn setFrame:NSMakeRect(192, 528, 98, 24)];
+    [addCatBtn setFrame:NSMakeRect(182, 528, 90, 24)];
     [addCatBtn setAutoresizingMask:NSViewMaxXMargin];
     [_newsThreadedView addSubview:addCatBtn];
     [addCatBtn release];
 
     _newsDeleteCategoryButton = makeButton(@"Delete Category", self,
                                            @selector(deleteNewsCategory:));
-    [_newsDeleteCategoryButton setFrame:NSMakeRect(294, 528, 108, 24)];
+    [_newsDeleteCategoryButton setFrame:NSMakeRect(276, 528, 98, 24)];
     [_newsDeleteCategoryButton setAutoresizingMask:NSViewMaxXMargin];
     [_newsDeleteCategoryButton setEnabled:NO];
     [_newsThreadedView addSubview:_newsDeleteCategoryButton];
 
-    NSButton *refreshThreadedBtn = makeButton(@"Refresh", self,
-                                              @selector(refreshThreadedNews:));
-    [refreshThreadedBtn setFrame:NSMakeRect(544, 528, 80, 24)];
-    [refreshThreadedBtn setAutoresizingMask:(NSViewMinXMargin | NSViewMinYMargin)];
-    [_newsThreadedView addSubview:refreshThreadedBtn];
-    [refreshThreadedBtn release];
+    _newsAddArticleButton = makeButton(@"Add Article", self,
+                                       @selector(addNewsArticle:));
+    [_newsAddArticleButton setFrame:NSMakeRect(378, 528, 82, 24)];
+    [_newsAddArticleButton setAutoresizingMask:NSViewMinXMargin];
+    [_newsAddArticleButton setEnabled:NO];
+    [_newsThreadedView addSubview:_newsAddArticleButton];
+
+    _newsEditArticleButton = makeButton(@"Edit", self,
+                                        @selector(editNewsArticle:));
+    [_newsEditArticleButton setFrame:NSMakeRect(464, 528, 70, 24)];
+    [_newsEditArticleButton setAutoresizingMask:NSViewMinXMargin];
+    [_newsEditArticleButton setEnabled:NO];
+    [_newsThreadedView addSubview:_newsEditArticleButton];
+
+    _newsDeleteArticleButton = makeButton(@"Delete", self,
+                                          @selector(deleteNewsArticle:));
+    [_newsDeleteArticleButton setFrame:NSMakeRect(538, 528, 88, 24)];
+    [_newsDeleteArticleButton setAutoresizingMask:NSViewMinXMargin];
+    [_newsDeleteArticleButton setEnabled:NO];
+    [_newsThreadedView addSubview:_newsDeleteArticleButton];
 
     NSScrollView *catsScroll = [[NSScrollView alloc]
         initWithFrame:NSMakeRect(4, 4, 220, 522)];
@@ -2982,8 +3162,113 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 - (void)newAccount:(id)sender
 {
     (void)sender;
+    if (!_newAccountWindow) {
+        _newAccountWindow = [[NSWindow alloc]
+            initWithContentRect:NSMakeRect(0, 0, 360, 176)
+                      styleMask:(NSTitledWindowMask | NSClosableWindowMask)
+                        backing:NSBackingStoreBuffered
+                          defer:NO];
+        [_newAccountWindow setReleasedWhenClosed:NO];
+        [_newAccountWindow setTitle:@"New Account"];
+        [_newAccountWindow setDelegate:(id)self];
+
+        NSView *content = [_newAccountWindow contentView];
+
+        NSTextField *ll = makeLabel(@"Login:", 11.0, NO);
+        [ll setAlignment:NSRightTextAlignment];
+        [ll setFrame:NSMakeRect(14, 118, 70, 18)];
+        [content addSubview:ll];
+        [ll release];
+
+        _newAccountLoginField = makeEditField(246);
+        [_newAccountLoginField setFrame:NSMakeRect(90, 114, 246, 22)];
+        [content addSubview:_newAccountLoginField];
+
+        NSTextField *nl = makeLabel(@"Display Name:", 11.0, NO);
+        [nl setAlignment:NSRightTextAlignment];
+        [nl setFrame:NSMakeRect(14, 86, 70, 18)];
+        [content addSubview:nl];
+        [nl release];
+
+        _newAccountNameField = makeEditField(246);
+        [_newAccountNameField setFrame:NSMakeRect(90, 82, 246, 22)];
+        [content addSubview:_newAccountNameField];
+
+        NSTextField *hint = makeLabel(
+            @"Login: lowercase letters, numbers, '-' or '_'.",
+            10.0, NO);
+        [hint setTextColor:[NSColor grayColor]];
+        [hint setFrame:NSMakeRect(16, 54, 320, 14)];
+        [content addSubview:hint];
+        [hint release];
+
+        NSButton *cancelBtn = makeButton(@"Cancel", self, @selector(cancelNewAccount:));
+        [cancelBtn setFrame:NSMakeRect(188, 16, 70, 24)];
+        [content addSubview:cancelBtn];
+        [cancelBtn release];
+
+        NSButton *createBtn = makeButton(@"Create", self, @selector(createNewAccount:));
+        [createBtn setFrame:NSMakeRect(266, 16, 70, 24)];
+        [content addSubview:createBtn];
+        [createBtn release];
+    }
+
+    [_newAccountLoginField setStringValue:@""];
+    [_newAccountNameField setStringValue:@""];
+    [_newAccountWindow center];
+    [_newAccountWindow makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+}
+
+- (void)cancelNewAccount:(id)sender
+{
+    (void)sender;
+    if (_newAccountWindow) [_newAccountWindow orderOut:nil];
+}
+
+- (void)createNewAccount:(id)sender
+{
+    (void)sender;
+    NSString *login = [trimmedString([_newAccountLoginField stringValue]) lowercaseString];
+    if ([login length] == 0) {
+        NSRunAlertPanel(@"Invalid Login", @"Login cannot be empty.", @"OK", nil, nil);
+        return;
+    }
+
+    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
+        @"abcdefghijklmnopqrstuvwxyz0123456789-_"];
+    unsigned i;
+    for (i = 0; i < [login length]; i++) {
+        unichar ch = [login characterAtIndex:i];
+        if (![allowed characterIsMember:ch]) {
+            NSRunAlertPanel(@"Invalid Login",
+                            @"Use lowercase letters, numbers, '-' or '_'.",
+                            @"OK", nil, nil);
+            return;
+        }
+    }
+
+    NSString *usersDir = [_configDir stringByAppendingPathComponent:@"Users"];
+    NSString *path = [usersDir stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"%@.yaml", login]];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        NSRunAlertPanel(@"Account Exists",
+                        @"An account with that login already exists.",
+                        @"OK", nil, nil);
+        return;
+    }
+
     [_accountsTableView deselectAll:nil];
     [self populateAccountEditorForNewAccount];
+    [_accountLoginField setStringValue:login];
+
+    NSString *name = trimmedString([_newAccountNameField stringValue]);
+    if ([name length] == 0) name = login;
+    [_accountNameField setStringValue:name];
+    [_accountFileRootField setStringValue:@""];
+
+    [self saveAccount:nil];
+    [self cancelNewAccount:nil];
 }
 
 - (void)accountTemplateChanged:(id)sender
@@ -2997,6 +3282,37 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_accountAccessKeys removeAllObjects];
         [_accountAccessKeys unionSet:[self adminAccessTemplate]];
     }
+    [self syncPermissionCheckboxesFromAccess];
+}
+
+- (void)toggleAccountPermission:(id)sender
+{
+    NSButton *cb = (NSButton *)sender;
+    NSString *key = [cb toolTip];
+    if (!key || [key length] == 0) return;
+
+    if ([cb state] == NSOnState) {
+        [_accountAccessKeys addObject:key];
+    } else {
+        [_accountAccessKeys removeObject:key];
+    }
+    [self updateAccountTemplateFromAccessKeys];
+}
+
+- (void)resetAccountPassword:(id)sender
+{
+    (void)sender;
+    if (!_selectedAccountLogin || [_selectedAccountLogin length] == 0) return;
+
+    int rc = NSRunAlertPanel(@"Reset Password",
+                             @"Clear password for \"%@\" so login requires no password?",
+                             @"Reset", @"Cancel", nil, _selectedAccountLogin);
+    if (rc != NSAlertDefaultReturn) return;
+
+    [_selectedAccountPassword release];
+    _selectedAccountPassword = [@"" retain];
+    [self updateAccountPasswordStatus];
+    [self saveAccount:nil];
 }
 
 - (void)saveAccount:(id)sender
@@ -3063,6 +3379,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     [_selectedAccountLogin release];
     _selectedAccountLogin = [login retain];
+    [self updateAccountPasswordStatus];
     [self refreshAccountsList:nil];
     NSUInteger row = [_accountsItems indexOfObject:login];
     if (row != NSNotFound) {
@@ -3303,6 +3620,234 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [self loadThreadedNewsCategories];
 }
 
+- (NSString *)nextThreadedNewsArticleIDForCategory:(NSDictionary *)category
+{
+    NSDictionary *articles = category ? [category objectForKey:@"articles"] : nil;
+    NSArray *ids = articles ? [articles allKeys] : [NSArray array];
+    int maxID = 0;
+    unsigned i;
+    for (i = 0; i < [ids count]; i++) {
+        int v = [[ids objectAtIndex:i] intValue];
+        if (v > maxID) maxID = v;
+    }
+    if (maxID > 0) {
+        return [NSString stringWithFormat:@"%d", maxID + 1];
+    }
+    return [NSString stringWithFormat:@"%u", (unsigned)[[NSDate date] timeIntervalSince1970]];
+}
+
+- (void)openNewsArticleEditorForNew:(BOOL)isNew
+{
+    if (!_newsSelectedCategoryKey || [_newsSelectedCategoryKey length] == 0) {
+        NSRunAlertPanel(@"Select Category",
+                        @"Select a category before editing articles.",
+                        @"OK", nil, nil);
+        return;
+    }
+
+    if (_newsArticlesTableView && !isNew) {
+        int row = [_newsArticlesTableView selectedRow];
+        if (row < 0 || row >= (int)[_newsArticleItems count]) return;
+    }
+
+    if (!_newsArticleEditorWindow) {
+        _newsArticleEditorWindow = [[NSWindow alloc]
+            initWithContentRect:NSMakeRect(0, 0, 640, 430)
+                      styleMask:(NSTitledWindowMask | NSClosableWindowMask |
+                                 NSMiniaturizableWindowMask | NSResizableWindowMask)
+                        backing:NSBackingStoreBuffered
+                          defer:NO];
+        [_newsArticleEditorWindow setReleasedWhenClosed:NO];
+        [_newsArticleEditorWindow setDelegate:(id)self];
+
+        NSView *content = [_newsArticleEditorWindow contentView];
+
+        NSTextField *tl = makeLabel(@"Title:", 11.0, NO);
+        [tl setAlignment:NSRightTextAlignment];
+        [tl setFrame:NSMakeRect(8, 396, 70, 17)];
+        [content addSubview:tl];
+        [tl release];
+        _newsArticleTitleField = makeEditField(548);
+        [_newsArticleTitleField setFrame:NSMakeRect(84, 392, 548, 22)];
+        [content addSubview:_newsArticleTitleField];
+
+        NSTextField *pl = makeLabel(@"Poster:", 11.0, NO);
+        [pl setAlignment:NSRightTextAlignment];
+        [pl setFrame:NSMakeRect(8, 364, 70, 17)];
+        [content addSubview:pl];
+        [pl release];
+        _newsArticlePosterField = makeEditField(208);
+        [_newsArticlePosterField setFrame:NSMakeRect(84, 360, 208, 22)];
+        [content addSubview:_newsArticlePosterField];
+
+        NSTextField *dl = makeLabel(@"Date:", 11.0, NO);
+        [dl setAlignment:NSRightTextAlignment];
+        [dl setFrame:NSMakeRect(308, 364, 60, 17)];
+        [content addSubview:dl];
+        [dl release];
+        _newsArticleDateField = makeEditField(264);
+        [_newsArticleDateField setFrame:NSMakeRect(370, 360, 262, 22)];
+        [content addSubview:_newsArticleDateField];
+
+        NSScrollView *bodySV = [[NSScrollView alloc]
+            initWithFrame:NSMakeRect(8, 40, 624, 312)];
+        [bodySV setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+        [bodySV setHasVerticalScroller:YES];
+        [bodySV setBorderType:NSBezelBorder];
+        _newsArticleBodyTextView = [[NSTextView alloc]
+            initWithFrame:NSMakeRect(0, 0, 624, 312)];
+        [_newsArticleBodyTextView setMinSize:NSMakeSize(0, 312)];
+        [_newsArticleBodyTextView setMaxSize:NSMakeSize(1e7, 1e7)];
+        [_newsArticleBodyTextView setVerticallyResizable:YES];
+        [_newsArticleBodyTextView setHorizontallyResizable:NO];
+        [_newsArticleBodyTextView setAutoresizingMask:NSViewWidthSizable];
+        [[_newsArticleBodyTextView textContainer]
+            setContainerSize:NSMakeSize(624, 1e7)];
+        [[_newsArticleBodyTextView textContainer] setWidthTracksTextView:YES];
+        [_newsArticleBodyTextView setFont:[NSFont fontWithName:@"Monaco" size:10.0]];
+        [bodySV setDocumentView:_newsArticleBodyTextView];
+        [content addSubview:bodySV];
+        [bodySV release];
+
+        NSButton *cancelBtn = makeButton(@"Cancel", self,
+                                         @selector(cancelNewsArticleEditor:));
+        [cancelBtn setFrame:NSMakeRect(464, 8, 80, 24)];
+        [cancelBtn setAutoresizingMask:(NSViewMinXMargin | NSViewMaxYMargin)];
+        [content addSubview:cancelBtn];
+        [cancelBtn release];
+
+        NSButton *saveBtn = makeButton(@"Save", self,
+                                       @selector(saveNewsArticleEditor:));
+        [saveBtn setFrame:NSMakeRect(552, 8, 80, 24)];
+        [saveBtn setAutoresizingMask:(NSViewMinXMargin | NSViewMaxYMargin)];
+        [content addSubview:saveBtn];
+        [saveBtn release];
+    }
+
+    [_newsEditingCategoryKey release];
+    _newsEditingCategoryKey = [_newsSelectedCategoryKey retain];
+    [_newsEditingArticleID release];
+    _newsEditingArticleID = nil;
+
+    if (isNew) {
+        [_newsArticleTitleField setStringValue:@""];
+        [_newsArticlePosterField setStringValue:@"admin"];
+        NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+        [fmt setDateFormat:@"yyyy-MM-dd HH:mm"];
+        [_newsArticleDateField setStringValue:[fmt stringFromDate:[NSDate date]]];
+        [fmt release];
+        [_newsArticleBodyTextView setString:@""];
+        [_newsArticleEditorWindow setTitle:@"Add News Article"];
+    } else {
+        int row = [_newsArticlesTableView selectedRow];
+        if (row < 0 || row >= (int)[_newsArticleItems count]) return;
+        NSDictionary *item = [_newsArticleItems objectAtIndex:(unsigned)row];
+        NSString *articleID = [item objectForKey:@"id"];
+        if (articleID) _newsEditingArticleID = [articleID retain];
+        [_newsArticleTitleField setStringValue:[item objectForKey:@"title"] ? [item objectForKey:@"title"] : @""];
+        [_newsArticlePosterField setStringValue:[item objectForKey:@"poster"] ? [item objectForKey:@"poster"] : @""];
+        [_newsArticleDateField setStringValue:[item objectForKey:@"date"] ? [item objectForKey:@"date"] : @""];
+        [_newsArticleBodyTextView setString:[item objectForKey:@"body"] ? [item objectForKey:@"body"] : @""];
+        [_newsArticleEditorWindow setTitle:@"Edit News Article"];
+    }
+
+    [_newsArticleEditorWindow center];
+    [_newsArticleEditorWindow makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+}
+
+- (void)addNewsArticle:(id)sender
+{
+    (void)sender;
+    [self openNewsArticleEditorForNew:YES];
+}
+
+- (void)editNewsArticle:(id)sender
+{
+    (void)sender;
+    [self openNewsArticleEditorForNew:NO];
+}
+
+- (void)deleteNewsArticle:(id)sender
+{
+    (void)sender;
+    if (!_newsSelectedCategoryKey || !_newsSelectedArticleID) return;
+
+    int rc = NSRunAlertPanel(@"Delete Article",
+                             @"Delete selected article from \"%@\"?",
+                             @"Delete", @"Cancel", nil, _newsSelectedCategoryKey);
+    if (rc != NSAlertDefaultReturn) return;
+
+    NSMutableDictionary *cat = [_newsCategoriesByKey objectForKey:_newsSelectedCategoryKey];
+    NSMutableDictionary *articles = [cat objectForKey:@"articles"];
+    if (!articles) return;
+    [articles removeObjectForKey:_newsSelectedArticleID];
+    [_newsSelectedArticleID release];
+    _newsSelectedArticleID = nil;
+    [self writeThreadedNewsCategories];
+    [self loadThreadedNewsCategories];
+}
+
+- (void)cancelNewsArticleEditor:(id)sender
+{
+    (void)sender;
+    if (_newsArticleEditorWindow) [_newsArticleEditorWindow orderOut:nil];
+}
+
+- (void)saveNewsArticleEditor:(id)sender
+{
+    (void)sender;
+    if (!_newsEditingCategoryKey || [_newsEditingCategoryKey length] == 0) return;
+
+    NSString *title = trimmedString([_newsArticleTitleField stringValue]);
+    NSString *poster = trimmedString([_newsArticlePosterField stringValue]);
+    NSString *date = trimmedString([_newsArticleDateField stringValue]);
+    NSString *body = [_newsArticleBodyTextView string];
+    if ([title length] == 0) {
+        NSRunAlertPanel(@"Missing Title", @"Article title is required.", @"OK", nil, nil);
+        return;
+    }
+    if ([poster length] == 0) poster = @"admin";
+    if ([date length] == 0) date = @"";
+    if (!body) body = @"";
+
+    NSMutableDictionary *cat = [_newsCategoriesByKey objectForKey:_newsEditingCategoryKey];
+    if (!cat) return;
+    NSMutableDictionary *articles = [cat objectForKey:@"articles"];
+    if (!articles) {
+        articles = [NSMutableDictionary dictionary];
+        [cat setObject:articles forKey:@"articles"];
+    }
+
+    NSString *articleID = _newsEditingArticleID;
+    if (!articleID || [articleID length] == 0) {
+        articleID = [self nextThreadedNewsArticleIDForCategory:cat];
+    }
+
+    NSString *safeTitle = [title stringByReplacingOccurrencesOfString:@"\n" withString:@"\\n"];
+    NSString *safePoster = [poster stringByReplacingOccurrencesOfString:@"\n" withString:@"\\n"];
+    NSString *safeDate = [date stringByReplacingOccurrencesOfString:@"\n" withString:@"\\n"];
+    NSString *safeBody = [body stringByReplacingOccurrencesOfString:@"\n" withString:@"\\n"];
+
+    NSMutableDictionary *article = [NSMutableDictionary dictionaryWithObjectsAndKeys:
+        articleID, @"id",
+        safeTitle, @"title",
+        safePoster, @"poster",
+        safeDate, @"date",
+        safeBody, @"body",
+        nil];
+    [articles setObject:article forKey:articleID];
+
+    [_newsSelectedCategoryKey release];
+    _newsSelectedCategoryKey = [_newsEditingCategoryKey retain];
+    [_newsSelectedArticleID release];
+    _newsSelectedArticleID = [articleID retain];
+
+    [self writeThreadedNewsCategories];
+    [self loadThreadedNewsCategories];
+    [self cancelNewsArticleEditor:nil];
+}
+
 - (void)clearLogs:(id)sender
 {
     (void)sender;
@@ -3447,6 +3992,14 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     if ([note object] == _textEditorWindow) {
         [_textEditorFilePath release];
         _textEditorFilePath = nil;
+    } else if ([note object] == _newAccountWindow) {
+        [_newAccountLoginField setStringValue:@""];
+        [_newAccountNameField setStringValue:@""];
+    } else if ([note object] == _newsArticleEditorWindow) {
+        [_newsEditingCategoryKey release];
+        _newsEditingCategoryKey = nil;
+        [_newsEditingArticleID release];
+        _newsEditingArticleID = nil;
     } else if ([note object] == _wizardWindow) {
         _wizardPresented = NO;
     }
@@ -3574,17 +4127,101 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 - (NSMutableSet *)guestAccessTemplate
 {
     return [NSMutableSet setWithArray:[NSArray arrayWithObjects:
-        @"DownloadFile", @"ReadChat", @"SendChat", @"GetClientInfo",
-        @"OpenChat", @"NewsReadArt", @"NewsPostArt", nil]];
+        @"DownloadFile", @"DownloadFolder", @"ReadChat", @"SendChat",
+        @"OpenChat", @"ShowInList", @"NewsReadArt", @"NewsPostArt",
+        @"GetClientInfo", @"SendPrivMsg", nil]];
 }
 
 - (NSMutableSet *)adminAccessTemplate
 {
-    return [NSMutableSet setWithArray:[NSArray arrayWithObjects:
-        @"DownloadFile", @"UploadFile", @"ReadChat", @"SendChat",
-        @"CreateUser", @"DeleteUser", @"OpenUser", @"ModifyUser",
-        @"GetClientInfo", @"DisconnectUser", @"Broadcast", @"CreateFolder",
-        @"DeleteFile", @"OpenChat", @"NewsReadArt", @"NewsPostArt", nil]];
+    NSMutableSet *all = [NSMutableSet set];
+    unsigned i;
+    for (i = 0; i < kAccountPermissionDefCount; i++) {
+        NSString *key = [NSString stringWithUTF8String:kAccountPermissionDefs[i].key];
+        [all addObject:key];
+    }
+    return all;
+}
+
+- (void)rebuildAccountPermissionUI
+{
+    if (!_accountPermissionsContentView) return;
+
+    NSArray *subs = [NSArray arrayWithArray:[_accountPermissionsContentView subviews]];
+    unsigned i;
+    for (i = 0; i < [subs count]; i++) {
+        [[subs objectAtIndex:i] removeFromSuperview];
+    }
+    [_accountPermissionCheckboxes removeAllObjects];
+
+    NSString *lastGroup = nil;
+    float y = 6.0f;
+    int col = 0;
+
+    for (i = 0; i < kAccountPermissionDefCount; i++) {
+        NSString *group = [NSString stringWithUTF8String:kAccountPermissionDefs[i].group];
+        NSString *label = [NSString stringWithUTF8String:kAccountPermissionDefs[i].label];
+        NSString *key = [NSString stringWithUTF8String:kAccountPermissionDefs[i].key];
+
+        if (!lastGroup || ![lastGroup isEqualToString:group]) {
+            if (col != 0) {
+                y += 24.0f;
+                col = 0;
+            }
+            if (lastGroup) y += 6.0f;
+            NSTextField *groupLabel = makeLabel(group, 11.0, YES);
+            [groupLabel setFrame:NSMakeRect(8, y, 340, 16)];
+            [_accountPermissionsContentView addSubview:groupLabel];
+            [groupLabel release];
+            y += 18.0f;
+            lastGroup = group;
+        }
+
+        NSButton *cb = [[NSButton alloc] initWithFrame:NSMakeRect(
+            8.0f + (float)col * 184.0f, y, 178.0f, 18.0f)];
+        [cb setButtonType:NSSwitchButton];
+        [cb setTitle:label];
+        [cb setFont:[NSFont systemFontOfSize:10.0]];
+        [cb setState:[_accountAccessKeys containsObject:key] ? NSOnState : NSOffState];
+        [cb setToolTip:key];
+        [cb setTarget:self];
+        [cb setAction:@selector(toggleAccountPermission:)];
+        [_accountPermissionsContentView addSubview:cb];
+        [_accountPermissionCheckboxes setObject:cb forKey:key];
+        [cb release];
+
+        col++;
+        if (col > 1) {
+            col = 0;
+            y += 22.0f;
+        }
+    }
+    if (col != 0) y += 22.0f;
+
+    float minH = 304.0f;
+    if (y + 8.0f < minH) y = minH - 8.0f;
+    [_accountPermissionsContentView setFrame:NSMakeRect(0, 0, 366, y + 8.0f)];
+}
+
+- (void)syncPermissionCheckboxesFromAccess
+{
+    NSArray *keys = [_accountPermissionCheckboxes allKeys];
+    unsigned i;
+    for (i = 0; i < [keys count]; i++) {
+        NSString *key = [keys objectAtIndex:i];
+        NSButton *cb = [_accountPermissionCheckboxes objectForKey:key];
+        [cb setState:[_accountAccessKeys containsObject:key] ? NSOnState : NSOffState];
+    }
+}
+
+- (void)updateAccountPasswordStatus
+{
+    if (!_accountPasswordStatusLabel) return;
+    NSString *text = @"Password: none";
+    if (_selectedAccountPassword && [_selectedAccountPassword length] > 0) {
+        text = @"Password: set";
+    }
+    [_accountPasswordStatusLabel setStringValue:text];
 }
 
 - (void)updateAccountTemplateFromAccessKeys
@@ -3622,6 +4259,8 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_accountAccessKeys removeAllObjects];
     if (access) [_accountAccessKeys unionSet:access];
     [self updateAccountTemplateFromAccessKeys];
+    [self syncPermissionCheckboxesFromAccess];
+    [self updateAccountPasswordStatus];
 }
 
 - (void)populateAccountEditorForNewAccount
@@ -3640,6 +4279,8 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_accountAccessKeys removeAllObjects];
     [_accountAccessKeys unionSet:[self guestAccessTemplate]];
     [_accountTemplatePopup selectItemAtIndex:1];
+    [self syncPermissionCheckboxesFromAccess];
+    [self updateAccountPasswordStatus];
 }
 
 - (void)loadBanListData
@@ -4037,14 +4678,20 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
             }
 
             if (indent >= 8 && currentArticle) {
+                NSString *decodedVal = [val stringByReplacingOccurrencesOfString:@"\\n"
+                                                                       withString:@"\n"];
                 if ([key isEqualToString:@"Title"]) {
-                    [currentArticle setObject:(val ? val : @"") forKey:@"title"];
+                    [currentArticle setObject:(decodedVal ? decodedVal : @"")
+                                      forKey:@"title"];
                 } else if ([key isEqualToString:@"Poster"]) {
-                    [currentArticle setObject:(val ? val : @"") forKey:@"poster"];
+                    [currentArticle setObject:(decodedVal ? decodedVal : @"")
+                                      forKey:@"poster"];
                 } else if ([key isEqualToString:@"Date"]) {
-                    [currentArticle setObject:(val ? val : @"") forKey:@"date"];
+                    [currentArticle setObject:(decodedVal ? decodedVal : @"")
+                                      forKey:@"date"];
                 } else if ([key isEqualToString:@"Body"]) {
-                    [currentArticle setObject:(val ? val : @"") forKey:@"body"];
+                    [currentArticle setObject:(decodedVal ? decodedVal : @"")
+                                      forKey:@"body"];
                 }
             }
         }
@@ -4118,6 +4765,14 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
             NSString *poster = [art objectForKey:@"poster"];
             NSString *date = [art objectForKey:@"date"];
             NSString *body = [art objectForKey:@"body"];
+            if (title) title = [title stringByReplacingOccurrencesOfString:@"\n"
+                                                                 withString:@"\\n"];
+            if (poster) poster = [poster stringByReplacingOccurrencesOfString:@"\n"
+                                                                     withString:@"\\n"];
+            if (date) date = [date stringByReplacingOccurrencesOfString:@"\n"
+                                                               withString:@"\\n"];
+            if (body) body = [body stringByReplacingOccurrencesOfString:@"\n"
+                                                               withString:@"\\n"];
 
             [yaml appendFormat:@"      %@:\n", yamlQuoted(articleID)];
             [yaml appendFormat:@"        Title: %@\n", yamlQuoted(title ? title : @"")];
@@ -4164,9 +4819,39 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         }
     }
 
-    if (_newsArticlesTableView) [_newsArticlesTableView reloadData];
+    if (_newsArticlesTableView) {
+        [_newsArticlesTableView reloadData];
+        int targetRow = -1;
+        if (_newsSelectedArticleID && [selected length] > 0) {
+            unsigned i;
+            for (i = 0; i < [_newsArticleItems count]; i++) {
+                NSDictionary *item = [_newsArticleItems objectAtIndex:i];
+                if ([[_newsSelectedArticleID description] isEqualToString:
+                    [[item objectForKey:@"id"] description]]) {
+                    targetRow = (int)i;
+                    break;
+                }
+            }
+        }
+        if (targetRow >= 0) {
+            [_newsArticlesTableView selectRow:targetRow byExtendingSelection:NO];
+        } else {
+            [_newsArticlesTableView deselectAll:nil];
+            [_newsSelectedArticleID release];
+            _newsSelectedArticleID = nil;
+        }
+    }
     if (_newsDeleteCategoryButton) {
         [_newsDeleteCategoryButton setEnabled:(selected != nil)];
+    }
+    if (_newsAddArticleButton) {
+        [_newsAddArticleButton setEnabled:(selected != nil)];
+    }
+    if (_newsEditArticleButton) {
+        [_newsEditArticleButton setEnabled:(_newsSelectedArticleID != nil)];
+    }
+    if (_newsDeleteArticleButton) {
+        [_newsDeleteArticleButton setEnabled:(_newsSelectedArticleID != nil)];
     }
 }
 
@@ -4299,11 +4984,30 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
         int row = [_newsCategoriesTableView selectedRow];
         [_newsSelectedCategoryKey release];
         _newsSelectedCategoryKey = nil;
+        [_newsSelectedArticleID release];
+        _newsSelectedArticleID = nil;
         if (row >= 0 && row < (int)[_newsCategoryItems count]) {
             _newsSelectedCategoryKey =
                 [[_newsCategoryItems objectAtIndex:(unsigned)row] retain];
         }
         [self refreshThreadedNewsArticles];
+        return;
+    }
+    if (tv == _newsArticlesTableView) {
+        int row = [_newsArticlesTableView selectedRow];
+        [_newsSelectedArticleID release];
+        _newsSelectedArticleID = nil;
+        if (row >= 0 && row < (int)[_newsArticleItems count]) {
+            NSDictionary *item = [_newsArticleItems objectAtIndex:(unsigned)row];
+            NSString *articleID = [item objectForKey:@"id"];
+            if (articleID) _newsSelectedArticleID = [articleID retain];
+        }
+        if (_newsEditArticleButton) {
+            [_newsEditArticleButton setEnabled:(_newsSelectedArticleID != nil)];
+        }
+        if (_newsDeleteArticleButton) {
+            [_newsDeleteArticleButton setEnabled:(_newsSelectedArticleID != nil)];
+        }
         return;
     }
     if (tv != _accountsTableView) return;
