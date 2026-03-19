@@ -31,6 +31,9 @@ LDFLAGS = -framework CoreFoundation \
 # CoreServices needed for Bonjour (dns_sd.h)
 LDFLAGS += -framework CoreServices
 
+# OpenSSL for SHA-1 password hashing (available on Tiger 10.4)
+LDFLAGS += -lcrypto
+
 # libyaml needed for Phase 4 (persistence)
 # LDFLAGS += -lyaml
 
@@ -62,7 +65,8 @@ HOTLINE_C_SRCS = \
 	src/hotline/transfer.c \
 	src/hotline/file_transfer.c \
 	src/hotline/bonjour.c \
-	src/hotline/tracker.c
+	src/hotline/tracker.c \
+	src/hotline/password.c
 
 HOTLINE_C_OBJS = $(HOTLINE_C_SRCS:.c=.o)
 

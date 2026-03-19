@@ -70,7 +70,15 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
             break;
 
         case YAML_SCALAR_EVENT:
-            if (in_mapping && current_key[0] == '\0') {
+            if (parsing_trackers) {
+                /* Inside Trackers sequence — each scalar is a tracker entry */
+                const char *val = (const char *)event.data.scalar.value;
+                if (cfg->tracker_count < HL_CONFIG_MAX_TRACKERS) {
+                    strncpy(cfg->trackers[cfg->tracker_count], val,
+                            HL_CONFIG_TRACKER_LEN - 1);
+                    cfg->tracker_count++;
+                }
+            } else if (in_mapping && current_key[0] == '\0') {
                 /* This is a key */
                 strncpy(current_key, (const char *)event.data.scalar.value,
                         sizeof(current_key) - 1);
@@ -104,15 +112,6 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
                     cfg->enable_bonjour = (strcmp(val, "true") == 0);
                 else if (strcmp(current_key, "Encoding") == 0)
                     strncpy(cfg->encoding, val, sizeof(cfg->encoding) - 1);
-
-                /* Handle tracker list items */
-                if (parsing_trackers) {
-                    if (cfg->tracker_count < HL_CONFIG_MAX_TRACKERS) {
-                        strncpy(cfg->trackers[cfg->tracker_count], val,
-                                HL_CONFIG_TRACKER_LEN - 1);
-                        cfg->tracker_count++;
-                    }
-                }
 
                 current_key[0] = '\0';
             }

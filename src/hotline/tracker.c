@@ -102,6 +102,10 @@ int hl_tracker_register(const char *tracker_addr,
                           (struct sockaddr *)&addr, sizeof(addr));
     close(fd);
 
+    fprintf(stderr, "[TRACKER] %s:%d -> sent %zd/%zu bytes (name=\"%s\" port=%d users=%d)\n",
+            host, port, sent, pos, name, server_port, user_count);
+    fflush(stderr);
+
     return (sent > 0) ? 0 : -1;
 }
 
