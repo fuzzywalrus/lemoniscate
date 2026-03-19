@@ -344,6 +344,11 @@ static int handle_get_user_name_list(hl_client_conn_t *cc, const hl_transaction_
         if (fields) {
             int i;
             for (i = 0; i < client_count; i++) {
+                /* Skip users without SHOW_IN_LIST permission */
+                if (clients[i]->account &&
+                    !hl_access_is_set(clients[i]->account->access, ACCESS_SHOW_IN_LIST))
+                    continue;
+
                 hl_user_t u;
                 memcpy(u.id, clients[i]->id, 2);
                 memcpy(u.icon, clients[i]->icon, 2);
@@ -1618,6 +1623,13 @@ static int handle_get_file_name_list(hl_client_conn_t *cc, const hl_transaction_
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
 
+    /* Check drop box viewing permission */
+    const char *dir_leaf = strrchr(dir_path, '/');
+    dir_leaf = dir_leaf ? dir_leaf + 1 : dir_path;
+    if (strcasestr(dir_leaf, "drop box") &&
+        !hl_client_conn_authorize(cc, ACCESS_VIEW_DROP_BOXES))
+        return reply_err(cc, req, "You are not allowed to view drop boxes.", out, out_count);
+
     int field_count = 0;
     hl_field_t *fields = hl_get_file_name_list(dir_path, &field_count);
 
@@ -1710,9 +1722,6 @@ static int handle_get_file_info(hl_client_conn_t *cc, const hl_transaction_t *re
 static int handle_set_file_info(hl_client_conn_t *cc, const hl_transaction_t *req,
                                 hl_transaction_t **out, int *out_count)
 {
-    if (!hl_client_conn_authorize(cc, ACCESS_RENAME_FILE))
-        return reply_err(cc, req, "You are not allowed to modify file info.", out, out_count);
-
     const hl_field_t *f_name = hl_transaction_get_field(req, FIELD_FILE_NAME);
     if (!f_name) return reply_err(cc, req, "Missing filename.", out, out_count);
     if (!is_safe_filename((const char *)f_name->data, f_name->data_len))
@@ -1727,9 +1736,24 @@ static int handle_set_file_info(hl_client_conn_t *cc, const hl_transaction_t *re
     memcpy(filename, f_name->data, nlen);
     filename[nlen] = '\0';
 
+    /* Determine if target is a folder */
+    char full_path[2048];
+    snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, filename);
+    struct stat fst;
+    int is_folder = (stat(full_path, &fst) == 0 && S_ISDIR(fst.st_mode));
+
     /* Handle rename */
     const hl_field_t *f_new_name = hl_transaction_get_field(req, FIELD_FILE_NEW_NAME);
     if (f_new_name && f_new_name->data_len > 0) {
+        /* Check rename permission (file vs folder) */
+        if (is_folder) {
+            if (!hl_client_conn_authorize(cc, ACCESS_RENAME_FOLDER))
+                return reply_err(cc, req, "You are not allowed to rename folders.", out, out_count);
+        } else {
+            if (!hl_client_conn_authorize(cc, ACCESS_RENAME_FILE))
+                return reply_err(cc, req, "You are not allowed to rename files.", out, out_count);
+        }
+
         if (!is_safe_filename((const char *)f_new_name->data, f_new_name->data_len))
             return reply_err(cc, req, "Invalid new filename.", out, out_count);
 
@@ -1738,10 +1762,18 @@ static int handle_set_file_info(hl_client_conn_t *cc, const hl_transaction_t *re
         memcpy(new_name, f_new_name->data, nnlen);
         new_name[nnlen] = '\0';
 
-        char old_path[2048], new_path[2048];
-        snprintf(old_path, sizeof(old_path), "%s/%s", dir_path, filename);
+        char new_path[2048];
         snprintf(new_path, sizeof(new_path), "%s/%s", dir_path, new_name);
-        rename(old_path, new_path);
+        rename(full_path, new_path);
+    }
+
+    /* Handle comment — check folder comment permission if applicable */
+    const hl_field_t *f_comment = hl_transaction_get_field(req, FIELD_FILE_COMMENT);
+    if (f_comment) {
+        if (is_folder && !hl_client_conn_authorize(cc, ACCESS_SET_FOLDER_COMMENT))
+            return reply_err(cc, req, "You are not allowed to comment folders.", out, out_count);
+        if (!is_folder && !hl_client_conn_authorize(cc, ACCESS_SET_FILE_COMMENT))
+            return reply_err(cc, req, "You are not allowed to comment files.", out, out_count);
     }
 
     return reply_empty(cc, req, out, out_count);
@@ -1750,9 +1782,6 @@ static int handle_set_file_info(hl_client_conn_t *cc, const hl_transaction_t *re
 static int handle_delete_file(hl_client_conn_t *cc, const hl_transaction_t *req,
                               hl_transaction_t **out, int *out_count)
 {
-    if (!hl_client_conn_authorize(cc, ACCESS_DELETE_FILE))
-        return reply_err(cc, req, "You are not allowed to delete files.", out, out_count);
-
     const hl_field_t *f_name = hl_transaction_get_field(req, FIELD_FILE_NAME);
     if (!f_name) return reply_err(cc, req, "Missing filename.", out, out_count);
     if (!is_safe_filename((const char *)f_name->data, f_name->data_len))
@@ -1766,6 +1795,18 @@ static int handle_delete_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     size_t nlen = f_name->data_len < 255 ? f_name->data_len : 255;
     memcpy(filename, f_name->data, nlen);
     filename[nlen] = '\0';
+
+    /* Check folder vs file permission */
+    char full_path[2048];
+    snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, filename);
+    struct stat dst;
+    if (stat(full_path, &dst) == 0 && S_ISDIR(dst.st_mode)) {
+        if (!hl_client_conn_authorize(cc, ACCESS_DELETE_FOLDER))
+            return reply_err(cc, req, "You are not allowed to delete folders.", out, out_count);
+    } else {
+        if (!hl_client_conn_authorize(cc, ACCESS_DELETE_FILE))
+            return reply_err(cc, req, "You are not allowed to delete files.", out, out_count);
+    }
 
     hl_file_t f;
     hl_file_init(&f, dir_path, filename);
@@ -2014,6 +2055,15 @@ static int handle_upload_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
+
+    /* Check upload location restriction */
+    if (!hl_client_conn_authorize(cc, ACCESS_UPLOAD_ANYWHERE)) {
+        const char *dir_leaf = strrchr(dir_path, '/');
+        dir_leaf = dir_leaf ? dir_leaf + 1 : dir_path;
+        if (!strcasestr(dir_leaf, "upload") && !strcasestr(dir_leaf, "drop box"))
+            return reply_err(cc, req,
+                "You can only upload to the Uploads folder.", out, out_count);
+    }
 
     /* Get filename */
     const hl_field_t *f_name = hl_transaction_get_field(req, FIELD_FILE_NAME);
