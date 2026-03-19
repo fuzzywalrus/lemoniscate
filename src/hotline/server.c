@@ -1225,6 +1225,129 @@ upload_cleanup:
         return;
     }
 
+    /* Handle folder upload — receive multiple files from client */
+    if (ft->type == HL_XFER_FOLDER_UPLOAD) {
+        hl_log_info(srv->logger, "Folder upload: %s", ft->file_root);
+        uint16_t item_count = hl_read_u16(ft->folder_item_count);
+
+        /* Send initial action: "send first item" */
+        uint8_t action_next[2] = {0x00, HL_DL_FLDR_ACTION_NEXT_FILE};
+        if (write_all(client_fd, action_next, 2) < 0) goto folder_upload_done;
+
+        uint16_t item;
+        for (item = 0; item < item_count; item++) {
+            /* Read folder upload header: [2-byte size][2-byte isFolder][2-byte pathItemCount] */
+            uint8_t fu_hdr[6];
+            if (read_full(client_fd, fu_hdr, 6) < 0) break;
+
+            uint16_t data_size = hl_read_u16(fu_hdr);
+            uint16_t is_folder = hl_read_u16(fu_hdr + 2);
+            uint16_t path_item_count = hl_read_u16(fu_hdr + 4);
+
+            /* Read path segments and build relative path */
+            char rel_path[2048] = "";
+            size_t rp_len = 0;
+            uint16_t seg;
+            for (seg = 0; seg < path_item_count; seg++) {
+                uint8_t seg_hdr[3]; /* 2 reserved + 1 length */
+                if (read_full(client_fd, seg_hdr, 3) < 0) goto folder_upload_done;
+                uint8_t seg_len = seg_hdr[2];
+                char seg_name[256];
+                if (seg_len > 0) {
+                    if (read_full(client_fd, (uint8_t *)seg_name, seg_len) < 0)
+                        goto folder_upload_done;
+                    seg_name[seg_len] = '\0';
+                }
+                if (rp_len > 0 && rp_len < sizeof(rel_path) - 1)
+                    rel_path[rp_len++] = '/';
+                size_t copy_len = seg_len;
+                if (rp_len + copy_len >= sizeof(rel_path))
+                    copy_len = sizeof(rel_path) - rp_len - 1;
+                memcpy(rel_path + rp_len, seg_name, copy_len);
+                rp_len += copy_len;
+            }
+            rel_path[rp_len] = '\0';
+            (void)data_size; /* consumed by path reading */
+
+            /* Build full filesystem path */
+            char item_path[2048];
+            snprintf(item_path, sizeof(item_path), "%s/%s", ft->file_root, rel_path);
+
+            if (is_folder) {
+                /* Create directory */
+                mkdir(item_path, 0755);
+                hl_log_debug(srv->logger, "Folder upload: mkdir %s", rel_path);
+                /* Tell client to send next item */
+                if (write_all(client_fd, action_next, 2) < 0) break;
+            } else {
+                /* Tell client to send the file */
+                uint8_t action_send[2] = {0x00, HL_DL_FLDR_ACTION_SEND_FILE};
+                if (write_all(client_fd, action_send, 2) < 0) break;
+
+                /* Read 4-byte transfer size (we don't use it, just need to advance) */
+                uint8_t xfer_size_buf[4];
+                if (read_full(client_fd, xfer_size_buf, 4) < 0) break;
+
+                /* Read FILP header */
+                uint8_t filp_hdr[HL_FLAT_FILE_HEADER_SIZE];
+                if (read_full(client_fd, filp_hdr, HL_FLAT_FILE_HEADER_SIZE) < 0) break;
+
+                /* Read INFO fork header + data (discard) */
+                uint8_t info_fh[HL_FORK_HEADER_SIZE];
+                if (read_full(client_fd, info_fh, HL_FORK_HEADER_SIZE) < 0) break;
+                uint32_t info_sz = hl_read_u32(info_fh + 12);
+                if (info_sz > 0 && info_sz < 65536) {
+                    uint8_t *info_tmp = (uint8_t *)malloc(info_sz);
+                    if (info_tmp) {
+                        read_full(client_fd, info_tmp, info_sz);
+                        free(info_tmp);
+                    }
+                }
+
+                /* Read DATA fork header */
+                uint8_t data_fh[HL_FORK_HEADER_SIZE];
+                if (read_full(client_fd, data_fh, HL_FORK_HEADER_SIZE) < 0) break;
+                uint32_t file_data_size = hl_read_u32(data_fh + 12);
+
+                /* Receive file data into .incomplete file */
+                char inc_path[2100];
+                snprintf(inc_path, sizeof(inc_path), "%s.incomplete", item_path);
+                int out_fd = open(inc_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (out_fd < 0) {
+                    hl_log_error(srv->logger, "Folder upload: can't create %s", inc_path);
+                    break;
+                }
+
+                uint8_t fbuf[8192];
+                uint32_t rem = file_data_size;
+                while (rem > 0) {
+                    size_t chunk = rem < sizeof(fbuf) ? rem : sizeof(fbuf);
+                    ssize_t r = read(client_fd, fbuf, chunk);
+                    if (r <= 0) { close(out_fd); goto folder_upload_done; }
+                    if (write_all(out_fd, fbuf, (size_t)r) < 0) { close(out_fd); goto folder_upload_done; }
+                    rem -= (uint32_t)r;
+                }
+                close(out_fd);
+
+                /* Rename .incomplete to final */
+                rename(inc_path, item_path);
+                hl_log_info(srv->logger, "Folder upload: received %s (%u bytes)",
+                            rel_path, file_data_size);
+
+                /* Tell client to send next item */
+                if (write_all(client_fd, action_next, 2) < 0) break;
+            }
+        }
+
+folder_upload_done:
+        hl_log_info(srv->logger, "Folder upload complete: %s (%d items)",
+                    ft->file_root, item_count);
+        srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
+                                         hdr.reference_number);
+        close(client_fd);
+        return;
+    }
+
     hl_log_info(srv->logger, "Unhandled transfer type %d", ft->type);
     srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
                                      hdr.reference_number);
