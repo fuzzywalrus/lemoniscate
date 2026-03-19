@@ -81,12 +81,19 @@
     NSButton *_stopButton;
     NSButton *_restartButton;
     NSButton *_reloadButton;
+    NSButton *_setupWizardButton;
 
     /* Log tab */
     NSTextView *_logTextView;
     NSScrollView *_logScrollView;
     NSButton *_clearLogsButton;
     NSButton *_autoScrollCheckbox;
+    NSTextField *_logFilterField;
+    NSButton *_showStdoutCheckbox;
+    NSButton *_showStderrCheckbox;
+    NSMutableArray *_logEntries;
+    BOOL _showStdout;
+    BOOL _showStderr;
     BOOL _autoScroll;
 
     /* Accounts tab */
@@ -158,11 +165,47 @@
     NSImageView *_footerStatusDot;
     NSTextField *_footerStatusLabel;
     NSTextField *_footerPortLabel;
+    NSTextField *_footerConnectedLabel;
+    NSTextField *_footerPeakLabel;
+    NSTextField *_footerDLLabel;
+    NSTextField *_footerULLabel;
+    unsigned long long _footerDownloadBytes;
+    unsigned long long _footerUploadBytes;
 
     /* Native text editor window */
     NSWindow *_textEditorWindow;
     NSTextView *_textEditorTextView;
     NSString *_textEditorFilePath;
+
+    /* Setup wizard window */
+    NSWindow *_wizardWindow;
+    NSView *_wizardStepContainer;
+    NSTextField *_wizardStepLabel;
+    NSProgressIndicator *_wizardProgress;
+    NSButton *_wizardBackButton;
+    NSButton *_wizardNextButton;
+    NSButton *_wizardFinishButton;
+    NSButton *_wizardFinishStartButton;
+    NSButton *_wizardCancelButton;
+    NSTextField *_wizardNameField;
+    NSTextField *_wizardDescriptionField;
+    NSTextField *_wizardPortField;
+    NSTextField *_wizardFileRootField;
+    NSTextField *_wizardBannerField;
+    NSButton *_wizardBonjourCheckbox;
+    NSButton *_wizardTrackerCheckbox;
+    NSButton *_wizardPreserveForkCheckbox;
+    NSTextField *_wizardMaxDownloadsField;
+    NSTextField *_wizardMaxDLPerClientField;
+    NSTextField *_wizardMaxConnPerIPField;
+    NSTextView *_wizardSummaryTextView;
+    int _wizardStepIndex;
+    BOOL _wizardPresented;
+
+    /* About / update panel */
+    NSWindow *_aboutWindow;
+    NSTextField *_aboutVersionLabel;
+    NSTextField *_aboutUpdateLabel;
 }
 
 /* App lifecycle */
@@ -182,12 +225,18 @@
 - (void)chooseBannerFile:(id)sender;
 - (void)editAgreementFile:(id)sender;
 - (void)editMessageBoardFile:(id)sender;
+- (void)showSetupWizard:(id)sender;
+- (void)showAboutPanel:(id)sender;
+- (void)checkForUpdates:(id)sender;
 - (void)addTracker:(id)sender;
 - (void)removeTracker:(id)sender;
 - (void)addIgnoreFilePattern:(id)sender;
 - (void)removeIgnoreFilePattern:(id)sender;
 - (void)saveSettings:(id)sender;
 - (void)clearLogs:(id)sender;
+- (void)logFilterChanged:(id)sender;
+- (void)toggleStdoutVisibility:(id)sender;
+- (void)toggleStderrVisibility:(id)sender;
 - (void)refreshAccountsList:(id)sender;
 - (void)accountsSegmentChanged:(id)sender;
 - (void)newAccount:(id)sender;

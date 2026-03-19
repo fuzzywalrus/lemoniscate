@@ -220,6 +220,34 @@ static NSString *humanFileSize(unsigned long long size)
     return [NSString stringWithFormat:@"%.1f GB", value];
 }
 
+static unsigned long long parseLogByteCount(NSString *text)
+{
+    if (!text || [text length] == 0) return 0;
+
+    NSRange bytesRange = [text rangeOfString:@" bytes"];
+    if (bytesRange.location == NSNotFound) return 0;
+
+    NSRange openParen = [text rangeOfString:@"("
+                                   options:NSBackwardsSearch
+                                     range:NSMakeRange(0, bytesRange.location)];
+    if (openParen.location == NSNotFound) return 0;
+
+    NSString *inside = [text substringWithRange:
+        NSMakeRange(openParen.location + 1,
+                    bytesRange.location - openParen.location - 1)];
+    inside = trimmedString(inside);
+    if ([inside length] == 0) return 0;
+
+    unsigned long long value = 0;
+    unsigned i;
+    for (i = 0; i < [inside length]; i++) {
+        unichar ch = [inside characterAtIndex:i];
+        if (ch < '0' || ch > '9') break;
+        value = value * 10ULL + (unsigned long long)(ch - '0');
+    }
+    return value;
+}
+
 @interface AppController ()
 - (NSView *)createSettingsPanel;
 - (NSView *)createRightPanel;
@@ -233,6 +261,8 @@ static NSString *humanFileSize(unsigned long long size)
 - (void)createMainMenu;
 - (void)createMainWindow;
 - (void)updateServerUI;
+- (void)updateFooterStats;
+- (void)refreshLogTextView;
 - (void)loadSettings;
 - (void)loadAccountsListData;
 - (void)loadBanListData;
@@ -255,6 +285,19 @@ static NSString *humanFileSize(unsigned long long size)
 - (void)openTextConfigFileNamed:(NSString *)filename title:(NSString *)title;
 - (void)saveTextEditor:(id)sender;
 - (void)closeTextEditor:(id)sender;
+- (void)wizardBack:(id)sender;
+- (void)wizardNext:(id)sender;
+- (void)wizardFinish:(id)sender;
+- (void)wizardFinishAndStart:(id)sender;
+- (void)closeWizard:(id)sender;
+- (void)rebuildWizardStepUI;
+- (BOOL)validateWizardStep:(BOOL)showAlert;
+- (void)applyWizardValuesToSettings;
+- (void)openProjectURL:(NSString *)urlString;
+- (void)openServerRepository:(id)sender;
+- (void)openGUIRepository:(id)sender;
+- (void)openProjectHomepage:(id)sender;
+- (void)openDownloadPage:(id)sender;
 - (void)loadConfigFromDisk;
 - (void)writeConfigToDisk;
 - (void)ensureConfigScaffolding;
@@ -274,7 +317,10 @@ static NSString *humanFileSize(unsigned long long size)
         _serverName = [@"Lemoniscate Server" retain];
         _serverDescription = [@"A Hotline server" retain];
         _autoScroll = YES;
+        _showStdout = YES;
+        _showStderr = YES;
         _accountsItems = [[NSMutableArray alloc] init];
+        _logEntries = [[NSMutableArray alloc] init];
         _accountAccessKeys = [[NSMutableSet alloc] init];
         _trackerItems = [[NSMutableArray alloc] init];
         _ignoreFileItems = [[NSMutableArray alloc] init];
@@ -287,6 +333,8 @@ static NSString *humanFileSize(unsigned long long size)
         _onlineUsersItems = [[NSMutableArray alloc] init];
         _onlineRefreshTimer = nil;
         _onlinePeakConnections = 0;
+        _footerDownloadBytes = 0;
+        _footerUploadBytes = 0;
         _filesItems = [[NSMutableArray alloc] init];
         _newsCategoryItems = [[NSMutableArray alloc] init];
         _newsArticleItems = [[NSMutableArray alloc] init];
@@ -297,6 +345,32 @@ static NSString *humanFileSize(unsigned long long size)
         _textEditorWindow = nil;
         _textEditorTextView = nil;
         _textEditorFilePath = nil;
+        _wizardWindow = nil;
+        _wizardStepContainer = nil;
+        _wizardStepLabel = nil;
+        _wizardProgress = nil;
+        _wizardBackButton = nil;
+        _wizardNextButton = nil;
+        _wizardFinishButton = nil;
+        _wizardFinishStartButton = nil;
+        _wizardCancelButton = nil;
+        _wizardNameField = nil;
+        _wizardDescriptionField = nil;
+        _wizardPortField = nil;
+        _wizardFileRootField = nil;
+        _wizardBannerField = nil;
+        _wizardBonjourCheckbox = nil;
+        _wizardTrackerCheckbox = nil;
+        _wizardPreserveForkCheckbox = nil;
+        _wizardMaxDownloadsField = nil;
+        _wizardMaxDLPerClientField = nil;
+        _wizardMaxConnPerIPField = nil;
+        _wizardSummaryTextView = nil;
+        _wizardStepIndex = 0;
+        _wizardPresented = NO;
+        _aboutWindow = nil;
+        _aboutVersionLabel = nil;
+        _aboutUpdateLabel = nil;
 
         /* Find server binary (supports Lemoniscate + MobiusAdmin names). */
         NSBundle *bundle = [NSBundle mainBundle];
@@ -353,6 +427,7 @@ static NSString *humanFileSize(unsigned long long size)
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_accountsItems release];
+    [_logEntries release];
     [_accountAccessKeys release];
     [_trackerItems release];
     [_ignoreFileItems release];
@@ -375,6 +450,8 @@ static NSString *humanFileSize(unsigned long long size)
     [_newsSelectedCategoryKey release];
     [_textEditorFilePath release];
     [_textEditorWindow release];
+    [_wizardWindow release];
+    [_aboutWindow release];
     [_filesCurrentPath release];
     [_processManager release];
     [_configDir release];
@@ -389,16 +466,27 @@ static NSString *humanFileSize(unsigned long long size)
 {
     (void)note;
     [self loadSettings];
+    [self ensureConfigScaffolding];
     [self createMainMenu];
     [self createMainWindow];
     [self loadConfigFromDisk];
-    [self ensureConfigScaffolding];
     [self refreshAccountsList:nil];
     [self loadBanListData];
     [self refreshFilesList:nil];
     [self loadMessageBoardText];
     [self refreshThreadedNews:nil];
     [self updateServerUI];
+
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    if (![d objectForKey:@"setupWizardCompleted"]) {
+        NSString *cfgPath = [_configDir stringByAppendingPathComponent:@"config.yaml"];
+        BOOL hasConfig = [[NSFileManager defaultManager] fileExistsAtPath:cfgPath];
+        [d setBool:hasConfig forKey:@"setupWizardCompleted"];
+        [d synchronize];
+    }
+    if (![d boolForKey:@"setupWizardCompleted"]) {
+        [self showSetupWizard:nil];
+    }
 }
 
 - (void)applicationWillTerminate:(NSNotification *)note
@@ -758,9 +846,45 @@ static NSString *humanFileSize(unsigned long long size)
     NSMenuItem *appItem = [[NSMenuItem alloc]
         initWithTitle:@"" action:nil keyEquivalent:@""];
     NSMenu *appMenu = [[NSMenu alloc] initWithTitle:@"Lemoniscate"];
-    [appMenu addItemWithTitle:@"About Lemoniscate"
-                       action:@selector(orderFrontStandardAboutPanel:)
-                keyEquivalent:@""];
+    NSMenuItem *mi;
+    mi = [[NSMenuItem alloc] initWithTitle:@"About Lemoniscate"
+        action:@selector(showAboutPanel:) keyEquivalent:@""];
+    [mi setTarget:self];
+    [appMenu addItem:mi];
+    [mi release];
+
+    mi = [[NSMenuItem alloc] initWithTitle:@"Check for Updates..."
+        action:@selector(checkForUpdates:) keyEquivalent:@""];
+    [mi setTarget:self];
+    [appMenu addItem:mi];
+    [mi release];
+
+    [appMenu addItem:[NSMenuItem separatorItem]];
+
+    mi = [[NSMenuItem alloc] initWithTitle:@"Project Homepage"
+        action:@selector(openProjectHomepage:) keyEquivalent:@""];
+    [mi setTarget:self];
+    [appMenu addItem:mi];
+    [mi release];
+
+    mi = [[NSMenuItem alloc] initWithTitle:@"GUI Repository"
+        action:@selector(openGUIRepository:) keyEquivalent:@""];
+    [mi setTarget:self];
+    [appMenu addItem:mi];
+    [mi release];
+
+    mi = [[NSMenuItem alloc] initWithTitle:@"Server Repository"
+        action:@selector(openServerRepository:) keyEquivalent:@""];
+    [mi setTarget:self];
+    [appMenu addItem:mi];
+    [mi release];
+
+    mi = [[NSMenuItem alloc] initWithTitle:@"Download Latest Build"
+        action:@selector(openDownloadPage:) keyEquivalent:@""];
+    [mi setTarget:self];
+    [appMenu addItem:mi];
+    [mi release];
+
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Quit Lemoniscate"
                        action:@selector(terminate:) keyEquivalent:@"q"];
@@ -773,7 +897,6 @@ static NSString *humanFileSize(unsigned long long size)
         initWithTitle:@"" action:nil keyEquivalent:@""];
     NSMenu *srvMenu = [[NSMenu alloc] initWithTitle:@"Server"];
 
-    NSMenuItem *mi;
     mi = [[NSMenuItem alloc] initWithTitle:@"Start Server"
         action:@selector(startServer:) keyEquivalent:@"r"];
     [mi setTarget:self]; [srvMenu addItem:mi]; [mi release];
@@ -788,6 +911,12 @@ static NSString *humanFileSize(unsigned long long size)
 
     mi = [[NSMenuItem alloc] initWithTitle:@"Reload Config"
         action:@selector(reloadServerConfig:) keyEquivalent:@"l"];
+    [mi setTarget:self]; [srvMenu addItem:mi]; [mi release];
+
+    [srvMenu addItem:[NSMenuItem separatorItem]];
+
+    mi = [[NSMenuItem alloc] initWithTitle:@"Setup Wizard..."
+        action:@selector(showSetupWizard:) keyEquivalent:@""];
     [mi setTarget:self]; [srvMenu addItem:mi]; [mi release];
 
     [srvMenu addItem:[NSMenuItem separatorItem]];
@@ -920,6 +1049,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
             [_serverButtonsRow setFrame:bf];
         }
     }
+    [self updateFooterStats];
 }
 
 /* ===== Left panel: Settings ===== */
@@ -1245,6 +1375,22 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_footerPortLabel setTextColor:[NSColor grayColor]];
     [footer addSubview:_footerPortLabel];
 
+    _footerConnectedLabel = makeLabel(@"Connected: 0", 11.0, NO);
+    [_footerConnectedLabel setTextColor:[NSColor grayColor]];
+    [footer addSubview:_footerConnectedLabel];
+
+    _footerPeakLabel = makeLabel(@"Peak: 0", 11.0, NO);
+    [_footerPeakLabel setTextColor:[NSColor grayColor]];
+    [footer addSubview:_footerPeakLabel];
+
+    _footerDLLabel = makeLabel(@"DL: 0 B", 11.0, NO);
+    [_footerDLLabel setTextColor:[NSColor grayColor]];
+    [footer addSubview:_footerDLLabel];
+
+    _footerULLabel = makeLabel(@"UL: 0 B", 11.0, NO);
+    [_footerULLabel setTextColor:[NSColor grayColor]];
+    [footer addSubview:_footerULLabel];
+
     [container addSubview:footer];
     [footer release];
 
@@ -1294,6 +1440,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     [container addSubview:_tabView];
     [self layoutRightPanel];
+    [self updateFooterStats];
     return [container autorelease];
 }
 
@@ -1347,18 +1494,23 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     _restartButton = makeButton(@"Restart", self, @selector(restartServer:));
     _reloadButton = makeButton(@"Reload Config", self,
                                @selector(reloadServerConfig:));
+    _setupWizardButton = makeButton(@"Setup Wizard", self,
+                                    @selector(showSetupWizard:));
 
     float startW = [_startButton frame].size.width;
     float stopW = [_stopButton frame].size.width;
     float restartW = [_restartButton frame].size.width;
     float reloadW = [_reloadButton frame].size.width;
+    float wizardW = [_setupWizardButton frame].size.width;
     if (startW < 72.0f) startW = 72.0f;
     if (stopW < 72.0f) stopW = 72.0f;
     if (restartW < 84.0f) restartW = 84.0f;
     if (reloadW < 108.0f) reloadW = 108.0f;
+    if (wizardW < 112.0f) wizardW = 112.0f;
 
     float btnH = 30.0f;
-    float totalBtnW = startW + stopW + restartW + reloadW + 3.0f * btnGap;
+    float totalBtnW = startW + stopW + restartW + reloadW + wizardW
+        + 4.0f * btnGap;
     NSView *buttonRow = [[NSView alloc]
         initWithFrame:NSMakeRect(([view bounds].size.width - totalBtnW) / 2.0,
                                  222, totalBtnW, btnH)];
@@ -1379,6 +1531,11 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_reloadButton setFrame:NSMakeRect(startW + stopW + restartW + 3.0f * btnGap,
                                        0, reloadW, btnH)];
     [buttonRow addSubview:_reloadButton];
+
+    [_setupWizardButton setFrame:NSMakeRect(startW + stopW + restartW + reloadW
+                                            + 4.0f * btnGap,
+                                            0, wizardW, btnH)];
+    [buttonRow addSubview:_setupWizardButton];
     [buttonRow release];
 
     if (![_processManager hasBinary]) {
@@ -1421,8 +1578,38 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_autoScrollCheckbox setAction:@selector(toggleAutoScroll:)];
     [tb addSubview:_autoScrollCheckbox];
 
+    NSTextField *filterLabel = makeLabel(@"Filter:", 11.0, NO);
+    [filterLabel setFrame:NSMakeRect(124, 7, 36, 16)];
+    [tb addSubview:filterLabel];
+    [filterLabel release];
+
+    _logFilterField = makeEditField(190);
+    [_logFilterField setFrame:NSMakeRect(162, 4, 190, 22)];
+    [_logFilterField setDelegate:(id)self];
+    [tb addSubview:_logFilterField];
+
+    _showStdoutCheckbox = [[NSButton alloc]
+        initWithFrame:NSMakeRect(360, 6, 62, 18)];
+    [_showStdoutCheckbox setButtonType:NSSwitchButton];
+    [_showStdoutCheckbox setTitle:@"stdout"];
+    [_showStdoutCheckbox setState:NSOnState];
+    [_showStdoutCheckbox setFont:[NSFont systemFontOfSize:11.0]];
+    [_showStdoutCheckbox setTarget:self];
+    [_showStdoutCheckbox setAction:@selector(toggleStdoutVisibility:)];
+    [tb addSubview:_showStdoutCheckbox];
+
+    _showStderrCheckbox = [[NSButton alloc]
+        initWithFrame:NSMakeRect(428, 6, 58, 18)];
+    [_showStderrCheckbox setButtonType:NSSwitchButton];
+    [_showStderrCheckbox setTitle:@"stderr"];
+    [_showStderrCheckbox setState:NSOnState];
+    [_showStderrCheckbox setFont:[NSFont systemFontOfSize:11.0]];
+    [_showStderrCheckbox setTarget:self];
+    [_showStderrCheckbox setAction:@selector(toggleStderrVisibility:)];
+    [tb addSubview:_showStderrCheckbox];
+
     _clearLogsButton = makeButton(@"Clear", self, @selector(clearLogs:));
-    [_clearLogsButton setFrame:NSMakeRect(550, 3, 70, 24)];
+    [_clearLogsButton setFrame:NSMakeRect(548, 3, 72, 24)];
     [_clearLogsButton setAutoresizingMask:NSViewMinXMargin];
     [tb addSubview:_clearLogsButton];
 
@@ -2155,6 +2342,562 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [self openTextConfigFileNamed:@"MessageBoard.txt" title:@"Message Board"];
 }
 
+- (void)showSetupWizard:(id)sender
+{
+    (void)sender;
+
+    if (!_wizardWindow) {
+        _wizardWindow = [[NSWindow alloc]
+            initWithContentRect:NSMakeRect(0, 0, 660, 430)
+                      styleMask:(NSTitledWindowMask | NSClosableWindowMask |
+                                 NSMiniaturizableWindowMask)
+                        backing:NSBackingStoreBuffered
+                          defer:NO];
+        [_wizardWindow setTitle:@"Server Setup Wizard"];
+        [_wizardWindow setReleasedWhenClosed:NO];
+        [_wizardWindow setDelegate:(id)self];
+
+        NSView *content = [_wizardWindow contentView];
+
+        _wizardStepLabel = makeLabel(@"", 14.0, YES);
+        [_wizardStepLabel setFrame:NSMakeRect(16, 392, 620, 22)];
+        [content addSubview:_wizardStepLabel];
+
+        _wizardProgress = [[NSProgressIndicator alloc]
+            initWithFrame:NSMakeRect(16, 368, 628, 16)];
+        [_wizardProgress setIndeterminate:NO];
+        [_wizardProgress setMinValue:0.0];
+        [_wizardProgress setMaxValue:4.0];
+        [_wizardProgress setDoubleValue:1.0];
+        [content addSubview:_wizardProgress];
+
+        _wizardStepContainer = [[NSView alloc]
+            initWithFrame:NSMakeRect(16, 66, 628, 292)];
+        [content addSubview:_wizardStepContainer];
+
+        _wizardCancelButton = makeButton(@"Cancel", self, @selector(closeWizard:));
+        [_wizardCancelButton setFrame:NSMakeRect(16, 20, 90, 28)];
+        [content addSubview:_wizardCancelButton];
+
+        _wizardBackButton = makeButton(@"Back", self, @selector(wizardBack:));
+        [_wizardBackButton setFrame:NSMakeRect(340, 20, 76, 28)];
+        [content addSubview:_wizardBackButton];
+
+        _wizardNextButton = makeButton(@"Next", self, @selector(wizardNext:));
+        [_wizardNextButton setFrame:NSMakeRect(422, 20, 76, 28)];
+        [content addSubview:_wizardNextButton];
+
+        _wizardFinishButton = makeButton(@"Finish", self, @selector(wizardFinish:));
+        [_wizardFinishButton setFrame:NSMakeRect(504, 20, 70, 28)];
+        [content addSubview:_wizardFinishButton];
+
+        _wizardFinishStartButton = makeButton(@"Finish & Start", self,
+                                              @selector(wizardFinishAndStart:));
+        [_wizardFinishStartButton setFrame:NSMakeRect(580, 20, 74, 28)];
+        [content addSubview:_wizardFinishStartButton];
+
+        _wizardNameField = makeEditField(430);
+        _wizardDescriptionField = makeEditField(430);
+        _wizardPortField = makeEditField(86);
+        _wizardFileRootField = makeEditField(430);
+        _wizardBannerField = makeEditField(430);
+        _wizardMaxDownloadsField = makeEditField(80);
+        _wizardMaxDLPerClientField = makeEditField(80);
+        _wizardMaxConnPerIPField = makeEditField(80);
+
+        _wizardBonjourCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_wizardBonjourCheckbox setButtonType:NSSwitchButton];
+        [_wizardBonjourCheckbox setTitle:@"Enable Bonjour"];
+
+        _wizardTrackerCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_wizardTrackerCheckbox setButtonType:NSSwitchButton];
+        [_wizardTrackerCheckbox setTitle:@"Enable Tracker Registration"];
+
+        _wizardPreserveForkCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_wizardPreserveForkCheckbox setButtonType:NSSwitchButton];
+        [_wizardPreserveForkCheckbox setTitle:@"Preserve Resource Forks"];
+
+        _wizardSummaryTextView = [[NSTextView alloc]
+            initWithFrame:NSMakeRect(0, 0, 596, 248)];
+        [_wizardSummaryTextView setEditable:NO];
+        [_wizardSummaryTextView setSelectable:YES];
+        [_wizardSummaryTextView setFont:[NSFont userFixedPitchFontOfSize:11.0]];
+    }
+
+    [_wizardNameField setStringValue:
+        _serverNameField ? [_serverNameField stringValue] : (_serverName ? _serverName : @"")];
+    [_wizardDescriptionField setStringValue:
+        _descriptionField ? [_descriptionField stringValue] : (_serverDescription ? _serverDescription : @"")];
+    [_wizardPortField setIntValue:_portField ? [_portField intValue] : _serverPort];
+    [_wizardFileRootField setStringValue:
+        _fileRootField ? [_fileRootField stringValue] : @"Files"];
+    [_wizardBannerField setStringValue:
+        _bannerFileField ? [_bannerFileField stringValue] : @""];
+    [_wizardBonjourCheckbox setState:
+        (_bonjourCheckbox && [_bonjourCheckbox state] == NSOffState) ? NSOffState : NSOnState];
+    [_wizardTrackerCheckbox setState:
+        (_trackerCheckbox && [_trackerCheckbox state] == NSOnState) ? NSOnState : NSOffState];
+    [_wizardPreserveForkCheckbox setState:
+        (_preserveForkCheckbox && [_preserveForkCheckbox state] == NSOnState) ? NSOnState : NSOffState];
+    [_wizardMaxDownloadsField setIntValue:
+        _maxDownloadsField ? [_maxDownloadsField intValue] : 0];
+    [_wizardMaxDLPerClientField setIntValue:
+        _maxDLPerClientField ? [_maxDLPerClientField intValue] : 0];
+    [_wizardMaxConnPerIPField setIntValue:
+        _maxConnPerIPField ? [_maxConnPerIPField intValue] : 0];
+
+    _wizardStepIndex = 0;
+    [self rebuildWizardStepUI];
+    [_wizardWindow center];
+    [_wizardWindow makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+    _wizardPresented = YES;
+}
+
+- (void)wizardBack:(id)sender
+{
+    (void)sender;
+    if (_wizardStepIndex <= 0) return;
+    _wizardStepIndex--;
+    [self rebuildWizardStepUI];
+}
+
+- (void)wizardNext:(id)sender
+{
+    (void)sender;
+    if (![self validateWizardStep:YES]) return;
+    if (_wizardStepIndex >= 3) return;
+    _wizardStepIndex++;
+    [self rebuildWizardStepUI];
+}
+
+- (void)wizardFinish:(id)sender
+{
+    (void)sender;
+    if (![self validateWizardStep:YES]) return;
+    [self applyWizardValuesToSettings];
+    [self closeWizard:nil];
+}
+
+- (void)wizardFinishAndStart:(id)sender
+{
+    (void)sender;
+    if (![self validateWizardStep:YES]) return;
+    [self applyWizardValuesToSettings];
+    [self closeWizard:nil];
+    if ([_processManager isRunning]) {
+        [self restartServer:nil];
+    } else {
+        [self startServer:nil];
+    }
+}
+
+- (void)closeWizard:(id)sender
+{
+    (void)sender;
+    if (_wizardWindow) [_wizardWindow orderOut:nil];
+    _wizardPresented = NO;
+}
+
+- (void)rebuildWizardStepUI
+{
+    if (!_wizardStepContainer) return;
+
+    NSArray *subs = [NSArray arrayWithArray:[_wizardStepContainer subviews]];
+    unsigned i;
+    for (i = 0; i < [subs count]; i++) {
+        [[subs objectAtIndex:i] removeFromSuperview];
+    }
+
+    [_wizardProgress setDoubleValue:(double)(_wizardStepIndex + 1)];
+    [_wizardBackButton setEnabled:(_wizardStepIndex > 0)];
+    [_wizardNextButton setHidden:(_wizardStepIndex >= 3)];
+    [_wizardFinishButton setHidden:(_wizardStepIndex < 3)];
+    [_wizardFinishStartButton setHidden:(_wizardStepIndex < 3)];
+
+    NSString *title = @"";
+    switch (_wizardStepIndex) {
+        case 0: title = @"Identity & Network"; break;
+        case 1: title = @"Paths & Registration"; break;
+        case 2: title = @"Limits & File Behavior"; break;
+        default: title = @"Summary"; break;
+    }
+    [_wizardStepLabel setStringValue:
+        [NSString stringWithFormat:@"Step %d of 4: %@", _wizardStepIndex + 1, title]];
+
+    if (_wizardStepIndex == 0) {
+        NSTextField *intro = makeLabel(
+            @"Configure the core server identity and listener port.",
+            12.0, NO);
+        [intro setFrame:NSMakeRect(10, 262, 560, 20)];
+        [_wizardStepContainer addSubview:intro];
+        [intro release];
+
+        NSTextField *nameLabel = makeLabel(@"Server Name:", 11.0, NO);
+        [nameLabel setAlignment:NSRightTextAlignment];
+        [nameLabel setFrame:NSMakeRect(10, 224, 110, 20)];
+        [_wizardStepContainer addSubview:nameLabel];
+        [nameLabel release];
+        [_wizardNameField setFrame:NSMakeRect(126, 222, 436, 22)];
+        [_wizardStepContainer addSubview:_wizardNameField];
+
+        NSTextField *descLabel = makeLabel(@"Description:", 11.0, NO);
+        [descLabel setAlignment:NSRightTextAlignment];
+        [descLabel setFrame:NSMakeRect(10, 190, 110, 20)];
+        [_wizardStepContainer addSubview:descLabel];
+        [descLabel release];
+        [_wizardDescriptionField setFrame:NSMakeRect(126, 188, 436, 22)];
+        [_wizardStepContainer addSubview:_wizardDescriptionField];
+
+        NSTextField *portLabel = makeLabel(@"Hotline Port:", 11.0, NO);
+        [portLabel setAlignment:NSRightTextAlignment];
+        [portLabel setFrame:NSMakeRect(10, 156, 110, 20)];
+        [_wizardStepContainer addSubview:portLabel];
+        [portLabel release];
+        [_wizardPortField setFrame:NSMakeRect(126, 154, 90, 22)];
+        [_wizardStepContainer addSubview:_wizardPortField];
+
+        [_wizardBonjourCheckbox setFrame:NSMakeRect(126, 126, 220, 18)];
+        [_wizardStepContainer addSubview:_wizardBonjourCheckbox];
+    } else if (_wizardStepIndex == 1) {
+        NSTextField *intro = makeLabel(
+            @"Choose content paths and network registration behavior.",
+            12.0, NO);
+        [intro setFrame:NSMakeRect(10, 262, 560, 20)];
+        [_wizardStepContainer addSubview:intro];
+        [intro release];
+
+        NSTextField *rootLabel = makeLabel(@"File Root:", 11.0, NO);
+        [rootLabel setAlignment:NSRightTextAlignment];
+        [rootLabel setFrame:NSMakeRect(10, 224, 110, 20)];
+        [_wizardStepContainer addSubview:rootLabel];
+        [rootLabel release];
+        [_wizardFileRootField setFrame:NSMakeRect(126, 222, 436, 22)];
+        [_wizardStepContainer addSubview:_wizardFileRootField];
+
+        NSTextField *bannerLabel = makeLabel(@"Banner File:", 11.0, NO);
+        [bannerLabel setAlignment:NSRightTextAlignment];
+        [bannerLabel setFrame:NSMakeRect(10, 190, 110, 20)];
+        [_wizardStepContainer addSubview:bannerLabel];
+        [bannerLabel release];
+        [_wizardBannerField setFrame:NSMakeRect(126, 188, 436, 22)];
+        [_wizardStepContainer addSubview:_wizardBannerField];
+
+        [_wizardTrackerCheckbox setFrame:NSMakeRect(126, 156, 260, 18)];
+        [_wizardStepContainer addSubview:_wizardTrackerCheckbox];
+
+        NSTextField *hint = makeLabel(
+            @"Tip: add tracker endpoints in the left panel after finishing the wizard.",
+            10.0, NO);
+        [hint setTextColor:[NSColor grayColor]];
+        [hint setFrame:NSMakeRect(126, 132, 470, 16)];
+        [_wizardStepContainer addSubview:hint];
+        [hint release];
+    } else if (_wizardStepIndex == 2) {
+        NSTextField *intro = makeLabel(
+            @"Set transfer limits and file-storage compatibility options.",
+            12.0, NO);
+        [intro setFrame:NSMakeRect(10, 262, 560, 20)];
+        [_wizardStepContainer addSubview:intro];
+        [intro release];
+
+        [_wizardPreserveForkCheckbox setFrame:NSMakeRect(126, 228, 260, 18)];
+        [_wizardStepContainer addSubview:_wizardPreserveForkCheckbox];
+
+        NSTextField *maxDL = makeLabel(@"Max Downloads:", 11.0, NO);
+        [maxDL setAlignment:NSRightTextAlignment];
+        [maxDL setFrame:NSMakeRect(10, 190, 110, 20)];
+        [_wizardStepContainer addSubview:maxDL];
+        [maxDL release];
+        [_wizardMaxDownloadsField setFrame:NSMakeRect(126, 188, 86, 22)];
+        [_wizardStepContainer addSubview:_wizardMaxDownloadsField];
+
+        NSTextField *maxPer = makeLabel(@"Max DL/Client:", 11.0, NO);
+        [maxPer setAlignment:NSRightTextAlignment];
+        [maxPer setFrame:NSMakeRect(10, 156, 110, 20)];
+        [_wizardStepContainer addSubview:maxPer];
+        [maxPer release];
+        [_wizardMaxDLPerClientField setFrame:NSMakeRect(126, 154, 86, 22)];
+        [_wizardStepContainer addSubview:_wizardMaxDLPerClientField];
+
+        NSTextField *maxIP = makeLabel(@"Max Conn/IP:", 11.0, NO);
+        [maxIP setAlignment:NSRightTextAlignment];
+        [maxIP setFrame:NSMakeRect(10, 122, 110, 20)];
+        [_wizardStepContainer addSubview:maxIP];
+        [maxIP release];
+        [_wizardMaxConnPerIPField setFrame:NSMakeRect(126, 120, 86, 22)];
+        [_wizardStepContainer addSubview:_wizardMaxConnPerIPField];
+
+        NSTextField *hint = makeLabel(@"Use 0 for unlimited values.", 10.0, NO);
+        [hint setTextColor:[NSColor grayColor]];
+        [hint setFrame:NSMakeRect(126, 98, 240, 16)];
+        [_wizardStepContainer addSubview:hint];
+        [hint release];
+    } else {
+        NSString *summary = [NSString stringWithFormat:
+            @"Name: %@\n"
+            @"Description: %@\n"
+            @"Port: %d\n"
+            @"File Root: %@\n"
+            @"Banner File: %@\n"
+            @"Bonjour: %@\n"
+            @"Tracker Registration: %@\n"
+            @"Preserve Resource Forks: %@\n"
+            @"Max Downloads: %d\n"
+            @"Max DL/Client: %d\n"
+            @"Max Conn/IP: %d\n\n"
+            @"Click Finish to save and close the wizard,\n"
+            @"or Finish & Start to save and launch the server.",
+            [_wizardNameField stringValue],
+            [_wizardDescriptionField stringValue],
+            [_wizardPortField intValue],
+            [_wizardFileRootField stringValue],
+            [_wizardBannerField stringValue],
+            ([_wizardBonjourCheckbox state] == NSOnState ? @"Enabled" : @"Disabled"),
+            ([_wizardTrackerCheckbox state] == NSOnState ? @"Enabled" : @"Disabled"),
+            ([_wizardPreserveForkCheckbox state] == NSOnState ? @"Enabled" : @"Disabled"),
+            [_wizardMaxDownloadsField intValue],
+            [_wizardMaxDLPerClientField intValue],
+            [_wizardMaxConnPerIPField intValue]];
+        [_wizardSummaryTextView setString:summary];
+
+        NSScrollView *sv = [[NSScrollView alloc]
+            initWithFrame:NSMakeRect(10, 16, 608, 260)];
+        [sv setHasVerticalScroller:YES];
+        [sv setBorderType:NSBezelBorder];
+        [sv setDocumentView:_wizardSummaryTextView];
+        [_wizardStepContainer addSubview:sv];
+        [sv release];
+    }
+}
+
+- (BOOL)validateWizardStep:(BOOL)showAlert
+{
+    if (_wizardStepIndex == 0) {
+        NSString *name = trimmedString([_wizardNameField stringValue]);
+        if ([name length] == 0) {
+            if (showAlert) {
+                NSRunAlertPanel(@"Missing Server Name",
+                                @"Enter a server name before continuing.",
+                                @"OK", nil, nil);
+            }
+            return NO;
+        }
+
+        int port = [_wizardPortField intValue];
+        if (port < 1 || port > 65535) {
+            if (showAlert) {
+                NSRunAlertPanel(@"Invalid Port",
+                                @"Hotline port must be between 1 and 65535.",
+                                @"OK", nil, nil);
+            }
+            return NO;
+        }
+    } else if (_wizardStepIndex == 1) {
+        NSString *root = trimmedString([_wizardFileRootField stringValue]);
+        if ([root length] == 0) {
+            if (showAlert) {
+                NSRunAlertPanel(@"Missing File Root",
+                                @"Enter a file root path before continuing.",
+                                @"OK", nil, nil);
+            }
+            return NO;
+        }
+    } else if (_wizardStepIndex == 2) {
+        if ([_wizardMaxDownloadsField intValue] < 0 ||
+            [_wizardMaxDLPerClientField intValue] < 0 ||
+            [_wizardMaxConnPerIPField intValue] < 0) {
+            if (showAlert) {
+                NSRunAlertPanel(@"Invalid Limits",
+                                @"Limit values cannot be negative.",
+                                @"OK", nil, nil);
+            }
+            return NO;
+        }
+    }
+    return YES;
+}
+
+- (void)applyWizardValuesToSettings
+{
+    NSString *name = trimmedString([_wizardNameField stringValue]);
+    NSString *desc = [_wizardDescriptionField stringValue];
+    NSString *fileRoot = trimmedString([_wizardFileRootField stringValue]);
+    NSString *banner = trimmedString([_wizardBannerField stringValue]);
+    int port = [_wizardPortField intValue];
+    if (port < 1 || port > 65535) port = 5500;
+
+    if (_serverNameField) [_serverNameField setStringValue:name];
+    if (_descriptionField) [_descriptionField setStringValue:desc];
+    if (_portField) [_portField setIntValue:port];
+    if (_fileRootField) [_fileRootField setStringValue:fileRoot];
+    if (_bannerFileField) [_bannerFileField setStringValue:banner];
+    if (_bonjourCheckbox) [_bonjourCheckbox setState:[_wizardBonjourCheckbox state]];
+    if (_trackerCheckbox) [_trackerCheckbox setState:[_wizardTrackerCheckbox state]];
+    if (_preserveForkCheckbox) {
+        [_preserveForkCheckbox setState:[_wizardPreserveForkCheckbox state]];
+    }
+    if (_maxDownloadsField) {
+        [_maxDownloadsField setIntValue:[_wizardMaxDownloadsField intValue]];
+    }
+    if (_maxDLPerClientField) {
+        [_maxDLPerClientField setIntValue:[_wizardMaxDLPerClientField intValue]];
+    }
+    if (_maxConnPerIPField) {
+        [_maxConnPerIPField setIntValue:[_wizardMaxConnPerIPField intValue]];
+    }
+
+    [self saveSettings:nil];
+    [self ensureConfigScaffolding];
+    [self writeConfigToDisk];
+    [self updateServerUI];
+
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    [d setBool:YES forKey:@"setupWizardCompleted"];
+    [d synchronize];
+}
+
+- (void)showAboutPanel:(id)sender
+{
+    (void)sender;
+
+    if (!_aboutWindow) {
+        _aboutWindow = [[NSWindow alloc]
+            initWithContentRect:NSMakeRect(0, 0, 560, 320)
+                      styleMask:(NSTitledWindowMask | NSClosableWindowMask |
+                                 NSMiniaturizableWindowMask)
+                        backing:NSBackingStoreBuffered
+                          defer:NO];
+        [_aboutWindow setTitle:@"About Lemoniscate"];
+        [_aboutWindow setReleasedWhenClosed:NO];
+        [_aboutWindow setDelegate:(id)self];
+
+        NSView *content = [_aboutWindow contentView];
+
+        NSTextField *title = makeLabel(@"Lemoniscate Server GUI", 18.0, YES);
+        [title setFrame:NSMakeRect(20, 280, 360, 28)];
+        [content addSubview:title];
+        [title release];
+
+        _aboutVersionLabel = makeLabel(@"", 12.0, NO);
+        [_aboutVersionLabel setFrame:NSMakeRect(20, 254, 520, 18)];
+        [content addSubview:_aboutVersionLabel];
+
+        _aboutUpdateLabel = makeLabel(@"No update check run yet.", 11.0, NO);
+        [_aboutUpdateLabel setTextColor:[NSColor grayColor]];
+        [_aboutUpdateLabel setFrame:NSMakeRect(20, 228, 520, 18)];
+        [content addSubview:_aboutUpdateLabel];
+
+        NSButton *checkBtn = makeButton(@"Check for Updates...", self,
+                                        @selector(checkForUpdates:));
+        [checkBtn setFrame:NSMakeRect(20, 190, 158, 28)];
+        [content addSubview:checkBtn];
+        [checkBtn release];
+
+        NSButton *downloadBtn = makeButton(@"Download Latest Build", self,
+                                           @selector(openDownloadPage:));
+        [downloadBtn setFrame:NSMakeRect(188, 190, 172, 28)];
+        [content addSubview:downloadBtn];
+        [downloadBtn release];
+
+        NSButton *homeBtn = makeButton(@"Project Homepage", self,
+                                       @selector(openProjectHomepage:));
+        [homeBtn setFrame:NSMakeRect(20, 146, 140, 28)];
+        [content addSubview:homeBtn];
+        [homeBtn release];
+
+        NSButton *guiBtn = makeButton(@"GUI Repository", self,
+                                      @selector(openGUIRepository:));
+        [guiBtn setFrame:NSMakeRect(170, 146, 120, 28)];
+        [content addSubview:guiBtn];
+        [guiBtn release];
+
+        NSButton *srvBtn = makeButton(@"Server Repository", self,
+                                      @selector(openServerRepository:));
+        [srvBtn setFrame:NSMakeRect(300, 146, 140, 28)];
+        [content addSubview:srvBtn];
+        [srvBtn release];
+
+        NSButton *closeBtn = makeButton(@"Close", _aboutWindow, @selector(performClose:));
+        [closeBtn setFrame:NSMakeRect(470, 16, 70, 28)];
+        [content addSubview:closeBtn];
+        [closeBtn release];
+    }
+
+    NSString *shortVer = [[NSBundle mainBundle]
+        objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+    NSString *buildVer = [[NSBundle mainBundle]
+        objectForInfoDictionaryKey:@"CFBundleVersion"];
+    if (!shortVer || [shortVer length] == 0) shortVer = @"development";
+
+    if (buildVer && [buildVer length] > 0 &&
+        ![buildVer isEqualToString:shortVer]) {
+        [_aboutVersionLabel setStringValue:
+            [NSString stringWithFormat:@"Version %@ (build %@)", shortVer, buildVer]];
+    } else {
+        [_aboutVersionLabel setStringValue:
+            [NSString stringWithFormat:@"Version %@", shortVer]];
+    }
+
+    [_aboutWindow center];
+    [_aboutWindow makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+}
+
+- (void)checkForUpdates:(id)sender
+{
+    (void)sender;
+    [self showAboutPanel:nil];
+    [_aboutUpdateLabel setTextColor:[NSColor grayColor]];
+    [_aboutUpdateLabel setStringValue:
+        [NSString stringWithFormat:@"Manual check at %@. Opening releases page...",
+         [NSDate date]]];
+    [self openDownloadPage:nil];
+}
+
+- (void)openProjectURL:(NSString *)urlString
+{
+    if (!urlString || [urlString length] == 0) return;
+
+    NSURL *url = [NSURL URLWithString:urlString];
+    if (!url) {
+        NSRunAlertPanel(@"Invalid URL",
+                        @"Could not open requested link.",
+                        @"OK", nil, nil);
+        return;
+    }
+
+    if (![[NSWorkspace sharedWorkspace] openURL:url]) {
+        NSRunAlertPanel(@"Open Failed",
+                        @"Unable to open link in the default browser.",
+                        @"OK", nil, nil);
+    }
+}
+
+- (void)openServerRepository:(id)sender
+{
+    (void)sender;
+    [self openProjectURL:@"https://github.com/jhalter/mobius"];
+}
+
+- (void)openGUIRepository:(id)sender
+{
+    (void)sender;
+    [self openProjectURL:@"https://github.com/fuzzywalrus/mobius-macOS-GUI"];
+}
+
+- (void)openProjectHomepage:(id)sender
+{
+    (void)sender;
+    [self openProjectURL:@"https://github.com/fuzzywalrus/its-morbin-time"];
+}
+
+- (void)openDownloadPage:(id)sender
+{
+    (void)sender;
+    [self openProjectURL:@"https://github.com/fuzzywalrus/its-morbin-time/releases"];
+}
+
 - (void)addTracker:(id)sender
 {
     (void)sender;
@@ -2563,6 +3306,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 - (void)clearLogs:(id)sender
 {
     (void)sender;
+    [_logEntries removeAllObjects];
     [_logTextView setString:@""];
     if (_onlineLogTextView) [_onlineLogTextView setString:@""];
 }
@@ -2573,10 +3317,32 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     _autoScroll = ([_autoScrollCheckbox state] == NSOnState);
 }
 
+- (void)logFilterChanged:(id)sender
+{
+    (void)sender;
+    [self refreshLogTextView];
+}
+
+- (void)toggleStdoutVisibility:(id)sender
+{
+    (void)sender;
+    _showStdout = ([_showStdoutCheckbox state] == NSOnState);
+    [self refreshLogTextView];
+}
+
+- (void)toggleStderrVisibility:(id)sender
+{
+    (void)sender;
+    _showStderr = ([_showStderrCheckbox state] == NSOnState);
+    [self refreshLogTextView];
+}
+
 - (void)textDidChange:(NSNotification *)note
 {
     if ([note object] == _messageBoardTextView) {
         [self setMessageBoardDirty:YES];
+    } else if ([note object] == _logFilterField) {
+        [self logFilterChanged:nil];
     }
 }
 
@@ -2681,6 +3447,8 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     if ([note object] == _textEditorWindow) {
         [_textEditorFilePath release];
         _textEditorFilePath = nil;
+    } else if ([note object] == _wizardWindow) {
+        _wizardPresented = NO;
     }
 }
 
@@ -2959,11 +3727,30 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 {
     if (!text || [text length] == 0) return;
 
-    if ([text rangeOfString:@"Server started"].location != NSNotFound ||
-        [text rangeOfString:@"Server shutting down"].location != NSNotFound) {
+    if ([text rangeOfString:@"Server started"].location != NSNotFound) {
+        [_onlineUsersByID removeAllObjects];
+        _onlinePeakConnections = 0;
+        _footerDownloadBytes = 0;
+        _footerUploadBytes = 0;
+        [self updateOnlineUI];
+        return;
+    }
+    if ([text rangeOfString:@"Server shutting down"].location != NSNotFound) {
         [_onlineUsersByID removeAllObjects];
         [self updateOnlineUI];
         return;
+    }
+
+    unsigned long long bytes = parseLogByteCount(text);
+    if (bytes > 0) {
+        if ([text hasPrefix:@"File sent:"] || [text hasPrefix:@"Banner sent"]) {
+            _footerDownloadBytes += bytes;
+            [self updateFooterStats];
+        } else if ([text hasPrefix:@"File received:"] ||
+                   [text hasPrefix:@"Folder upload: received"]) {
+            _footerUploadBytes += bytes;
+            [self updateFooterStats];
+        }
     }
 
     NSRange loginRange = [text rangeOfString:@"Login: "];
@@ -3050,7 +3837,10 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
 - (void)updateOnlineUI
 {
-    if (!_onlineTableView) return;
+    if (!_onlineTableView) {
+        [self updateFooterStats];
+        return;
+    }
 
     [_onlineUsersItems removeAllObjects];
     NSMutableArray *sorted = [NSMutableArray arrayWithArray:
@@ -3077,6 +3867,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         @"Connected: %u  Peak: %d",
         (unsigned)[_onlineUsersItems count], _onlinePeakConnections];
     [_onlineStatusLabel setStringValue:status];
+    [self updateFooterStats];
 
     int sel = [_onlineTableView selectedRow];
     [_onlineBanButton setEnabled:(sel >= 0 && sel < (int)[_onlineUsersItems count])];
@@ -3548,6 +4339,13 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
     NSString *timeStr = [fmt stringFromDate:ts];
     [fmt release];
 
+    NSDictionary *entry = [NSDictionary dictionaryWithObjectsAndKeys:
+        (timeStr ? timeStr : @""), @"time",
+        (text ? text : @""), @"text",
+        (src ? src : [NSNumber numberWithInt:LogSourceStdout]), @"source",
+        nil];
+    [_logEntries addObject:entry];
+
     NSString *line = [NSString stringWithFormat:@"%@  %@\n", timeStr, text];
 
     NSMutableDictionary *attrs = [NSMutableDictionary dictionary];
@@ -3559,24 +4357,122 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
 
     NSAttributedString *as = [[NSAttributedString alloc]
         initWithString:line attributes:attrs];
-    [[_logTextView textStorage] appendAttributedString:as];
     if (_onlineLogTextView) {
         [[_onlineLogTextView textStorage] appendAttributedString:as];
     }
     [as release];
 
+    [self refreshLogTextView];
     [self processOnlineLogLine:text];
 
-    if (_autoScroll)
-        [_logTextView scrollRangeToVisible:
-            NSMakeRange([[_logTextView string] length], 0)];
     if (_onlineLogTextView) {
         [_onlineLogTextView scrollRangeToVisible:
             NSMakeRange([[_onlineLogTextView string] length], 0)];
     }
 }
 
+- (void)refreshLogTextView
+{
+    if (!_logTextView) return;
+    [_logTextView setString:@""];
+
+    NSString *filter = _logFilterField ? [[_logFilterField stringValue] lowercaseString] : @"";
+    BOOL hasFilter = (filter && [filter length] > 0);
+
+    unsigned i;
+    for (i = 0; i < [_logEntries count]; i++) {
+        NSDictionary *entry = [_logEntries objectAtIndex:i];
+        NSNumber *src = [entry objectForKey:@"source"];
+        int source = src ? [src intValue] : LogSourceStdout;
+
+        if (source == LogSourceStdout && !_showStdout) continue;
+        if (source == LogSourceStderr && !_showStderr) continue;
+
+        NSString *text = [entry objectForKey:@"text"];
+        if (!text) text = @"";
+        if (hasFilter) {
+            if ([[text lowercaseString] rangeOfString:filter].location == NSNotFound) {
+                continue;
+            }
+        }
+
+        NSString *timeStr = [entry objectForKey:@"time"];
+        if (!timeStr) timeStr = @"";
+        NSString *line = [NSString stringWithFormat:@"%@  %@\n", timeStr, text];
+
+        NSMutableDictionary *attrs = [NSMutableDictionary dictionary];
+        [attrs setObject:[NSFont fontWithName:@"Monaco" size:10.0]
+                  forKey:NSFontAttributeName];
+        if (source == LogSourceStderr) {
+            [attrs setObject:[NSColor redColor]
+                      forKey:NSForegroundColorAttributeName];
+        }
+
+        NSAttributedString *as = [[NSAttributedString alloc]
+            initWithString:line attributes:attrs];
+        [[_logTextView textStorage] appendAttributedString:as];
+        [as release];
+    }
+
+    if (_autoScroll) {
+        [_logTextView scrollRangeToVisible:
+            NSMakeRange([[_logTextView string] length], 0)];
+    }
+}
+
 /* ===== UI update ===== */
+
+- (void)updateFooterStats
+{
+    if (!_footerConnectedLabel || !_footerPeakLabel ||
+        !_footerDLLabel || !_footerULLabel) {
+        return;
+    }
+
+    NSUInteger connected = [_onlineUsersByID count];
+    [_footerConnectedLabel setStringValue:
+        [NSString stringWithFormat:@"Connected: %u", (unsigned)connected]];
+    [_footerPeakLabel setStringValue:
+        [NSString stringWithFormat:@"Peak: %d", _onlinePeakConnections]];
+    [_footerDLLabel setStringValue:
+        [NSString stringWithFormat:@"DL: %@", humanFileSize(_footerDownloadBytes)]];
+    [_footerULLabel setStringValue:
+        [NSString stringWithFormat:@"UL: %@", humanFileSize(_footerUploadBytes)]];
+
+    [_footerConnectedLabel sizeToFit];
+    [_footerPeakLabel sizeToFit];
+    [_footerDLLabel sizeToFit];
+    [_footerULLabel sizeToFit];
+
+    NSView *footer = [_footerConnectedLabel superview];
+    if (!footer) return;
+
+    float right = [footer bounds].size.width - 10.0f;
+    NSRect f;
+
+    f = [_footerULLabel frame];
+    f.origin.x = right - f.size.width;
+    f.origin.y = 6.0f;
+    [_footerULLabel setFrame:f];
+    right = f.origin.x - 14.0f;
+
+    f = [_footerDLLabel frame];
+    f.origin.x = right - f.size.width;
+    f.origin.y = 6.0f;
+    [_footerDLLabel setFrame:f];
+    right = f.origin.x - 14.0f;
+
+    f = [_footerPeakLabel frame];
+    f.origin.x = right - f.size.width;
+    f.origin.y = 6.0f;
+    [_footerPeakLabel setFrame:f];
+    right = f.origin.x - 14.0f;
+
+    f = [_footerConnectedLabel frame];
+    f.origin.x = right - f.size.width;
+    f.origin.y = 6.0f;
+    [_footerConnectedLabel setFrame:f];
+}
 
 - (void)updateServerUI
 {
@@ -3643,6 +4539,7 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
     } else {
         [_footerPortLabel setStringValue:@""];
     }
+    [self updateFooterStats];
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)item
