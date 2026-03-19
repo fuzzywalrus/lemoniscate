@@ -136,6 +136,37 @@ static NSBox *makeSection(NSString *title, float x, float y,
     return box;
 }
 
+static NSString *trimmedString(NSString *s)
+{
+    if (!s) return @"";
+    return [s stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+}
+
+static NSString *yamlUnquote(NSString *value)
+{
+    NSString *v = trimmedString(value);
+    if ([v length] >= 2 &&
+        (([v characterAtIndex:0] == '"' && [v characterAtIndex:[v length] - 1] == '"') ||
+         ([v characterAtIndex:0] == '\'' && [v characterAtIndex:[v length] - 1] == '\''))) {
+        return [v substringWithRange:NSMakeRange(1, [v length] - 2)];
+    }
+    return v;
+}
+
+static BOOL yamlBoolValue(NSString *value)
+{
+    NSString *v = [[trimmedString(value) lowercaseString] stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    return [v isEqualToString:@"true"] || [v isEqualToString:@"yes"] || [v isEqualToString:@"1"];
+}
+
+@interface AppController ()
+- (void)loadConfigFromDisk;
+- (void)writeConfigToDisk;
+- (void)ensureConfigScaffolding;
+@end
+
 @implementation AppController
 
 - (id)init
@@ -151,26 +182,41 @@ static NSBox *makeSection(NSString *title, float x, float y,
         _serverDescription = [@"A Hotline server" retain];
         _autoScroll = YES;
 
-        /* Find lemoniscate binary */
+        /* Find server binary (supports Lemoniscate + MobiusAdmin names). */
         NSBundle *bundle = [NSBundle mainBundle];
-        NSString *binPath = [bundle pathForResource:@"lemoniscate-server"
-                                             ofType:nil];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *binPath = nil;
+        NSArray *names = [NSArray arrayWithObjects:
+            @"lemoniscate-server", @"mobius-hotline-server", @"lemoniscate", nil];
+        unsigned idx;
+        for (idx = 0; idx < [names count] && !binPath; idx++) {
+            NSString *name = [names objectAtIndex:idx];
+            NSString *candidate = [bundle pathForResource:name ofType:nil];
+            if (candidate && [fm isExecutableFileAtPath:candidate]) {
+                binPath = candidate;
+            }
+        }
         if (!binPath) {
-            binPath = [[[bundle bundlePath]
-                stringByAppendingPathComponent:@"Contents/MacOS"]
-                stringByAppendingPathComponent:@"lemoniscate-server"];
-            if (![[NSFileManager defaultManager]
-                    isExecutableFileAtPath:binPath])
-                binPath = nil;
+            NSString *macOSDir = [[bundle bundlePath]
+                stringByAppendingPathComponent:@"Contents/MacOS"];
+            for (idx = 0; idx < [names count] && !binPath; idx++) {
+                NSString *candidate = [macOSDir
+                    stringByAppendingPathComponent:[names objectAtIndex:idx]];
+                if ([fm isExecutableFileAtPath:candidate]) {
+                    binPath = candidate;
+                }
+            }
         }
         if (!binPath) {
             NSString *appDir = [[bundle bundlePath]
                 stringByDeletingLastPathComponent];
-            NSString *sibling = [appDir
-                stringByAppendingPathComponent:@"lemoniscate-server"];
-            if ([[NSFileManager defaultManager]
-                    isExecutableFileAtPath:sibling])
-                binPath = sibling;
+            for (idx = 0; idx < [names count] && !binPath; idx++) {
+                NSString *candidate = [appDir
+                    stringByAppendingPathComponent:[names objectAtIndex:idx]];
+                if ([fm isExecutableFileAtPath:candidate]) {
+                    binPath = candidate;
+                }
+            }
         }
         if (binPath)
             [_processManager setBinaryPath:binPath];
@@ -205,6 +251,7 @@ static NSBox *makeSection(NSString *title, float x, float y,
     [self loadSettings];
     [self createMainMenu];
     [self createMainWindow];
+    [self loadConfigFromDisk];
     [self updateServerUI];
 }
 
@@ -246,6 +293,212 @@ static NSBox *makeSection(NSString *title, float x, float y,
     if (s && [s length]) [_processManager setBinaryPath:s];
 }
 
+- (void)loadConfigFromDisk
+{
+    NSString *cfgPath = [_configDir stringByAppendingPathComponent:@"config.yaml"];
+    NSString *yaml = [NSString stringWithContentsOfFile:cfgPath
+                                                encoding:NSUTF8StringEncoding
+                                                   error:nil];
+    if (!yaml || [yaml length] == 0) return;
+
+    NSArray *lines = [yaml componentsSeparatedByCharactersInSet:
+        [NSCharacterSet newlineCharacterSet]];
+    unsigned i;
+    for (i = 0; i < [lines count]; i++) {
+        NSString *line = trimmedString([lines objectAtIndex:i]);
+        if ([line length] == 0 || [line hasPrefix:@"#"]) continue;
+
+        NSRange sep = [line rangeOfString:@":"];
+        if (sep.location == NSNotFound) continue;
+
+        NSString *key = trimmedString([line substringToIndex:sep.location]);
+        NSString *val = yamlUnquote([line substringFromIndex:sep.location + 1]);
+
+        if ([key isEqualToString:@"Name"]) {
+            [val retain];
+            [_serverName release];
+            _serverName = val;
+            if (_serverNameField) [_serverNameField setStringValue:_serverName];
+        } else if ([key isEqualToString:@"Description"]) {
+            [val retain];
+            [_serverDescription release];
+            _serverDescription = val;
+            if (_descriptionField) [_descriptionField setStringValue:_serverDescription];
+        } else if ([key isEqualToString:@"BannerFile"]) {
+            if (_bannerFileField) [_bannerFileField setStringValue:val];
+        } else if ([key isEqualToString:@"FileRoot"]) {
+            if (_fileRootField) [_fileRootField setStringValue:val];
+        } else if ([key isEqualToString:@"EnableBonjour"]) {
+            if (_bonjourCheckbox) {
+                [_bonjourCheckbox setState:yamlBoolValue(val) ? NSOnState : NSOffState];
+            }
+        } else if ([key isEqualToString:@"EnableTrackerRegistration"]) {
+            if (_trackerCheckbox) {
+                [_trackerCheckbox setState:yamlBoolValue(val) ? NSOnState : NSOffState];
+            }
+        } else if ([key isEqualToString:@"PreserveResourceForks"]) {
+            if (_preserveForkCheckbox) {
+                [_preserveForkCheckbox setState:yamlBoolValue(val) ? NSOnState : NSOffState];
+            }
+        } else if ([key isEqualToString:@"MaxDownloads"]) {
+            if (_maxDownloadsField) [_maxDownloadsField setIntValue:[val intValue]];
+        } else if ([key isEqualToString:@"MaxDownloadsPerClient"]) {
+            if (_maxDLPerClientField) [_maxDLPerClientField setIntValue:[val intValue]];
+        } else if ([key isEqualToString:@"MaxConnectionsPerIP"]) {
+            if (_maxConnPerIPField) [_maxConnPerIPField setIntValue:[val intValue]];
+        }
+    }
+}
+
+- (void)writeConfigToDisk
+{
+    NSString *name = _serverNameField ? [_serverNameField stringValue] : _serverName;
+    NSString *desc = _descriptionField ? [_descriptionField stringValue] : _serverDescription;
+    NSString *banner = _bannerFileField ? [_bannerFileField stringValue] : @"";
+    NSString *fileRoot = _fileRootField ? [_fileRootField stringValue] : @"";
+    BOOL enableBonjour = _bonjourCheckbox ? ([_bonjourCheckbox state] == NSOnState) : YES;
+    BOOL enableTracker = _trackerCheckbox ? ([_trackerCheckbox state] == NSOnState) : NO;
+    BOOL preserveForks = _preserveForkCheckbox ? ([_preserveForkCheckbox state] == NSOnState) : NO;
+    int maxDownloads = _maxDownloadsField ? [_maxDownloadsField intValue] : 0;
+    int maxDLPerClient = _maxDLPerClientField ? [_maxDLPerClientField intValue] : 0;
+    int maxConnPerIP = _maxConnPerIPField ? [_maxConnPerIPField intValue] : 0;
+
+    if (maxDownloads < 0) maxDownloads = 0;
+    if (maxDLPerClient < 0) maxDLPerClient = 0;
+    if (maxConnPerIP < 0) maxConnPerIP = 0;
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:_configDir isDirectory:&isDir]) {
+        [fm createDirectoryAtPath:_configDir attributes:nil];
+    }
+
+    NSString *cfgPath = [_configDir stringByAppendingPathComponent:@"config.yaml"];
+    NSString *qName = [name stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+    NSString *qDesc = [desc stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+    NSString *qBanner = [banner stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+    NSString *qRoot = [fileRoot stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+
+    NSString *yaml = [NSString stringWithFormat:
+        @"Name: \"%@\"\n"
+        @"Description: \"%@\"\n"
+        @"BannerFile: \"%@\"\n"
+        @"FileRoot: \"%@\"\n"
+        @"EnableTrackerRegistration: %@\n"
+        @"Trackers: []\n"
+        @"EnableBonjour: %@\n"
+        @"Encoding: macintosh\n"
+        @"MaxDownloads: %d\n"
+        @"MaxDownloadsPerClient: %d\n"
+        @"MaxConnectionsPerIP: %d\n"
+        @"PreserveResourceForks: %@\n",
+        qName, qDesc, qBanner, qRoot,
+        enableTracker ? @"true" : @"false",
+        enableBonjour ? @"true" : @"false",
+        maxDownloads, maxDLPerClient, maxConnPerIP,
+        preserveForks ? @"true" : @"false"];
+
+    [yaml writeToFile:cfgPath atomically:YES
+             encoding:NSUTF8StringEncoding error:nil];
+}
+
+- (void)ensureConfigScaffolding
+{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:_configDir isDirectory:&isDir]) {
+        [fm createDirectoryAtPath:_configDir attributes:nil];
+    }
+
+    NSString *filesDir = [_configDir stringByAppendingPathComponent:@"Files"];
+    if (![fm fileExistsAtPath:filesDir isDirectory:&isDir]) {
+        [fm createDirectoryAtPath:filesDir attributes:nil];
+    }
+
+    NSString *usersDir = [_configDir stringByAppendingPathComponent:@"Users"];
+    if (![fm fileExistsAtPath:usersDir isDirectory:&isDir]) {
+        [fm createDirectoryAtPath:usersDir attributes:nil];
+    }
+
+    NSString *agreement = [_configDir stringByAppendingPathComponent:@"Agreement.txt"];
+    if (![fm fileExistsAtPath:agreement]) {
+        [@"Welcome to this Hotline server.\n"
+            writeToFile:agreement atomically:YES
+               encoding:NSUTF8StringEncoding error:nil];
+    }
+
+    NSString *board = [_configDir stringByAppendingPathComponent:@"MessageBoard.txt"];
+    if (![fm fileExistsAtPath:board]) {
+        [@"" writeToFile:board atomically:YES
+               encoding:NSUTF8StringEncoding error:nil];
+    }
+
+    NSString *banlist = [_configDir stringByAppendingPathComponent:@"Banlist.yaml"];
+    if (![fm fileExistsAtPath:banlist]) {
+        [@"banList: {}\nbannedUsers: {}\nbannedNicks: {}\n"
+            writeToFile:banlist atomically:YES
+               encoding:NSUTF8StringEncoding error:nil];
+    }
+
+    NSString *threadedNews = [_configDir stringByAppendingPathComponent:@"ThreadedNews.yaml"];
+    if (![fm fileExistsAtPath:threadedNews]) {
+        [@"Categories: {}\n" writeToFile:threadedNews atomically:YES
+                                encoding:NSUTF8StringEncoding error:nil];
+    }
+
+    NSString *admin = [usersDir stringByAppendingPathComponent:@"admin.yaml"];
+    if (![fm fileExistsAtPath:admin]) {
+        [@"Login: admin\n"
+          @"Name: admin\n"
+          @"Password: \"\"\n"
+          @"Access:\n"
+          @"  DownloadFile: true\n"
+          @"  UploadFile: true\n"
+          @"  ReadChat: true\n"
+          @"  SendChat: true\n"
+          @"  CreateUser: true\n"
+          @"  DeleteUser: true\n"
+          @"  OpenUser: true\n"
+          @"  ModifyUser: true\n"
+          @"  GetClientInfo: true\n"
+          @"  DisconnectUser: true\n"
+          @"  Broadcast: true\n"
+          @"  CreateFolder: true\n"
+          @"  DeleteFile: true\n"
+          @"  OpenChat: true\n"
+          @"  NewsReadArt: true\n"
+          @"  NewsPostArt: true\n"
+            writeToFile:admin atomically:YES
+               encoding:NSUTF8StringEncoding error:nil];
+    }
+
+    NSString *guest = [usersDir stringByAppendingPathComponent:@"guest.yaml"];
+    if (![fm fileExistsAtPath:guest]) {
+        [@"Login: guest\n"
+          @"Name: guest\n"
+          @"Password: \"\"\n"
+          @"Access:\n"
+          @"  DownloadFile: true\n"
+          @"  UploadFile: false\n"
+          @"  ReadChat: true\n"
+          @"  SendChat: true\n"
+          @"  CreateUser: false\n"
+          @"  DeleteUser: false\n"
+          @"  OpenUser: false\n"
+          @"  ModifyUser: false\n"
+          @"  GetClientInfo: true\n"
+          @"  DisconnectUser: false\n"
+          @"  Broadcast: false\n"
+          @"  CreateFolder: false\n"
+          @"  DeleteFile: false\n"
+          @"  OpenChat: true\n"
+          @"  NewsReadArt: true\n"
+          @"  NewsPostArt: true\n"
+            writeToFile:guest atomically:YES
+               encoding:NSUTF8StringEncoding error:nil];
+    }
+}
+
 - (void)saveSettings:(id)sender
 {
     (void)sender;
@@ -270,6 +523,8 @@ static NSBox *makeSection(NSString *title, float x, float y,
     if ([_processManager binaryPath])
         [d setObject:[_processManager binaryPath] forKey:@"binaryPath"];
     [d synchronize];
+
+    [self writeConfigToDisk];
 }
 
 /* ===== Menu bar ===== */
@@ -493,6 +748,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
                                _chooseBannerButton, iy, fieldWidth);
 
         _fileRootField = makeEditField(fieldWidth);
+        [_fileRootField setStringValue:@"Files"];
         _chooseFileRootButton = makeButton(@"Browse...", self,
                                             @selector(chooseFileRoot:));
         iy = addRowWithButton(c, @"File Root:", _fileRootField,
@@ -623,7 +879,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
             binColor = [NSColor colorWithCalibratedRed:0.0
                 green:0.5 blue:0.0 alpha:1.0];
         } else {
-            binMsg = @"Not found \u2014 place lemoniscate next to app or in bundle";
+            binMsg = @"Not found - place lemoniscate-server or mobius-hotline-server in bundle";
             binColor = [NSColor redColor];
         }
         NSTextField *bl = makeLabel(binMsg, 10.0, NO);
@@ -784,7 +1040,8 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     if (![_processManager hasBinary]) {
         NSTextField *w = makeLabel(
-            @"Server binary not found in app bundle.", 11.0, NO);
+            @"Server binary not found in app bundle (lemoniscate-server or mobius-hotline-server).",
+            11.0, NO);
         [w setTextColor:[NSColor redColor]];
         [w setAlignment:NSCenterTextAlignment];
         [w setFrame:NSMakeRect(20, 185, [view bounds].size.width - 40, 20)];
@@ -863,10 +1120,8 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 {
     (void)sender;
     [self saveSettings:nil];
-    NSFileManager *fm = [NSFileManager defaultManager];
-    BOOL isDir;
-    if (![fm fileExistsAtPath:_configDir isDirectory:&isDir])
-        [fm createDirectoryAtPath:_configDir attributes:nil];
+    [self ensureConfigScaffolding];
+    [self writeConfigToDisk];
     [_processManager startWithConfigDir:_configDir port:_serverPort];
 }
 
@@ -880,6 +1135,8 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 {
     (void)sender;
     [self saveSettings:nil];
+    [self ensureConfigScaffolding];
+    [self writeConfigToDisk];
     [_processManager restartWithConfigDir:_configDir port:_serverPort];
 }
 
@@ -896,6 +1153,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_configDir release];
         _configDir = [path retain];
         [_configDirField setStringValue:_configDir];
+        [self loadConfigFromDisk];
         [self saveSettings:nil];
     }
 }

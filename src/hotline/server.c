@@ -15,6 +15,7 @@
 #include "hotline/user.h"
 #include "hotline/transfer.h"
 #include "hotline/file_transfer.h"
+#include "mobius/transaction_handlers.h"
 
 #include <sys/event.h>
 #include <sys/socket.h>
@@ -97,7 +98,7 @@ void hl_server_broadcast(hl_server_t *srv, hl_client_conn_t *sender,
         if (!hl_type_eq(clients[i]->id, sender->id)) {
             /* Set target client ID and send */
             memcpy(t->client_id, clients[i]->id, 2);
-            hl_server_send_transaction(clients[i]->fd, t);
+            { int _brc = hl_server_send_transaction(clients[i]->fd, t); fprintf(stderr, "[BCAST] %s -> client %d fd=%d rc=%d\n", hl_transaction_type_name(t->type), hl_read_u16(clients[i]->id), clients[i]->fd, _brc); fflush(stderr); }
         }
     }
     free(clients);
@@ -108,7 +109,34 @@ void hl_server_broadcast(hl_server_t *srv, hl_client_conn_t *sender,
 void hl_server_send_to_client(hl_client_conn_t *cc, hl_transaction_t *t)
 {
     memcpy(t->client_id, cc->id, 2);
-    hl_server_send_transaction(cc->fd, t);
+    int _rc = hl_server_send_transaction(cc->fd, t); fprintf(stderr, "[SEND] %s -> client %d fd=%d rc=%d\n", hl_transaction_type_name(t->type), hl_read_u16(cc->id), cc->fd, _rc); fflush(stderr);
+}
+
+/* Notify all other clients that this user's visible profile changed.
+ * Matches Mobius Go behavior for TranNotifyChangeUser payload fields. */
+static void broadcast_notify_change_user(hl_server_t *srv, hl_client_conn_t *cc)
+{
+    hl_field_t fields[4];
+    memset(fields, 0, sizeof(fields));
+
+    hl_field_new(&fields[0], FIELD_USER_NAME,
+                 (const uint8_t *)cc->user_name, cc->user_name_len);
+    hl_field_new(&fields[1], FIELD_USER_ID, cc->id, 2);
+    hl_field_new(&fields[2], FIELD_USER_ICON_ID, cc->icon, 2);
+    hl_field_new(&fields[3], FIELD_USER_FLAGS, cc->flags, 2);
+
+    hl_transaction_t notify;
+    memset(&notify, 0, sizeof(notify));
+    memcpy(notify.type, TRAN_NOTIFY_CHANGE_USER, 2);
+    notify.fields = fields;
+    notify.field_count = 4;
+
+    hl_server_broadcast(srv, cc, &notify);
+
+    int i;
+    for (i = 0; i < 4; i++) {
+        hl_field_free(&fields[i]);
+    }
 }
 
 /* --- Rate limiting (token bucket) --- */
@@ -360,28 +388,8 @@ static void process_client_data(hl_server_t *srv, hl_client_conn_t *cc, int kq)
                 /* Clear away flag if set */
                 if (hl_user_flags_is_set(cc->flags, HL_USER_FLAG_AWAY)) {
                     hl_user_flags_set(cc->flags, HL_USER_FLAG_AWAY, 0);
-                    /* Notify others of status change */
-                    hl_user_t u;
-                    memcpy(u.id, cc->id, 2);
-                    memcpy(u.icon, cc->icon, 2);
-                    memcpy(u.flags, cc->flags, 2);
-                    u.name_len = cc->user_name_len;
-                    memcpy(u.name, cc->user_name, u.name_len);
-
-                    uint8_t ubuf[512];
-                    int ulen = hl_user_serialize(&u, ubuf, sizeof(ubuf));
-                    if (ulen > 0) {
-                        hl_transaction_t notify;
-                        memset(&notify, 0, sizeof(notify));
-                        memcpy(notify.type, TRAN_NOTIFY_CHANGE_USER, 2);
-                        hl_field_t ufield;
-                        hl_field_new(&ufield, FIELD_USERNAME_WITH_INFO, ubuf, (uint16_t)ulen);
-                        notify.fields = &ufield;
-                        notify.field_count = 1;
-                        hl_server_broadcast(srv, cc, &notify);
-                        hl_field_free(&ufield);
-                        notify.fields = NULL;
-                    }
+                    /* Notify others that user is no longer away. */
+                    broadcast_notify_change_user(srv, cc);
                 }
                 pthread_rwlock_unlock(&cc->mu);
             }
@@ -731,27 +739,11 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
         }
     }
 
-    /* 3. Notify others of new user */
-    hl_user_t u;
-    memcpy(u.id, cc->id, 2);
-    memcpy(u.icon, cc->icon, 2);
-    memcpy(u.flags, cc->flags, 2);
-    u.name_len = cc->user_name_len;
-    memcpy(u.name, cc->user_name, u.name_len);
-
-    uint8_t ubuf[512];
-    int ulen = hl_user_serialize(&u, ubuf, sizeof(ubuf));
-    if (ulen > 0) {
-        hl_transaction_t notify;
-        memset(&notify, 0, sizeof(notify));
-        memcpy(notify.type, TRAN_NOTIFY_CHANGE_USER, 2);
-        hl_field_t ufield;
-        hl_field_new(&ufield, FIELD_USERNAME_WITH_INFO, ubuf, (uint16_t)ulen);
-        notify.fields = &ufield;
-        notify.field_count = 1;
-        hl_server_broadcast(srv, cc, &notify);
-        hl_field_free(&ufield);
-        notify.fields = NULL;
+    /* Notify others immediately for 1.2.3-style login flows where the
+     * nickname was already provided in TranLogin. Newer clients are
+     * announced on TranAgreed after sending user info/options. */
+    if (f_name && f_name->data_len > 0) {
+        broadcast_notify_change_user(srv, cc);
     }
 
     hl_transaction_free(&login_tran);
@@ -999,30 +991,8 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                         if (cc->idle_time > HL_USER_IDLE_SECONDS &&
                             !hl_user_flags_is_set(cc->flags, HL_USER_FLAG_AWAY)) {
                             hl_user_flags_set(cc->flags, HL_USER_FLAG_AWAY, 1);
-
-                            /* Notify others of away status */
-                            hl_user_t u;
-                            memcpy(u.id, cc->id, 2);
-                            memcpy(u.icon, cc->icon, 2);
-                            memcpy(u.flags, cc->flags, 2);
-                            u.name_len = cc->user_name_len;
-                            memcpy(u.name, cc->user_name, u.name_len);
-
-                            uint8_t ubuf[512];
-                            int ulen = hl_user_serialize(&u, ubuf, sizeof(ubuf));
-                            if (ulen > 0) {
-                                hl_transaction_t notify;
-                                memset(&notify, 0, sizeof(notify));
-                                memcpy(notify.type, TRAN_NOTIFY_CHANGE_USER, 2);
-                                hl_field_t ufield;
-                                hl_field_new(&ufield, FIELD_USERNAME_WITH_INFO,
-                                             ubuf, (uint16_t)ulen);
-                                notify.fields = &ufield;
-                                notify.field_count = 1;
-                                hl_server_broadcast(srv, cc, &notify);
-                                hl_field_free(&ufield);
-                                notify.fields = NULL;
-                            }
+                            /* Notify others that user is now away. */
+                            broadcast_notify_change_user(srv, cc);
                         }
                         pthread_rwlock_unlock(&cc->mu);
                     }
