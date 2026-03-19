@@ -17,6 +17,7 @@
 #include "hotline/transfer.h"
 #include "hotline/file_transfer.h"
 #include "hotline/flattened_file_object.h"
+#include "hotline/file_types.h"
 #include "mobius/transaction_handlers.h"
 
 #include <sys/event.h>
@@ -843,11 +844,12 @@ static int send_folder_file(int fd, const char *file_path, const char *filename)
     if (write_all(fd, info_hdr, 16) < 0) { fclose(f); return -1; }
 
     /* INFO fork data */
+    const hl_file_type_entry_t *ftype = hl_file_type_from_filename(filename);
     uint8_t info_data[256];
     memset(info_data, 0, sizeof(info_data));
     memcpy(info_data, "AMAC", 4);
-    memcpy(info_data + 4, "TEXT", 4);
-    memcpy(info_data + 8, "ttxt", 4);
+    memcpy(info_data + 4, ftype->type, 4);
+    memcpy(info_data + 8, ftype->creator, 4);
     info_data[40] = 0; info_data[41] = 0x01;
     hl_write_u16(info_data + 70, (uint16_t)name_len);
     memcpy(info_data + 72, filename, name_len);
@@ -1045,17 +1047,16 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd)
         /* INFO fork data: platform(4) + type(4) + creator(4) + flags(4) +
          * platform_flags(4) + rsvd(32) + create_date(8) + modify_date(8) +
          * name_script(2) + name_size(2) + name(n) + comment_size(2) */
+        const hl_file_type_entry_t *ftype = hl_file_type_from_filename(filename);
+
         uint8_t info_data[256];
         memset(info_data, 0, sizeof(info_data));
         memcpy(info_data, "AMAC", 4); /* platform */
-        memcpy(info_data + 4, "TEXT", 4); /* type */
-        memcpy(info_data + 8, "ttxt", 4); /* creator */
-        /* flags, platform_flags, rsvd, dates all zero for simplicity */
+        memcpy(info_data + 4, ftype->type, 4);
+        memcpy(info_data + 8, ftype->creator, 4);
         info_data[40] = 0; info_data[41] = 0x01; /* platform flags */
-        /* name_script = 0 */
         hl_write_u16(info_data + 70, (uint16_t)name_len);
         memcpy(info_data + 72, filename, name_len);
-        /* comment_size = 0 */
         info_data[72 + name_len] = 0;
         info_data[72 + name_len + 1] = 0;
 
