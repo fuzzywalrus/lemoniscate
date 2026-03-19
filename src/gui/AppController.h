@@ -110,6 +110,9 @@
     /* Online tab */
     NSTextField *_onlineStatusLabel;
     NSTableView *_onlineTableView;
+    NSSplitView *_onlineSplitView;
+    NSScrollView *_onlineLogScrollView;
+    NSTextView *_onlineLogTextView;
     NSMutableDictionary *_onlineUsersByID;
     NSMutableArray *_onlineUsersItems;
     NSButton *_onlineBanButton;
@@ -130,8 +133,16 @@
     NSView *_newsThreadedView;
     NSTextView *_messageBoardTextView;
     NSButton *_saveMessageBoardButton;
+    NSTextField *_messageBoardDirtyLabel;
+    BOOL _messageBoardDirty;
     NSTableView *_newsCategoriesTableView;
+    NSTableView *_newsArticlesTableView;
     NSMutableArray *_newsCategoryItems;
+    NSMutableArray *_newsArticleItems;
+    NSMutableDictionary *_newsCategoriesByKey;
+    NSTextField *_newsNewCategoryField;
+    NSButton *_newsDeleteCategoryButton;
+    NSString *_newsSelectedCategoryKey;
 
     /* Footer */
     NSImageView *_footerStatusDot;
@@ -179,6 +190,8 @@
 - (void)newsSegmentChanged:(id)sender;
 - (void)saveMessageBoard:(id)sender;
 - (void)refreshThreadedNews:(id)sender;
+- (void)addNewsCategory:(id)sender;
+- (void)deleteNewsCategory:(id)sender;
 
 @end
 

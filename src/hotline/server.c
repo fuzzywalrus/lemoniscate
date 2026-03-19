@@ -815,10 +815,9 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd)
             }
             hl_log_info(srv->logger, "Banner sent (%zu bytes)", total);
         }
-        /* Remove completed transfer */
+        /* Remove completed transfer (ft points into manager array — do NOT free) */
         srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
                                          hdr.reference_number);
-        free(ft);
         close(client_fd);
         return;
     }
@@ -830,8 +829,6 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd)
             hl_log_error(srv->logger, "Failed to open file: %s", ft->file_root);
             srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
                                              hdr.reference_number);
-            if (ft->resume_data) free(ft->resume_data);
-            free(ft);
             close(client_fd);
             return;
         }
@@ -924,8 +921,8 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd)
 
         srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
                                          hdr.reference_number);
-        if (ft->resume_data) free(ft->resume_data);
-        free(ft);
+        srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
+                                         hdr.reference_number);
         close(client_fd);
         return;
     }
@@ -1033,7 +1030,6 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd)
 upload_cleanup:
         srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
                                          hdr.reference_number);
-        free(ft);
         close(client_fd);
         return;
     }
@@ -1041,7 +1037,6 @@ upload_cleanup:
     hl_log_info(srv->logger, "Unhandled transfer type %d", ft->type);
     srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
                                      hdr.reference_number);
-    free(ft);
     close(client_fd);
 }
 

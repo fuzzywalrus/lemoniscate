@@ -1845,6 +1845,7 @@ static int handle_download_file(hl_client_conn_t *cc, const hl_transaction_t *re
 
     int k;
     for (k = 0; k < 4; k++) hl_field_free(&fields[k]);
+    free(ft); /* add() copied it into the manager's internal array */
 
     *out = reply;
     *out_count = 1;
@@ -1913,6 +1914,7 @@ static int handle_upload_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     reply->is_reply = 1;
     memcpy(reply->id, req->id, 4);
     hl_field_free(&fields[0]);
+    free(ft); /* add() copied it into the manager's internal array */
 
     *out = reply;
     *out_count = 1;
@@ -1973,6 +1975,7 @@ static int handle_download_banner(hl_client_conn_t *cc, const hl_transaction_t *
 
     hl_field_free(&fields[0]);
     hl_field_free(&fields[1]);
+    free(ft); /* add() copied it into the manager's internal array */
 
     *out = reply;
     *out_count = 1;
@@ -2028,8 +2031,4 @@ void mobius_register_handlers(hl_server_t *srv)
     hl_server_handle_func(srv, TRAN_NEW_FOLDER,          handle_new_folder);
     hl_server_handle_func(srv, TRAN_MAKE_FILE_ALIAS,     handle_make_alias);
     hl_server_handle_func(srv, TRAN_DOWNLOAD_FILE,       handle_download_file);
-    hl_server_handle_func(srv, TRAN_UPLOAD_FILE,         handle_upload_file);
-    hl_server_handle_func(srv, TRAN_DOWNLOAD_FLDR,       handle_download_folder);
-    hl_server_handle_func(srv, TRAN_UPLOAD_FLDR,         handle_upload_folder);
-    hl_server_handle_func(srv, TRAN_DOWNLOAD_BANNER,     handle_download_banner);
-}
+    hl                                                                                                                                                                                                                                                                                                                              
