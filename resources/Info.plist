@@ -10,6 +10,8 @@
 	<string>Lemoniscate</string>
 	<key>CFBundleDisplayName</key>
 	<string>Lemoniscate</string>
+	<key>CFBundleIconFile</key>
+	<string>Lemoniscate.icns</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleSignature</key>
