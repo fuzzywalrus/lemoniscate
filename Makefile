@@ -115,11 +115,12 @@ APP_BUNDLE = Lemoniscate.app
 APP_CONTENTS = $(APP_BUNDLE)/Contents
 APP_MACOS = $(APP_CONTENTS)/MacOS
 APP_RESOURCES = $(APP_CONTENTS)/Resources
+SERVER_COMPAT_BIN = mobius-hotline-server
 APP_SKIP_ARCH_CHECK ?= 0
 
 .PHONY: all clean test test-wire test-client gui app
 
-all: libhotline.a lemoniscate
+all: libhotline.a lemoniscate $(SERVER_COMPAT_BIN)
 
 # Static library (C wire format + Obj-C client)
 libhotline.a: $(HOTLINE_OBJS)
@@ -130,6 +131,12 @@ libhotline.a: $(HOTLINE_OBJS)
 lemoniscate: $(HOTLINE_C_OBJS) $(MOBIUS_OBJS) src/main.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(YAML_LDFLAGS)
 	@echo "Built lemoniscate server"
+
+# Compatibility alias used by MobiusAdmin launcher expectations
+$(SERVER_COMPAT_BIN): lemoniscate
+	cp lemoniscate $(SERVER_COMPAT_BIN)
+	chmod +x $(SERVER_COMPAT_BIN)
+	@echo "Built $(SERVER_COMPAT_BIN) compatibility binary"
 
 # Phase 1 wire format tests (C only, no Foundation needed)
 test-wire: $(TEST_C_OBJS) $(HOTLINE_C_OBJS)
@@ -158,7 +165,7 @@ gui: $(GUI_OBJC_OBJS)
 	@echo "Built lemoniscate-gui"
 
 # App bundle: Lemoniscate.app containing server binary + GUI
-app: lemoniscate gui
+app: lemoniscate $(SERVER_COMPAT_BIN) gui
 	@if [ "$(APP_SKIP_ARCH_CHECK)" != "1" ]; then \
 		server_arch=`file lemoniscate | grep -Eo 'ppc64|ppc|x86_64|arm64|i386' | head -n1`; \
 		gui_arch=`file lemoniscate-gui | grep -Eo 'ppc64|ppc|x86_64|arm64|i386' | head -n1`; \
@@ -176,17 +183,19 @@ app: lemoniscate gui
 	mkdir -p $(APP_MACOS) $(APP_RESOURCES)
 	cp lemoniscate-gui $(APP_MACOS)/Lemoniscate
 	cp lemoniscate $(APP_MACOS)/lemoniscate-server
+	cp $(SERVER_COMPAT_BIN) $(APP_MACOS)/$(SERVER_COMPAT_BIN)
 	cp resources/Info.plist $(APP_CONTENTS)/Info.plist
 	@test -f resources/Lemoniscate.icns || (echo "ERROR: missing resources/Lemoniscate.icns"; exit 1)
 	cp resources/Lemoniscate.icns $(APP_RESOURCES)/Lemoniscate.icns
 	@echo "Built $(APP_BUNDLE)"
 	@echo "  Server binary: $(APP_MACOS)/lemoniscate-server"
+	@echo "  Compat binary: $(APP_MACOS)/$(SERVER_COMPAT_BIN)"
 	@echo "  GUI binary:    $(APP_MACOS)/Lemoniscate"
 
 clean:
 	rm -f $(HOTLINE_OBJS) $(MOBIUS_OBJS) $(TEST_C_OBJS) $(TEST_OBJC_OBJS) \
 	      $(GUI_OBJC_OBJS) \
-	      libhotline.a lemoniscate lemoniscate-gui test_runner test_client src/main.o
+	      libhotline.a lemoniscate $(SERVER_COMPAT_BIN) lemoniscate-gui test_runner test_client src/main.o
 	rm -rf $(APP_BUNDLE)
 
 # Auto-dependency generation
