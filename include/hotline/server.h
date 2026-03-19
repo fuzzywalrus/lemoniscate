@@ -16,6 +16,10 @@
 #include "hotline/client_manager.h"
 #include "hotline/chat.h"
 #include "hotline/client_conn.h"
+#include "hotline/file_transfer.h"
+#include "hotline/tracker.h"
+#include "mobius/flat_news.h"
+#include "mobius/threaded_news_yaml.h"
 #include <pthread.h>
 
 /* Rate limiter entry (token bucket) — maps to Go rate.Limiter */
@@ -55,10 +59,18 @@ typedef struct hl_server {
     uint8_t            *banner;              /* Go: Banner []byte */
     size_t              banner_len;
 
+    hl_xfer_mgr_t      *file_transfer_mgr;   /* Go: FileTransferMgr FileTransferMgr */
     hl_client_mgr_t    *client_mgr;          /* Go: ClientMgr ClientManager */
     hl_chat_mgr_t      *chat_mgr;            /* Go: ChatMgr ChatManager */
     hl_account_mgr_t   *account_mgr;         /* Go: AccountManager AccountManager */
+    mobius_threaded_news_t *threaded_news;    /* Go: ThreadedNewsMgr ThreadedNewsMgr */
     hl_ban_mgr_t       *ban_list;            /* Go: BanList BanMgr */
+    mobius_flat_news_t *flat_news;            /* Go: MessageBoard io.ReadWriteSeeker */
+
+    /* Text encoding — maps to Go TextDecoder/TextEncoder
+     * Config "encoding" field selects macintosh (MacRoman) or utf-8.
+     * On Tiger, CoreFoundation handles the conversion. */
+    int                 use_mac_roman;       /* 1 = MacRoman, 0 = UTF-8 */
 
     volatile int        shutdown;            /* Go: context cancellation */
 

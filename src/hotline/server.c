@@ -653,50 +653,82 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
                 remote_addr, cc->user_name_len, cc->user_name,
                 hl_read_u16(cc->id));
 
-    /* Send login reply — maps to Go login response sequence */
-    /* 1. ShowAgreement (if agreement exists and user doesn't have NoAgreement access) */
-    int show_agreement = (srv->agreement && srv->agreement_len > 0);
-    if (cc->account && hl_access_is_set(cc->account->access, ACCESS_NO_AGREEMENT)) {
-        show_agreement = 0;
-    }
+    /* Send login reply sequence — maps to Go login response in server.go:593-615
+     *
+     * 1. Reply to login transaction with FieldVersion, FieldCommunityBannerID, FieldServerName
+     * 2. Send TranUserAccess with access bitmap (new transaction, not reply)
+     * 3. Send TranShowAgreement with agreement text (new transaction, not reply)
+     */
 
-    if (show_agreement) {
-        hl_field_t agree_field;
-        hl_field_new(&agree_field, FIELD_DATA, srv->agreement, (uint16_t)srv->agreement_len);
-        hl_transaction_t agree_tran;
-        memset(&agree_tran, 0, sizeof(agree_tran));
-        agree_tran.is_reply = 1;
-        memcpy(agree_tran.id, login_tran.id, 4);
-        memcpy(agree_tran.type, TRAN_SHOW_AGREEMENT, 2);
-        memcpy(agree_tran.client_id, cc->id, 2);
-        agree_tran.fields = &agree_field;
-        agree_tran.field_count = 1;
-        hl_server_send_transaction(client_fd, &agree_tran);
-        hl_field_free(&agree_field);
-        agree_tran.fields = NULL;
-    } else {
-        /* No agreement — send empty reply to complete login */
+    /* Step 1: Login reply with server info */
+    {
+        uint8_t version_bytes[2] = {0x00, 0xBE}; /* 190 = Hotline 1.8+ */
+        uint8_t banner_id[2] = {0, 0};
+
+        hl_field_t reply_fields[3];
+        int fc = 0;
+        hl_field_new(&reply_fields[fc++], FIELD_VERSION, version_bytes, 2);
+        hl_field_new(&reply_fields[fc++], FIELD_COMMUNITY_BANNER_ID, banner_id, 2);
+        hl_field_new(&reply_fields[fc++], FIELD_SERVER_NAME,
+                     (const uint8_t *)srv->config.name,
+                     (uint16_t)strlen(srv->config.name));
+
         hl_transaction_t reply;
         memset(&reply, 0, sizeof(reply));
         reply.is_reply = 1;
         memcpy(reply.id, login_tran.id, 4);
         memcpy(reply.client_id, cc->id, 2);
+        reply.fields = reply_fields;
+        reply.field_count = (uint16_t)fc;
         hl_server_send_transaction(client_fd, &reply);
+
+        int fi;
+        for (fi = 0; fi < fc; fi++) hl_field_free(&reply_fields[fi]);
+        reply.fields = NULL;
     }
 
-    /* 2. Send UserAccess bitmap */
+    /* Step 2: Send UserAccess bitmap as new transaction */
     if (cc->account) {
         hl_field_t access_field;
         hl_field_new(&access_field, FIELD_USER_ACCESS, cc->account->access, 8);
         hl_transaction_t access_tran;
-        memset(&access_tran, 0, sizeof(access_tran));
-        memcpy(access_tran.type, TRAN_USER_ACCESS, 2);
-        memcpy(access_tran.client_id, cc->id, 2);
-        access_tran.fields = &access_field;
-        access_tran.field_count = 1;
+        hl_transaction_new(&access_tran, TRAN_USER_ACCESS, cc->id, &access_field, 1);
         hl_server_send_transaction(client_fd, &access_tran);
         hl_field_free(&access_field);
-        access_tran.fields = NULL;
+        hl_transaction_free(&access_tran);
+    }
+
+    /* Step 3: Send ShowAgreement as new transaction */
+    {
+        int show_agreement = (srv->agreement && srv->agreement_len > 0);
+        if (cc->account && hl_access_is_set(cc->account->access, ACCESS_NO_AGREEMENT)) {
+            show_agreement = 0;
+        }
+
+        if (show_agreement) {
+            hl_field_t agree_field;
+            hl_field_new(&agree_field, FIELD_DATA, srv->agreement,
+                         (uint16_t)(srv->agreement_len > 65535 ? 65535 : srv->agreement_len));
+            hl_transaction_t agree_tran;
+            hl_transaction_new(&agree_tran, TRAN_SHOW_AGREEMENT, cc->id,
+                               &agree_field, 1);
+            hl_server_send_transaction(client_fd, &agree_tran);
+            hl_field_free(&agree_field);
+            hl_transaction_free(&agree_tran);
+        } else {
+            /* No agreement — send ShowAgreement with NoServerAgreement=1 */
+            uint8_t no_agree = 1;
+            hl_field_t na_field;
+            /* Field 152 = FieldNoServerAgreement (reuse FIELD_BANNER_TYPE slot) */
+            uint8_t field_no_agree[2] = {0x00, 0x98};
+            hl_field_new(&na_field, field_no_agree, &no_agree, 1);
+            hl_transaction_t na_tran;
+            hl_transaction_new(&na_tran, TRAN_SHOW_AGREEMENT, cc->id,
+                               &na_field, 1);
+            hl_server_send_transaction(client_fd, &na_tran);
+            hl_field_free(&na_field);
+            hl_transaction_free(&na_tran);
+        }
     }
 
     /* 3. Notify others of new user */
@@ -762,8 +794,48 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd)
                 hdr.reference_number[0], hdr.reference_number[1],
                 hdr.reference_number[2], hdr.reference_number[3]);
 
-    /* Look up transfer by ref num — actual download/upload logic would go here */
-    /* For now, close after logging */
+    /* Look up transfer by ref num */
+    hl_file_transfer_t *ft = NULL;
+    if (srv->file_transfer_mgr) {
+        ft = srv->file_transfer_mgr->vt->get(srv->file_transfer_mgr,
+                                               hdr.reference_number);
+    }
+
+    if (!ft) {
+        hl_log_error(srv->logger, "No transfer found for ref number");
+        close(client_fd);
+        return;
+    }
+
+    /* Handle banner download — send raw banner data */
+    if (ft->type == HL_XFER_BANNER_DOWNLOAD) {
+        if (srv->banner && srv->banner_len > 0) {
+            size_t total = 0;
+            while (total < srv->banner_len) {
+                ssize_t w = write(client_fd, srv->banner + total,
+                                  srv->banner_len - total);
+                if (w < 0) {
+                    if (errno == EINTR) continue;
+                    break;
+                }
+                if (w == 0) break;
+                total += (size_t)w;
+            }
+            hl_log_info(srv->logger, "Banner sent (%zu bytes)", total);
+        }
+        /* Remove completed transfer */
+        srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
+                                         hdr.reference_number);
+        free(ft);
+        close(client_fd);
+        return;
+    }
+
+    /* TODO: Handle file downloads/uploads */
+    hl_log_info(srv->logger, "Unhandled transfer type %d", ft->type);
+    srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
+                                     hdr.reference_number);
+    free(ft);
     close(client_fd);
 }
 

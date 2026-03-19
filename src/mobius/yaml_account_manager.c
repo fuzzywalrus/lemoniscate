@@ -108,6 +108,7 @@ static int parse_account_file(hl_account_t *acct, const char *filepath)
             depth++;
             if (depth == 2 && strcmp(current_key, "Access") == 0) {
                 in_access_map = 1;
+                current_key[0] = '\0'; /* Reset key for access map parsing */
             }
             break;
 

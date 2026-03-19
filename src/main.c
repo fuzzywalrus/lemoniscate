@@ -140,10 +140,14 @@ static int init_config_dir(const char *dir)
         fclose(f);
     }
 
-    /* Write empty MessageBoard.txt */
+    /* Write default MessageBoard.txt */
     snprintf(path, sizeof(path), "%s/MessageBoard.txt", dir);
     f = fopen(path, "w");
-    if (f) fclose(f);
+    if (f) {
+        fprintf(f, "Welcome to the Message Board!\r"
+                   "Post news and updates here.\r");
+        fclose(f);
+    }
 
     /* Write empty Banlist.yaml */
     snprintf(path, sizeof(path), "%s/Banlist.yaml", dir);
@@ -175,6 +179,35 @@ static int init_config_dir(const char *dir)
             "  Broadcast: true\n"
             "  CreateFolder: true\n"
             "  DeleteFile: true\n"
+            "  OpenChat: true\n"
+            "  NewsReadArt: true\n"
+            "  NewsPostArt: true\n"
+        );
+        fclose(f);
+    }
+
+    /* Write default guest account */
+    snprintf(path, sizeof(path), "%s/Users/guest.yaml", dir);
+    f = fopen(path, "w");
+    if (f) {
+        fprintf(f,
+            "Login: guest\n"
+            "Name: Guest\n"
+            "Password: \"\"\n"
+            "Access:\n"
+            "  DownloadFile: true\n"
+            "  UploadFile: false\n"
+            "  ReadChat: true\n"
+            "  SendChat: true\n"
+            "  CreateUser: false\n"
+            "  DeleteUser: false\n"
+            "  OpenUser: false\n"
+            "  ModifyUser: false\n"
+            "  GetClientInfo: true\n"
+            "  DisconnectUser: false\n"
+            "  Broadcast: false\n"
+            "  CreateFolder: false\n"
+            "  DeleteFile: false\n"
             "  OpenChat: true\n"
             "  NewsReadArt: true\n"
             "  NewsPostArt: true\n"
@@ -219,6 +252,7 @@ int main(int argc, char **argv)
     static struct option long_options[] = {
         {"interface", required_argument, 0, 'i'},
         {"port",      required_argument, 0, 'p'},
+        {"bind",      required_argument, 0, 'p'}, /* alias for --port */
         {"config",    required_argument, 0, 'c'},
         {"log-file",  required_argument, 0, 'f'},
         {"log-level", required_argument, 0, 'l'},
@@ -254,9 +288,17 @@ int main(int argc, char **argv)
         return init_config_dir(dir);
     }
 
-    /* Find config directory if not specified */
+    /* Find config directory if not specified — default to ~/Public/Lemoniscate */
+    char default_config[2048];
     if (!config_dir) {
-        config_dir = mobius_find_config_dir();
+        const char *home = getenv("HOME");
+        if (home) {
+            snprintf(default_config, sizeof(default_config),
+                     "%s/Public/Lemoniscate", home);
+            config_dir = default_config;
+        } else {
+            config_dir = mobius_find_config_dir();
+        }
     }
 
     /* Create server */
@@ -279,6 +321,12 @@ int main(int argc, char **argv)
     strncpy(srv->net_interface, interface_addr, sizeof(srv->net_interface) - 1);
     srv->port = port;
 
+    /* Initialize file transfer manager */
+    srv->file_transfer_mgr = hl_mem_xfer_mgr_new();
+
+    /* Set text encoding from config (default MacRoman for PPC) */
+    srv->use_mac_roman = (strcmp(srv->config.encoding, "utf-8") != 0);
+
     /* Load config from YAML */
     if (config_dir) {
         if (mobius_load_config(&srv->config, config_dir) == 0) {
@@ -295,6 +343,57 @@ int main(int argc, char **argv)
         /* Load ban list */
         snprintf(path, sizeof(path), "%s/Banlist.yaml", config_dir);
         srv->ban_list = mobius_ban_file_new(path);
+
+        /* Load agreement */
+        snprintf(path, sizeof(path), "%s/Agreement.txt", config_dir);
+        {
+            FILE *af = fopen(path, "rb");
+            if (af) {
+                fseek(af, 0, SEEK_END);
+                long alen = ftell(af);
+                fseek(af, 0, SEEK_SET);
+                if (alen > 0) {
+                    srv->agreement = (uint8_t *)malloc((size_t)alen);
+                    if (srv->agreement) {
+                        fread(srv->agreement, 1, (size_t)alen, af);
+                        srv->agreement_len = (size_t)alen;
+                    }
+                }
+                fclose(af);
+            }
+        }
+
+        /* Load message board (flat news) */
+        snprintf(path, sizeof(path), "%s/MessageBoard.txt", config_dir);
+        srv->flat_news = mobius_flat_news_new(path);
+
+        /* Load banner */
+        if (srv->config.banner_file[0]) {
+            char bpath[2048];
+            /* If relative, resolve against config dir */
+            if (srv->config.banner_file[0] == '/') {
+                snprintf(bpath, sizeof(bpath), "%s", srv->config.banner_file);
+            } else {
+                snprintf(bpath, sizeof(bpath), "%s/%s",
+                         config_dir, srv->config.banner_file);
+            }
+            FILE *bf = fopen(bpath, "rb");
+            if (bf) {
+                fseek(bf, 0, SEEK_END);
+                long blen = ftell(bf);
+                fseek(bf, 0, SEEK_SET);
+                if (blen > 0) {
+                    srv->banner = (uint8_t *)malloc((size_t)blen);
+                    if (srv->banner) {
+                        fread(srv->banner, 1, (size_t)blen, bf);
+                        srv->banner_len = (size_t)blen;
+                        hl_log_info(srv->logger, "Loaded banner: %s (%ld bytes)",
+                                    srv->config.banner_file, blen);
+                    }
+                }
+                fclose(bf);
+            }
+        }
     }
 
     /* Register all 43 transaction handlers */

@@ -7,6 +7,7 @@
  */
 
 #include "mobius/transaction_handlers.h"
+#include "mobius/flat_news.h"
 #include "hotline/field.h"
 #include "hotline/user.h"
 #include "hotline/access.h"
@@ -984,8 +985,32 @@ static int handle_get_msgs(hl_client_conn_t *cc, const hl_transaction_t *req,
     if (!hl_client_conn_authorize(cc, ACCESS_NEWS_READ_ART))
         return reply_err(cc, req, "You are not allowed to read news.", out, out_count);
 
-    /* Return empty for now — message board content would come from flat news */
-    return reply_empty(cc, req, out, out_count);
+    /* Maps to: Go HandleGetMsgs — return message board content */
+    hl_server_t *srv = cc->server;
+    if (!srv->flat_news) {
+        return reply_empty(cc, req, out, out_count);
+    }
+
+    size_t data_len = 0;
+    const char *data = mobius_flat_news_data(srv->flat_news, &data_len);
+
+    if (!data || data_len == 0) {
+        return reply_empty(cc, req, out, out_count);
+    }
+
+    hl_field_t field;
+    hl_field_new(&field, FIELD_DATA, (const uint8_t *)data,
+                 (uint16_t)(data_len > 65535 ? 65535 : data_len));
+
+    hl_transaction_t *reply = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
+    hl_transaction_new(reply, req->type, cc->id, &field, 1);
+    reply->is_reply = 1;
+    memcpy(reply->id, req->id, 4);
+    hl_field_free(&field);
+
+    *out = reply;
+    *out_count = 1;
+    return 0;
 }
 
 static int handle_old_post_news(hl_client_conn_t *cc, const hl_transaction_t *req,
@@ -994,7 +1019,40 @@ static int handle_old_post_news(hl_client_conn_t *cc, const hl_transaction_t *re
     if (!hl_client_conn_authorize(cc, ACCESS_NEWS_POST_ART))
         return reply_err(cc, req, "You are not allowed to post news.", out, out_count);
 
-    /* Flat news posting would prepend to MessageBoard.txt */
+    /* Maps to: Go HandleOldPostNews — prepend post to message board */
+    hl_server_t *srv = cc->server;
+    if (!srv->flat_news) {
+        return reply_empty(cc, req, out, out_count);
+    }
+
+    const hl_field_t *data_field = hl_transaction_get_field(req, FIELD_DATA);
+    if (!data_field || data_field->data_len == 0) {
+        return reply_empty(cc, req, out, out_count);
+    }
+
+    /* Build post header: "\r_____________________________________________\r"
+     * + username + date/time + "\r" */
+    char header[512];
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    char timestr[64];
+    strftime(timestr, sizeof(timestr), "%b %d, %Y %H:%M", tm);
+
+    int hlen = snprintf(header, sizeof(header),
+        "\r_____________________________________________\r"
+        "%s (%s)\r\r",
+        cc->user_name, timestr);
+
+    /* Combine header + post data */
+    size_t total = (size_t)hlen + data_field->data_len;
+    char *combined = (char *)malloc(total);
+    if (combined) {
+        memcpy(combined, header, (size_t)hlen);
+        memcpy(combined + hlen, data_field->data, data_field->data_len);
+        mobius_flat_news_prepend(srv->flat_news, combined, total);
+        free(combined);
+    }
+
     return reply_empty(cc, req, out, out_count);
 }
 
@@ -1447,7 +1505,45 @@ static int handle_upload_folder(hl_client_conn_t *cc, const hl_transaction_t *re
 static int handle_download_banner(hl_client_conn_t *cc, const hl_transaction_t *req,
                                   hl_transaction_t **out, int *out_count)
 {
-    return reply_empty(cc, req, out, out_count);
+    /* Maps to: Go HandleDownloadBanner — creates a file transfer for the banner.
+     * Returns FieldRefNum + FieldTransferSize so the client can download
+     * via the transfer port (base+1). */
+    hl_server_t *srv = cc->server;
+
+    if (!srv->banner || srv->banner_len == 0) {
+        return reply_empty(cc, req, out, out_count);
+    }
+
+    /* Create a file transfer entry for the banner */
+    hl_file_transfer_t *ft = (hl_file_transfer_t *)calloc(1, sizeof(hl_file_transfer_t));
+    if (!ft) return reply_empty(cc, req, out, out_count);
+
+    ft->type = HL_XFER_BANNER_DOWNLOAD;
+    ft->client_conn = cc;
+    ft->active = 1;
+    hl_write_u32(ft->transfer_size, (uint32_t)srv->banner_len);
+
+    /* Add to transfer manager (assigns random ref_num) */
+    if (srv->file_transfer_mgr) {
+        srv->file_transfer_mgr->vt->add(srv->file_transfer_mgr, ft);
+    }
+
+    /* Build reply with ref_num and transfer_size */
+    hl_field_t fields[2];
+    hl_field_new(&fields[0], FIELD_REF_NUM, ft->ref_num, 4);
+    hl_field_new(&fields[1], FIELD_TRANSFER_SIZE, ft->transfer_size, 4);
+
+    hl_transaction_t *reply = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
+    hl_transaction_new(reply, req->type, cc->id, fields, 2);
+    reply->is_reply = 1;
+    memcpy(reply->id, req->id, 4);
+
+    hl_field_free(&fields[0]);
+    hl_field_free(&fields[1]);
+
+    *out = reply;
+    *out_count = 1;
+    return 0;
 }
 
 /* ====================================================================
