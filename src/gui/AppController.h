@@ -6,7 +6,7 @@
  * Tiger-compatible Obj-C 1.0:
  * - Programmatic UI (no XIB/NIB)
  * - NSSplitView (left settings, right tabbed content)
- * - NSTabView for Server/Logs tabs
+ * - NSTabView for Server/Logs/Accounts/Online/Files/News tabs
  * - Manual retain/release
  */
 
@@ -70,6 +70,7 @@
     NSButton *_startButton;
     NSButton *_stopButton;
     NSButton *_restartButton;
+    NSButton *_reloadButton;
 
     /* Log tab */
     NSTextView *_logTextView;
@@ -77,6 +78,60 @@
     NSButton *_clearLogsButton;
     NSButton *_autoScrollCheckbox;
     BOOL _autoScroll;
+
+    /* Accounts tab */
+    NSSegmentedControl *_accountsSegmentedControl;
+    NSView *_accountsUsersView;
+    NSView *_accountsBansView;
+    NSTextField *_accountsCountLabel;
+    NSTableView *_accountsTableView;
+    NSMutableArray *_accountsItems;
+    NSTextField *_accountLoginField;
+    NSTextField *_accountNameField;
+    NSTextField *_accountFileRootField;
+    NSPopUpButton *_accountTemplatePopup;
+    NSButton *_accountNewButton;
+    NSButton *_accountDeleteButton;
+    NSButton *_accountSaveButton;
+    NSMutableSet *_accountAccessKeys;
+    NSString *_selectedAccountLogin;
+    NSString *_selectedAccountPassword;
+
+    NSMutableArray *_bannedIPs;
+    NSMutableArray *_bannedUsers;
+    NSMutableArray *_bannedNicks;
+    NSTableView *_bannedIPsTableView;
+    NSTableView *_bannedUsersTableView;
+    NSTableView *_bannedNicksTableView;
+    NSTextField *_newBanIPField;
+    NSTextField *_newBanUserField;
+    NSTextField *_newBanNickField;
+
+    /* Online tab */
+    NSTextField *_onlineStatusLabel;
+    NSTableView *_onlineTableView;
+    NSMutableDictionary *_onlineUsersByID;
+    NSMutableArray *_onlineUsersItems;
+    NSButton *_onlineBanButton;
+    NSButton *_onlineRefreshButton;
+    NSTimer *_onlineRefreshTimer;
+    int _onlinePeakConnections;
+
+    /* Files tab */
+    NSTextField *_filesPathLabel;
+    NSTableView *_filesTableView;
+    NSMutableArray *_filesItems;
+    NSString *_filesCurrentPath;
+
+    /* News tab */
+    NSSegmentedControl *_newsSegmentedControl;
+    NSView *_newsContainerView;
+    NSView *_newsMessageBoardView;
+    NSView *_newsThreadedView;
+    NSTextView *_messageBoardTextView;
+    NSButton *_saveMessageBoardButton;
+    NSTableView *_newsCategoriesTableView;
+    NSMutableArray *_newsCategoryItems;
 
     /* Footer */
     NSImageView *_footerStatusDot;
@@ -95,11 +150,35 @@
 - (void)startServer:(id)sender;
 - (void)stopServer:(id)sender;
 - (void)restartServer:(id)sender;
+- (void)reloadServerConfig:(id)sender;
 - (void)chooseConfigDir:(id)sender;
 - (void)chooseFileRoot:(id)sender;
 - (void)chooseBannerFile:(id)sender;
+- (void)editAgreementFile:(id)sender;
+- (void)editMessageBoardFile:(id)sender;
 - (void)saveSettings:(id)sender;
 - (void)clearLogs:(id)sender;
+- (void)refreshAccountsList:(id)sender;
+- (void)accountsSegmentChanged:(id)sender;
+- (void)newAccount:(id)sender;
+- (void)saveAccount:(id)sender;
+- (void)deleteAccount:(id)sender;
+- (void)accountTemplateChanged:(id)sender;
+- (void)addIPBan:(id)sender;
+- (void)removeIPBan:(id)sender;
+- (void)addUserBan:(id)sender;
+- (void)removeUserBan:(id)sender;
+- (void)addNickBan:(id)sender;
+- (void)removeNickBan:(id)sender;
+- (void)refreshOnlineUsers:(id)sender;
+- (void)banSelectedOnlineUser:(id)sender;
+- (void)refreshFilesList:(id)sender;
+- (void)navigateFilesUp:(id)sender;
+- (void)navigateFilesHome:(id)sender;
+- (void)filesTableDoubleClick:(id)sender;
+- (void)newsSegmentChanged:(id)sender;
+- (void)saveMessageBoard:(id)sender;
+- (void)refreshThreadedNews:(id)sender;
 
 @end
 

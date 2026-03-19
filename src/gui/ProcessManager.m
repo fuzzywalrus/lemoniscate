@@ -207,6 +207,12 @@ NSString * const PMLogLineReceivedNotification = @"PMLogLineReceived";
     [self startWithConfigDir:configDir port:port];
 }
 
+- (void)reloadConfiguration
+{
+    if (_task == nil || ![_task isRunning]) return;
+    kill([_task processIdentifier], SIGHUP);
+}
+
 /* --- Pipe reading callbacks --- */
 
 - (void)stdoutDataAvailable:(NSNotification *)note

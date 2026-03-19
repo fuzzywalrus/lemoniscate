@@ -17,6 +17,7 @@
 #include "hotline/file_transfer.h"
 #include "hotline/file_wrapper.h"
 #include "hotline/time_conv.h"
+#include "hotline/password.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -818,10 +819,12 @@ static int handle_new_user(hl_client_conn_t *cc, const hl_transaction_t *req,
         memcpy(acct.access, f_access->data, 8);
     }
 
-    /* Password — would need bcrypt hashing for production */
+    /* Password — hash with salted SHA-1 */
     const hl_field_t *f_pass = hl_transaction_get_field(req, FIELD_USER_PASSWORD);
     if (f_pass && f_pass->data_len > 0) {
-        hl_field_decode_obfuscated_string(f_pass, acct.password, sizeof(acct.password));
+        char plaintext[128];
+        hl_field_decode_obfuscated_string(f_pass, plaintext, sizeof(plaintext));
+        hl_password_hash(plaintext, acct.password, sizeof(acct.password));
     }
 
     cc->server->account_mgr->vt->create(cc->server->account_mgr, &acct);
