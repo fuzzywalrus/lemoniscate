@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sshpass -p 'fuckit' ssh -o KexAlgorithms=+diffie-hellman-group1-sha1 -o HostKeyAlgorithms=+ssh-rsa,ssh-dss -o Ciphers=+aes128-cbc,3des-cbc -o PubkeyAcceptedAlgorithms=+ssh-rsa,ssh-dss -o StrictHostKeyChecking=no me@192.168.50.135 'cat /Users/me/Public/Lemoniscate/config.yaml')",
+      "Bash(sshpass -p 'fuckit' ssh -o KexAlgorithms=+diffie-hellman-group1-sha1 -o HostKeyAlgorithms=+ssh-rsa,ssh-dss -o Ciphers=+aes128-cbc,3des-cbc -o PubkeyAcceptedAlgorithms=+ssh-rsa,ssh-dss -o StrictHostKeyChecking=no me@192.168.50.135 'killall lemoniscate 2>/dev/null; sleep 1; cd /Users/me/Public/its-morbin-time && nohup ./lemoniscate > /tmp/hotline-server.log 2>&1 & sleep 3 && cat /tmp/hotline-server.log')",
+      "Bash(sshpass -p 'fuckit' ssh -o KexAlgorithms=+diffie-hellman-group1-sha1 -o HostKeyAlgorithms=+ssh-rsa,ssh-dss -o Ciphers=+aes128-cbc,3des-cbc -o PubkeyAcceptedAlgorithms=+ssh-rsa,ssh-dss -o StrictHostKeyChecking=no me@192.168.50.135 'cat /tmp/hotline-server.log')",
+      "Bash(sshpass -p 'fuckit' ssh -o KexAlgorithms=+diffie-hellman-group1-sha1 -o HostKeyAlgorithms=+ssh-rsa,ssh-dss -o Ciphers=+aes128-cbc,3des-cbc -o PubkeyAcceptedAlgorithms=+ssh-rsa,ssh-dss -o StrictHostKeyChecking=no me@192.168.50.135 'nslookup badmoon.biz 2>&1 | head -6; nslookup tracked.mainecyber.com 2>&1 | head -6; nslookup tracker.preterhuman.net 2>&1 | head -6')"
+    ]
+  }
+}
