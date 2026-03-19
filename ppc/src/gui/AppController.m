@@ -161,6 +161,33 @@ static BOOL yamlBoolValue(NSString *value)
     return [v isEqualToString:@"true"] || [v isEqualToString:@"yes"] || [v isEqualToString:@"1"];
 }
 
+static int leadingSpaces(NSString *s)
+{
+    unsigned i;
+    int count = 0;
+    for (i = 0; i < [s length]; i++) {
+        unichar ch = [s characterAtIndex:i];
+        if (ch == ' ') count++;
+        else break;
+    }
+    return count;
+}
+
+static NSString *yamlQuoted(NSString *s)
+{
+    NSString *v = s ? s : @"";
+    NSMutableString *m = [NSMutableString stringWithString:v];
+    [m replaceOccurrencesOfString:@"\\"
+                       withString:@"\\\\"
+                          options:0
+                            range:NSMakeRange(0, [m length])];
+    [m replaceOccurrencesOfString:@"\""
+                       withString:@"\\\""
+                          options:0
+                            range:NSMakeRange(0, [m length])];
+    return [NSString stringWithFormat:@"\"%@\"", m];
+}
+
 static NSString *humanFileSize(unsigned long long size)
 {
     double value = (double)size;
@@ -171,16 +198,6 @@ static NSString *humanFileSize(unsigned long long size)
     if (value < 1024.0) return [NSString stringWithFormat:@"%.1f MB", value];
     value /= 1024.0;
     return [NSString stringWithFormat:@"%.1f GB", value];
-}
-
-static NSInteger compareOnlineUserByID(id a, id b, void *context)
-{
-    (void)context;
-    int aid = [[a objectForKey:@"id"] intValue];
-    int bid = [[b objectForKey:@"id"] intValue];
-    if (aid < bid) return (NSInteger)NSOrderedAscending;
-    if (aid > bid) return (NSInteger)NSOrderedDescending;
-    return (NSInteger)NSOrderedSame;
 }
 
 @interface AppController ()
@@ -212,6 +229,9 @@ static NSInteger compareOnlineUserByID(id a, id b, void *context)
 - (void)loadFilesAtPath:(NSString *)path;
 - (void)loadMessageBoardText;
 - (void)loadThreadedNewsCategories;
+- (void)writeThreadedNewsCategories;
+- (void)refreshThreadedNewsArticles;
+- (void)setMessageBoardDirty:(BOOL)dirty;
 - (void)openTextConfigFileNamed:(NSString *)filename title:(NSString *)title;
 - (void)loadConfigFromDisk;
 - (void)writeConfigToDisk;
@@ -245,7 +265,11 @@ static NSInteger compareOnlineUserByID(id a, id b, void *context)
         _onlinePeakConnections = 0;
         _filesItems = [[NSMutableArray alloc] init];
         _newsCategoryItems = [[NSMutableArray alloc] init];
+        _newsArticleItems = [[NSMutableArray alloc] init];
+        _newsCategoriesByKey = [[NSMutableDictionary alloc] init];
+        _newsSelectedCategoryKey = nil;
         _filesCurrentPath = nil;
+        _messageBoardDirty = NO;
 
         /* Find server binary (supports Lemoniscate + MobiusAdmin names). */
         NSBundle *bundle = [NSBundle mainBundle];
@@ -317,6 +341,9 @@ static NSInteger compareOnlineUserByID(id a, id b, void *context)
     [_onlineUsersItems release];
     [_filesItems release];
     [_newsCategoryItems release];
+    [_newsArticleItems release];
+    [_newsCategoriesByKey release];
+    [_newsSelectedCategoryKey release];
     [_filesCurrentPath release];
     [_processManager release];
     [_configDir release];
@@ -1554,14 +1581,21 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [view addSubview:tb];
     [tb release];
 
-    NSScrollView *sv = [[NSScrollView alloc]
+    _onlineSplitView = [[NSSplitView alloc]
         initWithFrame:NSMakeRect(4, 4, 622, 554)];
-    [sv setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
-    [sv setHasVerticalScroller:YES];
-    [sv setBorderType:NSBezelBorder];
+    [_onlineSplitView setVertical:NO];
+    [_onlineSplitView setDividerStyle:NSSplitViewDividerStyleThin];
+    [_onlineSplitView setAutoresizesSubviews:YES];
+    [_onlineSplitView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+
+    NSScrollView *usersSV = [[NSScrollView alloc]
+        initWithFrame:NSMakeRect(0, 190, 622, 364)];
+    [usersSV setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [usersSV setHasVerticalScroller:YES];
+    [usersSV setBorderType:NSBezelBorder];
 
     _onlineTableView = [[NSTableView alloc]
-        initWithFrame:NSMakeRect(0, 0, 622, 554)];
+        initWithFrame:NSMakeRect(0, 0, 622, 364)];
 
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"online_login"];
     [[col headerCell] setStringValue:@"Login"];
@@ -1590,10 +1624,34 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_onlineTableView setDataSource:(id)self];
     [_onlineTableView setDelegate:(id)self];
     [_onlineTableView setAllowsMultipleSelection:NO];
+    [usersSV setDocumentView:_onlineTableView];
 
-    [sv setDocumentView:_onlineTableView];
-    [view addSubview:sv];
-    [sv release];
+    _onlineLogScrollView = [[NSScrollView alloc]
+        initWithFrame:NSMakeRect(0, 0, 622, 186)];
+    [_onlineLogScrollView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [_onlineLogScrollView setHasVerticalScroller:YES];
+    [_onlineLogScrollView setBorderType:NSBezelBorder];
+
+    NSSize cs = [_onlineLogScrollView contentSize];
+    _onlineLogTextView = [[NSTextView alloc]
+        initWithFrame:NSMakeRect(0, 0, cs.width, cs.height)];
+    [_onlineLogTextView setMinSize:NSMakeSize(0, cs.height)];
+    [_onlineLogTextView setMaxSize:NSMakeSize(1e7, 1e7)];
+    [_onlineLogTextView setVerticallyResizable:YES];
+    [_onlineLogTextView setHorizontallyResizable:NO];
+    [_onlineLogTextView setAutoresizingMask:NSViewWidthSizable];
+    [[_onlineLogTextView textContainer]
+        setContainerSize:NSMakeSize(cs.width, 1e7)];
+    [[_onlineLogTextView textContainer] setWidthTracksTextView:YES];
+    [_onlineLogTextView setEditable:NO];
+    [_onlineLogTextView setFont:[NSFont fontWithName:@"Monaco" size:10.0]];
+    [_onlineLogScrollView setDocumentView:_onlineLogTextView];
+
+    [_onlineSplitView addSubview:usersSV];
+    [_onlineSplitView addSubview:_onlineLogScrollView];
+    [usersSV release];
+    [_onlineSplitView setPosition:364 ofDividerAtIndex:0];
+    [view addSubview:_onlineSplitView];
 
     if (!_onlineRefreshTimer) {
         _onlineRefreshTimer = [[NSTimer scheduledTimerWithTimeInterval:5.0
@@ -1733,9 +1791,15 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [[_messageBoardTextView textContainer] setContainerSize:NSMakeSize(622, 1e7)];
     [[_messageBoardTextView textContainer] setWidthTracksTextView:YES];
     [_messageBoardTextView setFont:[NSFont fontWithName:@"Monaco" size:10.0]];
+    [_messageBoardTextView setDelegate:(id)self];
     [mbScroll setDocumentView:_messageBoardTextView];
     [_newsMessageBoardView addSubview:mbScroll];
     [mbScroll release];
+
+    _messageBoardDirtyLabel = makeLabel(@"Unsaved changes", 11.0, NO);
+    [_messageBoardDirtyLabel setFrame:NSMakeRect(8, 8, 220, 16)];
+    [_messageBoardDirtyLabel setTextColor:[NSColor orangeColor]];
+    [_newsMessageBoardView addSubview:_messageBoardDirtyLabel];
 
     _saveMessageBoardButton = makeButton(@"Save Message Board", self,
                                          @selector(saveMessageBoard:));
@@ -1747,31 +1811,85 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         initWithFrame:NSMakeRect(0, 0, 630, 560)];
     [_newsThreadedView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
 
+    _newsNewCategoryField = makeEditField(180);
+    [_newsNewCategoryField setFrame:NSMakeRect(8, 530, 180, 22)];
+    [_newsNewCategoryField setAutoresizingMask:NSViewMaxXMargin];
+    [_newsThreadedView addSubview:_newsNewCategoryField];
+
+    NSButton *addCatBtn = makeButton(@"Add Category", self,
+                                     @selector(addNewsCategory:));
+    [addCatBtn setFrame:NSMakeRect(192, 528, 98, 24)];
+    [addCatBtn setAutoresizingMask:NSViewMaxXMargin];
+    [_newsThreadedView addSubview:addCatBtn];
+    [addCatBtn release];
+
+    _newsDeleteCategoryButton = makeButton(@"Delete Category", self,
+                                           @selector(deleteNewsCategory:));
+    [_newsDeleteCategoryButton setFrame:NSMakeRect(294, 528, 108, 24)];
+    [_newsDeleteCategoryButton setAutoresizingMask:NSViewMaxXMargin];
+    [_newsDeleteCategoryButton setEnabled:NO];
+    [_newsThreadedView addSubview:_newsDeleteCategoryButton];
+
     NSButton *refreshThreadedBtn = makeButton(@"Refresh", self,
                                               @selector(refreshThreadedNews:));
-    [refreshThreadedBtn setFrame:NSMakeRect(544, 530, 80, 24)];
+    [refreshThreadedBtn setFrame:NSMakeRect(544, 528, 80, 24)];
     [refreshThreadedBtn setAutoresizingMask:(NSViewMinXMargin | NSViewMinYMargin)];
     [_newsThreadedView addSubview:refreshThreadedBtn];
     [refreshThreadedBtn release];
 
     NSScrollView *catsScroll = [[NSScrollView alloc]
-        initWithFrame:NSMakeRect(4, 4, 622, 522)];
-    [catsScroll setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+        initWithFrame:NSMakeRect(4, 4, 220, 522)];
+    [catsScroll setAutoresizingMask:(NSViewHeightSizable)];
     [catsScroll setHasVerticalScroller:YES];
     [catsScroll setBorderType:NSBezelBorder];
 
     _newsCategoriesTableView = [[NSTableView alloc]
-        initWithFrame:NSMakeRect(0, 0, 622, 522)];
+        initWithFrame:NSMakeRect(0, 0, 220, 522)];
     NSTableColumn *catCol = [[NSTableColumn alloc] initWithIdentifier:@"category"];
-    [[catCol headerCell] setStringValue:@"Threaded News Categories"];
-    [catCol setWidth:600];
+    [[catCol headerCell] setStringValue:@"Categories"];
+    [catCol setWidth:205];
     [_newsCategoriesTableView addTableColumn:catCol];
     [catCol release];
     [_newsCategoriesTableView setDataSource:(id)self];
     [_newsCategoriesTableView setDelegate:(id)self];
+    [_newsCategoriesTableView setAllowsMultipleSelection:NO];
     [catsScroll setDocumentView:_newsCategoriesTableView];
     [_newsThreadedView addSubview:catsScroll];
     [catsScroll release];
+
+    NSScrollView *artsScroll = [[NSScrollView alloc]
+        initWithFrame:NSMakeRect(228, 4, 398, 522)];
+    [artsScroll setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [artsScroll setHasVerticalScroller:YES];
+    [artsScroll setBorderType:NSBezelBorder];
+
+    _newsArticlesTableView = [[NSTableView alloc]
+        initWithFrame:NSMakeRect(0, 0, 398, 522)];
+    NSTableColumn *titleCol = [[NSTableColumn alloc] initWithIdentifier:@"news_title"];
+    [[titleCol headerCell] setStringValue:@"Title"];
+    [titleCol setWidth:165];
+    [_newsArticlesTableView addTableColumn:titleCol];
+    [titleCol release];
+    NSTableColumn *posterCol = [[NSTableColumn alloc] initWithIdentifier:@"news_poster"];
+    [[posterCol headerCell] setStringValue:@"Poster"];
+    [posterCol setWidth:90];
+    [_newsArticlesTableView addTableColumn:posterCol];
+    [posterCol release];
+    NSTableColumn *dateCol = [[NSTableColumn alloc] initWithIdentifier:@"news_date"];
+    [[dateCol headerCell] setStringValue:@"Date"];
+    [dateCol setWidth:80];
+    [_newsArticlesTableView addTableColumn:dateCol];
+    [dateCol release];
+    NSTableColumn *bodyCol = [[NSTableColumn alloc] initWithIdentifier:@"news_body"];
+    [[bodyCol headerCell] setStringValue:@"Body"];
+    [bodyCol setWidth:250];
+    [_newsArticlesTableView addTableColumn:bodyCol];
+    [bodyCol release];
+    [_newsArticlesTableView setDataSource:(id)self];
+    [_newsArticlesTableView setDelegate:(id)self];
+    [artsScroll setDocumentView:_newsArticlesTableView];
+    [_newsThreadedView addSubview:artsScroll];
+    [artsScroll release];
 
     [_newsContainerView addSubview:_newsMessageBoardView];
     [_newsContainerView addSubview:_newsThreadedView];
@@ -1779,6 +1897,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     [self loadMessageBoardText];
     [self refreshThreadedNews:nil];
+    [self setMessageBoardDirty:NO];
 
     return [view autorelease];
 }
@@ -2174,7 +2293,9 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
                   encoding:NSUTF8StringEncoding error:nil]) {
         NSRunAlertPanel(@"Unable to Save", @"Could not save MessageBoard.txt.",
                         @"OK", nil, nil);
+        return;
     }
+    [self setMessageBoardDirty:NO];
 }
 
 - (void)refreshThreadedNews:(id)sender
@@ -2183,16 +2304,71 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [self loadThreadedNewsCategories];
 }
 
+- (void)addNewsCategory:(id)sender
+{
+    (void)sender;
+    NSString *name = trimmedString([_newsNewCategoryField stringValue]);
+    if ([name length] == 0) return;
+
+    if ([_newsCategoriesByKey objectForKey:name]) {
+        NSRunAlertPanel(@"Category Exists",
+                        @"A category named \"%@\" already exists.",
+                        @"OK", nil, nil, name);
+        return;
+    }
+
+    NSMutableDictionary *cat = [NSMutableDictionary dictionaryWithObjectsAndKeys:
+        name, @"name",
+        @"bundle", @"type",
+        [NSMutableDictionary dictionary], @"articles",
+        nil];
+    [_newsCategoriesByKey setObject:cat forKey:name];
+    [_newsNewCategoryField setStringValue:@""];
+    [_newsSelectedCategoryKey release];
+    _newsSelectedCategoryKey = [name retain];
+    [self writeThreadedNewsCategories];
+    [self loadThreadedNewsCategories];
+}
+
+- (void)deleteNewsCategory:(id)sender
+{
+    (void)sender;
+    int row = _newsCategoriesTableView ? [_newsCategoriesTableView selectedRow] : -1;
+    if (row < 0 || row >= (int)[_newsCategoryItems count]) return;
+
+    NSString *key = [_newsCategoryItems objectAtIndex:(unsigned)row];
+    if (![_newsCategoriesByKey objectForKey:key]) return;
+
+    int rc = NSRunAlertPanel(@"Delete Category",
+                             @"Delete \"%@\" and all listed articles?",
+                             @"Delete", @"Cancel", nil, key);
+    if (rc != NSAlertDefaultReturn) return;
+
+    [_newsCategoriesByKey removeObjectForKey:key];
+    [_newsSelectedCategoryKey release];
+    _newsSelectedCategoryKey = nil;
+    [self writeThreadedNewsCategories];
+    [self loadThreadedNewsCategories];
+}
+
 - (void)clearLogs:(id)sender
 {
     (void)sender;
     [_logTextView setString:@""];
+    if (_onlineLogTextView) [_onlineLogTextView setString:@""];
 }
 
 - (void)toggleAutoScroll:(id)sender
 {
     (void)sender;
     _autoScroll = ([_autoScrollCheckbox state] == NSOnState);
+}
+
+- (void)textDidChange:(NSNotification *)note
+{
+    if ([note object] == _messageBoardTextView) {
+        [self setMessageBoardDirty:YES];
+    }
 }
 
 /* ===== Tab data helpers ===== */
@@ -2583,9 +2759,22 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     if (!_onlineTableView) return;
 
     [_onlineUsersItems removeAllObjects];
-    NSArray *vals = [_onlineUsersByID allValues];
-    NSArray *sorted = [vals sortedArrayUsingFunction:compareOnlineUserByID
-                                             context:NULL];
+    NSMutableArray *sorted = [NSMutableArray arrayWithArray:
+        [_onlineUsersByID allValues]];
+    int i;
+    for (i = 1; i < (int)[sorted count]; i++) {
+        id item = [sorted objectAtIndex:(unsigned)i];
+        int itemID = [[item objectForKey:@"id"] intValue];
+        int j = i - 1;
+        while (j >= 0) {
+            id prev = [sorted objectAtIndex:(unsigned)j];
+            int prevID = [[prev objectForKey:@"id"] intValue];
+            if (prevID <= itemID) break;
+            [sorted replaceObjectAtIndex:(unsigned)(j + 1) withObject:prev];
+            j--;
+        }
+        [sorted replaceObjectAtIndex:(unsigned)(j + 1) withObject:item];
+    }
     [_onlineUsersItems addObjectsFromArray:sorted];
 
     [_onlineTableView reloadData];
@@ -2680,12 +2869,15 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
                                                   error:nil];
     if (!text) text = @"";
     [_messageBoardTextView setString:text];
+    [self setMessageBoardDirty:NO];
 }
 
 - (void)loadThreadedNewsCategories
 {
     [self ensureConfigScaffolding];
     [_newsCategoryItems removeAllObjects];
+    [_newsArticleItems removeAllObjects];
+    [_newsCategoriesByKey removeAllObjects];
 
     NSString *path = [_configDir stringByAppendingPathComponent:@"ThreadedNews.yaml"];
     NSString *yaml = [NSString stringWithContentsOfFile:path
@@ -2694,24 +2886,211 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     if (yaml) {
         NSArray *lines = [yaml componentsSeparatedByCharactersInSet:
             [NSCharacterSet newlineCharacterSet]];
+        NSString *currentCategoryKey = nil;
+        NSMutableDictionary *currentCategory = nil;
+        NSMutableDictionary *currentArticles = nil;
+        NSMutableDictionary *currentArticle = nil;
         unsigned i;
         for (i = 0; i < [lines count]; i++) {
-            NSString *line = trimmedString([lines objectAtIndex:i]);
-            if (![line hasPrefix:@"Name:"]) continue;
+            NSString *raw = [lines objectAtIndex:i];
+            NSString *line = trimmedString(raw);
+            int indent = leadingSpaces(raw);
+            if ([line length] == 0 || [line hasPrefix:@"#"]) continue;
+            if (indent == 0) continue;
+
+            if (indent == 2 && [line hasSuffix:@":"]) {
+                NSString *key = trimmedString([line substringToIndex:[line length] - 1]);
+                key = yamlUnquote(key);
+                if ([key length] == 0) continue;
+                currentCategoryKey = key;
+                currentCategory = [NSMutableDictionary dictionaryWithObjectsAndKeys:
+                    key, @"name",
+                    @"bundle", @"type",
+                    [NSMutableDictionary dictionary], @"articles",
+                    nil];
+                [_newsCategoriesByKey setObject:currentCategory forKey:key];
+                currentArticles = [currentCategory objectForKey:@"articles"];
+                currentArticle = nil;
+                continue;
+            }
+
+            if (!currentCategory) continue;
+
             NSRange sep = [line rangeOfString:@":"];
             if (sep.location == NSNotFound) continue;
-            NSString *name = yamlUnquote([line substringFromIndex:sep.location + 1]);
-            if ([name length] == 0) continue;
-            if (![_newsCategoryItems containsObject:name]) {
-                [_newsCategoryItems addObject:name];
+            NSString *key = trimmedString([line substringToIndex:sep.location]);
+            NSString *val = yamlUnquote([line substringFromIndex:sep.location + 1]);
+
+            if (indent == 4) {
+                if ([key isEqualToString:@"Name"] && [val length] > 0) {
+                    [currentCategory setObject:val forKey:@"name"];
+                } else if ([key isEqualToString:@"Type"] && [val length] > 0) {
+                    [currentCategory setObject:val forKey:@"type"];
+                } else if ([key isEqualToString:@"Articles"]) {
+                    currentArticle = nil;
+                }
+                continue;
             }
+
+            if (indent == 6 && [line hasSuffix:@":"]) {
+                NSString *articleID = trimmedString([line substringToIndex:[line length] - 1]);
+                articleID = yamlUnquote(articleID);
+                if ([articleID length] == 0) continue;
+                currentArticle = [NSMutableDictionary dictionaryWithObjectsAndKeys:
+                    articleID, @"id",
+                    @"", @"title",
+                    @"", @"poster",
+                    @"", @"date",
+                    @"", @"body",
+                    nil];
+                if (!currentArticles) {
+                    currentArticles = [NSMutableDictionary dictionary];
+                    [currentCategory setObject:currentArticles forKey:@"articles"];
+                }
+                [currentArticles setObject:currentArticle forKey:articleID];
+                continue;
+            }
+
+            if (indent >= 8 && currentArticle) {
+                if ([key isEqualToString:@"Title"]) {
+                    [currentArticle setObject:(val ? val : @"") forKey:@"title"];
+                } else if ([key isEqualToString:@"Poster"]) {
+                    [currentArticle setObject:(val ? val : @"") forKey:@"poster"];
+                } else if ([key isEqualToString:@"Date"]) {
+                    [currentArticle setObject:(val ? val : @"") forKey:@"date"];
+                } else if ([key isEqualToString:@"Body"]) {
+                    [currentArticle setObject:(val ? val : @"") forKey:@"body"];
+                }
+            }
+        }
+        (void)currentCategoryKey;
+    }
+
+    NSArray *keys = [[_newsCategoriesByKey allKeys] sortedArrayUsingSelector:
+        @selector(caseInsensitiveCompare:)];
+    [_newsCategoryItems addObjectsFromArray:keys];
+
+    if (_newsCategoriesTableView) {
+        [_newsCategoriesTableView reloadData];
+        if ([_newsCategoryItems count] > 0) {
+            NSUInteger idx = NSNotFound;
+            if (_newsSelectedCategoryKey) {
+                idx = [_newsCategoryItems indexOfObject:_newsSelectedCategoryKey];
+            }
+            if (idx == NSNotFound) idx = 0;
+            [_newsCategoriesTableView selectRow:(int)idx byExtendingSelection:NO];
+            [_newsSelectedCategoryKey release];
+            _newsSelectedCategoryKey = [[_newsCategoryItems objectAtIndex:idx] retain];
+        } else {
+            [_newsSelectedCategoryKey release];
+            _newsSelectedCategoryKey = nil;
+        }
+    }
+    [self refreshThreadedNewsArticles];
+}
+
+- (void)writeThreadedNewsCategories
+{
+    [self ensureConfigScaffolding];
+    NSString *path = [_configDir stringByAppendingPathComponent:@"ThreadedNews.yaml"];
+
+    if ([_newsCategoriesByKey count] == 0) {
+        [@"Categories: {}\n" writeToFile:path atomically:YES
+                                encoding:NSUTF8StringEncoding error:nil];
+        return;
+    }
+
+    NSMutableString *yaml = [NSMutableString stringWithString:@"Categories:\n"];
+    NSArray *keys = [[_newsCategoriesByKey allKeys] sortedArrayUsingSelector:
+        @selector(caseInsensitiveCompare:)];
+    unsigned i;
+    for (i = 0; i < [keys count]; i++) {
+        NSString *key = [keys objectAtIndex:i];
+        NSDictionary *cat = [_newsCategoriesByKey objectForKey:key];
+        NSString *name = [cat objectForKey:@"name"];
+        NSString *type = [cat objectForKey:@"type"];
+        NSDictionary *articles = [cat objectForKey:@"articles"];
+        if (!name) name = key;
+        if (!type || [type length] == 0) type = @"bundle";
+
+        [yaml appendFormat:@"  %@:\n", yamlQuoted(key)];
+        [yaml appendFormat:@"    Name: %@\n", yamlQuoted(name)];
+        [yaml appendFormat:@"    Type: %@\n", yamlQuoted(type)];
+
+        if (!articles || [articles count] == 0) {
+            [yaml appendString:@"    Articles: {}\n"];
+            continue;
+        }
+
+        [yaml appendString:@"    Articles:\n"];
+        NSArray *articleIDs = [[articles allKeys] sortedArrayUsingSelector:
+            @selector(caseInsensitiveCompare:)];
+        unsigned j;
+        for (j = 0; j < [articleIDs count]; j++) {
+            NSString *articleID = [articleIDs objectAtIndex:j];
+            NSDictionary *art = [articles objectForKey:articleID];
+            NSString *title = [art objectForKey:@"title"];
+            NSString *poster = [art objectForKey:@"poster"];
+            NSString *date = [art objectForKey:@"date"];
+            NSString *body = [art objectForKey:@"body"];
+
+            [yaml appendFormat:@"      %@:\n", yamlQuoted(articleID)];
+            [yaml appendFormat:@"        Title: %@\n", yamlQuoted(title ? title : @"")];
+            [yaml appendFormat:@"        Poster: %@\n", yamlQuoted(poster ? poster : @"")];
+            [yaml appendFormat:@"        Date: %@\n", yamlQuoted(date ? date : @"")];
+            [yaml appendFormat:@"        Body: %@\n", yamlQuoted(body ? body : @"")];
         }
     }
 
-    if ([_newsCategoryItems count] == 0) {
-        [_newsCategoryItems addObject:@"(No categories found)"];
+    [yaml writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
+- (void)refreshThreadedNewsArticles
+{
+    [_newsArticleItems removeAllObjects];
+    NSString *selected = _newsSelectedCategoryKey;
+    if (!selected && _newsCategoriesTableView) {
+        int row = [_newsCategoriesTableView selectedRow];
+        if (row >= 0 && row < (int)[_newsCategoryItems count]) {
+            selected = [_newsCategoryItems objectAtIndex:(unsigned)row];
+        }
     }
-    if (_newsCategoriesTableView) [_newsCategoriesTableView reloadData];
+
+    if (selected) {
+        NSDictionary *cat = [_newsCategoriesByKey objectForKey:selected];
+        NSDictionary *articles = [cat objectForKey:@"articles"];
+        NSArray *articleIDs = [[articles allKeys] sortedArrayUsingSelector:
+            @selector(caseInsensitiveCompare:)];
+        unsigned i;
+        for (i = 0; i < [articleIDs count]; i++) {
+            NSString *articleID = [articleIDs objectAtIndex:i];
+            NSDictionary *art = [articles objectForKey:articleID];
+            NSMutableDictionary *item = [NSMutableDictionary dictionary];
+            [item setObject:articleID forKey:@"id"];
+            [item setObject:([art objectForKey:@"title"] ? [art objectForKey:@"title"] : @"")
+                     forKey:@"title"];
+            [item setObject:([art objectForKey:@"poster"] ? [art objectForKey:@"poster"] : @"")
+                     forKey:@"poster"];
+            [item setObject:([art objectForKey:@"date"] ? [art objectForKey:@"date"] : @"")
+                     forKey:@"date"];
+            [item setObject:([art objectForKey:@"body"] ? [art objectForKey:@"body"] : @"")
+                     forKey:@"body"];
+            [_newsArticleItems addObject:item];
+        }
+    }
+
+    if (_newsArticlesTableView) [_newsArticlesTableView reloadData];
+    if (_newsDeleteCategoryButton) {
+        [_newsDeleteCategoryButton setEnabled:(selected != nil)];
+    }
+}
+
+- (void)setMessageBoardDirty:(BOOL)dirty
+{
+    _messageBoardDirty = dirty;
+    if (_messageBoardDirtyLabel) {
+        [_messageBoardDirtyLabel setHidden:!dirty];
+    }
 }
 
 /* ===== NSTableView datasource ===== */
@@ -2725,6 +3104,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     if (tableView == _bannedNicksTableView) return (int)[_bannedNicks count];
     if (tableView == _filesTableView) return (int)[_filesItems count];
     if (tableView == _newsCategoriesTableView) return (int)[_newsCategoryItems count];
+    if (tableView == _newsArticlesTableView) return (int)[_newsArticleItems count];
     return 0;
 }
 
@@ -2785,6 +3165,16 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
         if (row < 0 || row >= (int)[_newsCategoryItems count]) return @"";
         return [_newsCategoryItems objectAtIndex:(unsigned)row];
     }
+    if (tableView == _newsArticlesTableView) {
+        if (row < 0 || row >= (int)[_newsArticleItems count]) return @"";
+        NSDictionary *item = [_newsArticleItems objectAtIndex:(unsigned)row];
+        NSString *cid = [tableColumn identifier];
+        if ([cid isEqualToString:@"news_title"]) return [item objectForKey:@"title"];
+        if ([cid isEqualToString:@"news_poster"]) return [item objectForKey:@"poster"];
+        if ([cid isEqualToString:@"news_date"]) return [item objectForKey:@"date"];
+        if ([cid isEqualToString:@"news_body"]) return [item objectForKey:@"body"];
+        return @"";
+    }
     return @"";
 }
 
@@ -2794,6 +3184,17 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
     if (tv == _onlineTableView) {
         int sel = [_onlineTableView selectedRow];
         [_onlineBanButton setEnabled:(sel >= 0 && sel < (int)[_onlineUsersItems count])];
+        return;
+    }
+    if (tv == _newsCategoriesTableView) {
+        int row = [_newsCategoriesTableView selectedRow];
+        [_newsSelectedCategoryKey release];
+        _newsSelectedCategoryKey = nil;
+        if (row >= 0 && row < (int)[_newsCategoryItems count]) {
+            _newsSelectedCategoryKey =
+                [[_newsCategoryItems objectAtIndex:(unsigned)row] retain];
+        }
+        [self refreshThreadedNewsArticles];
         return;
     }
     if (tv != _accountsTableView) return;
@@ -2841,6 +3242,9 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
     NSAttributedString *as = [[NSAttributedString alloc]
         initWithString:line attributes:attrs];
     [[_logTextView textStorage] appendAttributedString:as];
+    if (_onlineLogTextView) {
+        [[_onlineLogTextView textStorage] appendAttributedString:as];
+    }
     [as release];
 
     [self processOnlineLogLine:text];
@@ -2848,6 +3252,10 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
     if (_autoScroll)
         [_logTextView scrollRangeToVisible:
             NSMakeRange([[_logTextView string] length], 0)];
+    if (_onlineLogTextView) {
+        [_onlineLogTextView scrollRangeToVisible:
+            NSMakeRange([[_onlineLogTextView string] length], 0)];
+    }
 }
 
 /* ===== UI update ===== */
