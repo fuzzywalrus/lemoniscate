@@ -370,7 +370,7 @@ static BOOL yamlBoolValue(NSString *value)
     NSFileManager *fm = [NSFileManager defaultManager];
     BOOL isDir = NO;
     if (![fm fileExistsAtPath:_configDir isDirectory:&isDir]) {
-        [fm createDirectoryAtPath:_configDir attributes:nil];
+        [fm createDirectoryAtPath:_configDir attributes:[NSDictionary dictionary]];
     }
 
     NSString *cfgPath = [_configDir stringByAppendingPathComponent:@"config.yaml"];
@@ -407,17 +407,17 @@ static BOOL yamlBoolValue(NSString *value)
     NSFileManager *fm = [NSFileManager defaultManager];
     BOOL isDir = NO;
     if (![fm fileExistsAtPath:_configDir isDirectory:&isDir]) {
-        [fm createDirectoryAtPath:_configDir attributes:nil];
+        [fm createDirectoryAtPath:_configDir attributes:[NSDictionary dictionary]];
     }
 
     NSString *filesDir = [_configDir stringByAppendingPathComponent:@"Files"];
     if (![fm fileExistsAtPath:filesDir isDirectory:&isDir]) {
-        [fm createDirectoryAtPath:filesDir attributes:nil];
+        [fm createDirectoryAtPath:filesDir attributes:[NSDictionary dictionary]];
     }
 
     NSString *usersDir = [_configDir stringByAppendingPathComponent:@"Users"];
     if (![fm fileExistsAtPath:usersDir isDirectory:&isDir]) {
-        [fm createDirectoryAtPath:usersDir attributes:nil];
+        [fm createDirectoryAtPath:usersDir attributes:[NSDictionary dictionary]];
     }
 
     NSString *agreement = [_configDir stringByAppendingPathComponent:@"Agreement.txt"];

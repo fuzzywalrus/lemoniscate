@@ -48,7 +48,7 @@ static int reply_err(hl_client_conn_t *cc, const hl_transaction_t *req,
 }
 
 /* Build a NotifyChangeUser transaction for a client.
- * Protocol requires individual fields: UserID(103), IconID(104), Flags(112), UserName(102). */
+ * Order matches Mobius Go: UserName(102), UserID(103), IconID(104), UserFlags(112). */
 void hl_build_notify_change_user(hl_client_conn_t *cc, hl_transaction_t *notify)
 {
     memset(notify, 0, sizeof(*notify));
@@ -56,10 +56,11 @@ void hl_build_notify_change_user(hl_client_conn_t *cc, hl_transaction_t *notify)
     notify->fields = (hl_field_t *)calloc(4, sizeof(hl_field_t));
     if (!notify->fields) return;
     notify->field_count = 4;
-    hl_field_new(&notify->fields[0], FIELD_USER_ID, cc->id, 2);
-    hl_field_new(&notify->fields[1], FIELD_USER_ICON_ID, cc->icon, 2);
-    hl_field_new(&notify->fields[2], FIELD_USER_FLAGS, cc->flags, 2);
-    hl_field_new(&notify->fields[3], FIELD_USER_NAME, (const uint8_t *)cc->user_name, cc->user_name_len);
+    hl_field_new(&notify->fields[0], FIELD_USER_NAME,
+                 (const uint8_t *)cc->user_name, cc->user_name_len);
+    hl_field_new(&notify->fields[1], FIELD_USER_ID, cc->id, 2);
+    hl_field_new(&notify->fields[2], FIELD_USER_ICON_ID, cc->icon, 2);
+    hl_field_new(&notify->fields[3], FIELD_USER_FLAGS, cc->flags, 2);
 }
 
 void hl_build_notify_change_user_free(hl_transaction_t *notify)
@@ -1782,21 +1783,41 @@ static int handle_download_file(hl_client_conn_t *cc, const hl_transaction_t *re
 
     uint32_t file_size = (uint32_t)st.st_size;
 
+    /* Parse optional resume data (RFLT format) */
+    uint32_t data_offset = 0;
+    hl_file_resume_data_t *resume = NULL;
+    const hl_field_t *f_resume = hl_transaction_get_field(req, FIELD_FILE_RESUME_DATA);
+    if (f_resume && f_resume->data_len > 0) {
+        resume = (hl_file_resume_data_t *)calloc(1, sizeof(hl_file_resume_data_t));
+        if (resume) {
+            if (hl_file_resume_data_unmarshal(resume, f_resume->data, f_resume->data_len) == 0
+                && resume->fork_info_count > 0) {
+                data_offset = hl_read_u32(resume->fork_info[0].data_size);
+                if (data_offset > file_size) data_offset = file_size;
+            } else {
+                free(resume);
+                resume = NULL;
+            }
+        }
+    }
+
     /* Create transfer entry */
     hl_file_transfer_t *ft = (hl_file_transfer_t *)calloc(1, sizeof(hl_file_transfer_t));
-    if (!ft) return reply_empty(cc, req, out, out_count);
+    if (!ft) { free(resume); return reply_empty(cc, req, out, out_count); }
 
     ft->type = HL_XFER_FILE_DOWNLOAD;
     ft->client_conn = cc;
     ft->active = 1;
+    ft->resume_data = resume;
 
     /* Store file root and path info for the transfer handler */
     strncpy(ft->file_root, full_path, sizeof(ft->file_root) - 1);
 
     /* Transfer size = FILP header (24) + INFO fork header (16) +
-     * INFO fork data (72 + name_len + 2) + DATA fork header (16) + file data */
+     * INFO fork data (72 + name_len + 2) + DATA fork header (16) + remaining file data.
+     * For resumed transfers, subtract the bytes already sent. */
     uint32_t info_size = 72 + (uint32_t)nlen + 2;
-    uint32_t transfer_size = 24 + 16 + info_size + 16 + file_size;
+    uint32_t transfer_size = 24 + 16 + info_size + 16 + (file_size - data_offset);
     hl_write_u32(ft->transfer_size, transfer_size);
 
     if (srv->file_transfer_mgr)
@@ -1832,7 +1853,67 @@ static int handle_upload_file(hl_client_conn_t *cc, const hl_transaction_t *req,
 {
     if (!hl_client_conn_authorize(cc, ACCESS_UPLOAD_FILE))
         return reply_err(cc, req, "You are not allowed to upload files.", out, out_count);
-    return reply_empty(cc, req, out, out_count);
+
+    hl_server_t *srv = cc->server;
+
+    /* Build destination directory path */
+    char dir_path[2048];
+    if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
+        return reply_err(cc, req, "Invalid file path.", out, out_count);
+
+    /* Get filename */
+    const hl_field_t *f_name = hl_transaction_get_field(req, FIELD_FILE_NAME);
+    if (!f_name || f_name->data_len == 0)
+        return reply_err(cc, req, "Missing file name.", out, out_count);
+
+    char filename[256];
+    size_t nlen = f_name->data_len < sizeof(filename) - 1 ?
+                  f_name->data_len : sizeof(filename) - 1;
+    memcpy(filename, f_name->data, nlen);
+    filename[nlen] = '\0';
+
+    if (!is_safe_filename(filename, nlen))
+        return reply_err(cc, req, "Invalid file name.", out, out_count);
+
+    /* Check if file already exists */
+    char full_path[2048];
+    snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, filename);
+
+    struct stat st;
+    if (stat(full_path, &st) == 0)
+        return reply_err(cc, req, "A file with that name already exists.", out, out_count);
+
+    /* Create transfer entry */
+    hl_file_transfer_t *ft = (hl_file_transfer_t *)calloc(1, sizeof(hl_file_transfer_t));
+    if (!ft) return reply_empty(cc, req, out, out_count);
+
+    ft->type = HL_XFER_FILE_UPLOAD;
+    ft->client_conn = cc;
+    ft->active = 1;
+    strncpy(ft->file_root, full_path, sizeof(ft->file_root) - 1);
+
+    /* Store transfer size from request if provided */
+    const hl_field_t *f_size = hl_transaction_get_field(req, FIELD_TRANSFER_SIZE);
+    if (f_size && f_size->data_len >= 4) {
+        memcpy(ft->transfer_size, f_size->data, 4);
+    }
+
+    if (srv->file_transfer_mgr)
+        srv->file_transfer_mgr->vt->add(srv->file_transfer_mgr, ft);
+
+    /* Reply with ref_num */
+    hl_field_t fields[1];
+    hl_field_new(&fields[0], FIELD_REF_NUM, ft->ref_num, 4);
+
+    hl_transaction_t *reply = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
+    hl_transaction_new(reply, req->type, cc->id, fields, 1);
+    reply->is_reply = 1;
+    memcpy(reply->id, req->id, 4);
+    hl_field_free(&fields[0]);
+
+    *out = reply;
+    *out_count = 1;
+    return 0;
 }
 
 static int handle_download_folder(hl_client_conn_t *cc, const hl_transaction_t *req,

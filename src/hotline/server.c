@@ -15,6 +15,7 @@
 #include "hotline/user.h"
 #include "hotline/transfer.h"
 #include "hotline/file_transfer.h"
+#include "hotline/flattened_file_object.h"
 #include "mobius/transaction_handlers.h"
 
 #include <sys/event.h>
@@ -830,6 +831,7 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd)
             hl_log_error(srv->logger, "Failed to open file: %s", ft->file_root);
             srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
                                              hdr.reference_number);
+            if (ft->resume_data) free(ft->resume_data);
             free(ft);
             close(client_fd);
             return;
@@ -839,6 +841,17 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd)
         fseek(f, 0, SEEK_END);
         uint32_t file_size = (uint32_t)ftell(f);
         fseek(f, 0, SEEK_SET);
+
+        /* Check for resume offset */
+        uint32_t data_offset = 0;
+        int resuming = 0;
+        if (ft->resume_data && ft->resume_data->fork_info_count > 0) {
+            data_offset = hl_read_u32(ft->resume_data->fork_info[0].data_size);
+            if (data_offset > file_size) data_offset = file_size;
+            resuming = 1;
+            hl_log_info(srv->logger, "Resuming file download at offset %u/%u: %s",
+                        data_offset, file_size, ft->file_root);
+        }
 
         /* Extract filename from path */
         const char *filename = strrchr(ft->file_root, '/');
@@ -878,19 +891,25 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd)
         info_data[72 + name_len] = 0;
         info_data[72 + name_len + 1] = 0;
 
-        /* DATA fork header: "DATA" + compression(4) + rsvd(4) + data_size(4) = 16 */
+        /* DATA fork header: "DATA" + compression(4) + rsvd(4) + data_size(4) = 16
+         * Note: data_size is the ORIGINAL full size, not adjusted for resume. */
         uint8_t data_fork_hdr[16];
         memset(data_fork_hdr, 0, sizeof(data_fork_hdr));
         memcpy(data_fork_hdr, "DATA", 4);
         hl_write_u32(data_fork_hdr + 12, file_size);
 
-        /* Send everything */
+        /* Send FILP headers (always sent, even for resume) */
         write_all(client_fd, filp_hdr, 24);
         write_all(client_fd, info_fork_hdr, 16);
         write_all(client_fd, info_data, info_data_size);
         write_all(client_fd, data_fork_hdr, 16);
 
-        /* Send file data */
+        /* Seek past already-transferred bytes for resume */
+        if (data_offset > 0) {
+            fseek(f, (long)data_offset, SEEK_SET);
+        }
+
+        /* Send file data (from offset onward) */
         uint8_t fbuf[8192];
         size_t total_sent = 0;
         size_t n;
@@ -900,9 +919,119 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd)
         }
         fclose(f);
 
-        hl_log_info(srv->logger, "File sent: %s (%zu bytes + FILP headers)",
-                    ft->file_root, total_sent);
+        hl_log_info(srv->logger, "File sent: %s (%zu bytes%s + FILP headers)",
+                    ft->file_root, total_sent,
+                    resuming ? ", resumed" : "");
 
+        srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
+                                         hdr.reference_number);
+        if (ft->resume_data) free(ft->resume_data);
+        free(ft);
+        close(client_fd);
+        return;
+    }
+
+    /* Handle file upload — receive FILP-wrapped data from client */
+    if (ft->type == HL_XFER_FILE_UPLOAD) {
+        /* Step 1: Read FILP header (24 bytes) */
+        uint8_t filp_hdr[HL_FLAT_FILE_HEADER_SIZE];
+        if (read_full(client_fd, filp_hdr, HL_FLAT_FILE_HEADER_SIZE) < 0) {
+            hl_log_error(srv->logger, "Upload: failed to read FILP header");
+            goto upload_cleanup;
+        }
+        if (memcmp(filp_hdr, "FILP", 4) != 0) {
+            hl_log_error(srv->logger, "Upload: invalid FILP magic");
+            goto upload_cleanup;
+        }
+
+        /* Step 2: Read INFO fork header (16 bytes) to get info data size */
+        uint8_t info_hdr[HL_FORK_HEADER_SIZE];
+        if (read_full(client_fd, info_hdr, HL_FORK_HEADER_SIZE) < 0) {
+            hl_log_error(srv->logger, "Upload: failed to read INFO fork header");
+            goto upload_cleanup;
+        }
+        uint32_t info_data_size = hl_read_u32(info_hdr + 12);
+        if (info_data_size > 4096) {
+            hl_log_error(srv->logger, "Upload: INFO fork too large (%u)", info_data_size);
+            goto upload_cleanup;
+        }
+
+        /* Step 3: Read INFO fork data and discard (we use filename from handler) */
+        if (info_data_size > 0) {
+            uint8_t *info_buf = (uint8_t *)malloc(info_data_size);
+            if (!info_buf) goto upload_cleanup;
+            if (read_full(client_fd, info_buf, info_data_size) < 0) {
+                free(info_buf);
+                hl_log_error(srv->logger, "Upload: failed to read INFO fork data");
+                goto upload_cleanup;
+            }
+            free(info_buf);
+        }
+
+        /* Step 4: Read DATA fork header (16 bytes) to get file size */
+        uint8_t data_hdr[HL_FORK_HEADER_SIZE];
+        if (read_full(client_fd, data_hdr, HL_FORK_HEADER_SIZE) < 0) {
+            hl_log_error(srv->logger, "Upload: failed to read DATA fork header");
+            goto upload_cleanup;
+        }
+        uint32_t data_size = hl_read_u32(data_hdr + 12);
+
+        /* Step 5: Open .incomplete file for writing */
+        char incomplete_path[1088];
+        snprintf(incomplete_path, sizeof(incomplete_path), "%s.incomplete", ft->file_root);
+
+        int out_fd = open(incomplete_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (out_fd < 0) {
+            hl_log_error(srv->logger, "Upload: failed to create %s: %s",
+                        incomplete_path, strerror(errno));
+            goto upload_cleanup;
+        }
+
+        /* Step 6: Stream DATA fork from socket to file */
+        uint8_t fbuf[8192];
+        uint32_t remaining = data_size;
+        size_t total_received = 0;
+        int write_error = 0;
+
+        while (remaining > 0) {
+            size_t chunk = remaining < sizeof(fbuf) ? remaining : sizeof(fbuf);
+            ssize_t r = read(client_fd, fbuf, chunk);
+            if (r < 0) {
+                if (errno == EINTR) continue;
+                hl_log_error(srv->logger, "Upload: read error: %s", strerror(errno));
+                write_error = 1;
+                break;
+            }
+            if (r == 0) {
+                hl_log_error(srv->logger, "Upload: client disconnected mid-transfer");
+                write_error = 1;
+                break;
+            }
+            if (write_all(out_fd, fbuf, (size_t)r) < 0) {
+                hl_log_error(srv->logger, "Upload: write error: %s", strerror(errno));
+                write_error = 1;
+                break;
+            }
+            remaining -= (uint32_t)r;
+            total_received += (size_t)r;
+        }
+        close(out_fd);
+
+        if (write_error) {
+            /* Leave .incomplete for possible resume later */
+            hl_log_info(srv->logger, "Upload incomplete: %s (%zu/%u bytes)",
+                        ft->file_root, total_received, data_size);
+        } else {
+            /* Rename .incomplete to final path */
+            if (rename(incomplete_path, ft->file_root) != 0) {
+                hl_log_error(srv->logger, "Upload: rename failed: %s", strerror(errno));
+            } else {
+                hl_log_info(srv->logger, "File received: %s (%zu bytes)",
+                            ft->file_root, total_received);
+            }
+        }
+
+upload_cleanup:
         srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
                                          hdr.reference_number);
         free(ft);
