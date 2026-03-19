@@ -157,6 +157,14 @@ static int init_config_dir(const char *dir)
         fclose(f);
     }
 
+    /* Write empty ThreadedNews.yaml */
+    snprintf(path, sizeof(path), "%s/ThreadedNews.yaml", dir);
+    f = fopen(path, "w");
+    if (f) {
+        fprintf(f, "Categories: {}\n");
+        fclose(f);
+    }
+
     /* Write default admin account */
     snprintf(path, sizeof(path), "%s/Users/admin.yaml", dir);
     f = fopen(path, "w");
@@ -230,6 +238,8 @@ static void print_usage(const char *prog)
         "  -c, --config DIR       Configuration directory\n"
         "  -f, --log-file PATH    Log file path (enables file logging)\n"
         "  -l, --log-level LEVEL  Log level: debug, info, error (default: info)\n"
+        "      --api-addr ADDR    API listener address (accepted for compatibility)\n"
+        "      --api-key KEY      API key (accepted for compatibility)\n"
         "      --init             Initialize a default config directory\n"
         "  -v, --version          Print version and exit\n"
         "  -h, --help             Show this help\n"
@@ -246,6 +256,8 @@ int main(int argc, char **argv)
     const char *config_dir = NULL;
     const char *log_file = NULL;
     const char *log_level = "info";
+    const char *api_addr = NULL; /* Compatibility flag used by MobiusAdmin */
+    const char *api_key = NULL;  /* Compatibility flag used by MobiusAdmin */
     int show_version = 0;
     int do_init = 0;
 
@@ -256,6 +268,8 @@ int main(int argc, char **argv)
         {"config",    required_argument, 0, 'c'},
         {"log-file",  required_argument, 0, 'f'},
         {"log-level", required_argument, 0, 'l'},
+        {"api-addr",  required_argument, 0, 'A'}, /* accepted for compatibility */
+        {"api-key",   required_argument, 0, 'K'}, /* accepted for compatibility */
         {"init",      no_argument,       0, 'I'},
         {"version",   no_argument,       0, 'v'},
         {"help",      no_argument,       0, 'h'},
@@ -263,13 +277,15 @@ int main(int argc, char **argv)
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "i:p:c:f:l:vh", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "i:p:c:f:l:A:K:vh", long_options, NULL)) != -1) {
         switch (opt) {
             case 'i': interface_addr = optarg; break;
             case 'p': port = atoi(optarg); break;
             case 'c': config_dir = optarg; break;
             case 'f': log_file = optarg; break;
             case 'l': log_level = optarg; break;
+            case 'A': api_addr = optarg; break;
+            case 'K': api_key = optarg; break;
             case 'I': do_init = 1; break;
             case 'v': show_version = 1; break;
             case 'h': print_usage(argv[0]); return 0;
@@ -320,6 +336,12 @@ int main(int argc, char **argv)
     /* Apply options */
     strncpy(srv->net_interface, interface_addr, sizeof(srv->net_interface) - 1);
     srv->port = port;
+
+    if (api_addr || api_key) {
+        hl_log_info(srv->logger,
+                    "API compatibility flags detected (--api-addr/--api-key); "
+                    "embedded REST API is not implemented in this C build");
+    }
 
     /* Initialize file transfer manager */
     srv->file_transfer_mgr = hl_mem_xfer_mgr_new();

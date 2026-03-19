@@ -16,6 +16,8 @@ lemoniscate [options]
 | `-c` | `--config` | DIR | auto | Configuration directory path |
 | `-f` | `--log-file` | PATH | stderr | Log file path (enables file logging) |
 | `-l` | `--log-level` | LEVEL | info | Log level: `debug`, `info`, `error` |
+| | `--api-addr` | ADDR | | Accepted for MobiusAdmin CLI compatibility (currently no-op in C build) |
+| | `--api-key` | KEY | | Accepted for MobiusAdmin CLI compatibility (currently no-op in C build) |
 | | `--init` | | | Initialize a default config directory and exit |
 | `-v` | `--version` | | | Print version and exit |
 | `-h` | `--help` | | | Show help |
