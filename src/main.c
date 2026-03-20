@@ -432,6 +432,11 @@ int main(int argc, char **argv)
         snprintf(path, sizeof(path), "%s/MessageBoard.txt", config_dir);
         srv->flat_news = mobius_flat_news_new(path);
 
+        /* Set threaded news file path and load from disk */
+        snprintf(path, sizeof(path), "%s/ThreadedNews.yaml", config_dir);
+        strncpy(srv->threaded_news->file_path, path, sizeof(srv->threaded_news->file_path) - 1);
+        tn_load(srv->threaded_news);
+
         /* Load banner */
         if (srv->config.banner_file[0]) {
             char bpath[2048];

@@ -53,9 +53,11 @@ typedef struct mobius_threaded_news {
     pthread_mutex_t mu;
 } mobius_threaded_news_t;
 
-/* Create/free */
+/* Create/free/persist */
 mobius_threaded_news_t *mobius_threaded_news_new(const char *filepath);
 void mobius_threaded_news_free(mobius_threaded_news_t *tn);
+int tn_save(mobius_threaded_news_t *tn);
+int tn_load(mobius_threaded_news_t *tn);
 
 /* Get categories at path. Returns serialized NewsCategoryListData15 fields.
  * Caller must free *out_data. *out_len is total byte length.
