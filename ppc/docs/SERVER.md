@@ -290,6 +290,6 @@ make test   # builds and runs all tests
 
 ## Version
 
-Current: `0.3.0`
+Current: `0.1.1`
 
 Based on [Mobius](https://github.com/jhalter/mobius) by Jeff Halter.
