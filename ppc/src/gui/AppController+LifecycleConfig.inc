@@ -190,14 +190,10 @@
     [self refreshThreadedNews:nil];
     [self updateServerUI];
 
-    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    if (![d objectForKey:@"setupWizardCompleted"]) {
-        NSString *cfgPath = [_configDir stringByAppendingPathComponent:@"config.yaml"];
-        BOOL hasConfig = [[NSFileManager defaultManager] fileExistsAtPath:cfgPath];
-        [d setBool:hasConfig forKey:@"setupWizardCompleted"];
-        [d synchronize];
-    }
-    if (![d boolForKey:@"setupWizardCompleted"]) {
+    /* Show wizard only if no plist config exists */
+    NSString *plistPath = [NSHomeDirectory()
+        stringByAppendingPathComponent:@"Library/Preferences/com.lemoniscate.server.plist"];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:plistPath]) {
         [self showSetupWizard:nil];
     }
 }
@@ -242,107 +238,71 @@
 
 - (void)loadConfigFromDisk
 {
-    NSString *cfgPath = [_configDir stringByAppendingPathComponent:@"config.yaml"];
-    NSString *yaml = [NSString stringWithContentsOfFile:cfgPath
-                                                encoding:NSUTF8StringEncoding
-                                                   error:nil];
-    if (!yaml || [yaml length] == 0) return;
+    NSString *plistPath = [NSHomeDirectory()
+        stringByAppendingPathComponent:@"Library/Preferences/com.lemoniscate.server.plist"];
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:plistPath];
+    if (!dict) return;
 
     [_trackerItems removeAllObjects];
     [_ignoreFileItems removeAllObjects];
-    NSArray *lines = [yaml componentsSeparatedByCharactersInSet:
-        [NSCharacterSet newlineCharacterSet]];
-    BOOL inTrackersList = NO;
-    BOOL inIgnoreFilesList = NO;
-    unsigned i;
-    for (i = 0; i < [lines count]; i++) {
-        NSString *rawLine = [lines objectAtIndex:i];
-        NSString *line = trimmedString(rawLine);
-        if ([line length] == 0 || [line hasPrefix:@"#"]) continue;
 
-        if (inTrackersList || inIgnoreFilesList) {
-            BOOL isListItem = [rawLine hasPrefix:@"  -"] || [rawLine hasPrefix:@"\t-"];
-            if (isListItem) {
-                NSString *item = trimmedString([line substringFromIndex:1]);
-                item = yamlUnquote(item);
-                if ([item length] > 0) {
-                    if (inTrackersList && ![_trackerItems containsObject:item]) {
-                        [_trackerItems addObject:item];
-                    } else if (inIgnoreFilesList && ![_ignoreFileItems containsObject:item]) {
-                        [_ignoreFileItems addObject:item];
-                    }
-                }
-                continue;
-            }
-            inTrackersList = NO;
-            inIgnoreFilesList = NO;
-        }
+    NSString *val;
 
-        NSRange sep = [line rangeOfString:@":"];
-        if (sep.location == NSNotFound) continue;
+    val = [dict objectForKey:@"ServerName"];
+    if (val) {
+        [val retain]; [_serverName release]; _serverName = val;
+        if (_serverNameField) [_serverNameField setStringValue:_serverName];
+    }
+    val = [dict objectForKey:@"ServerDescription"];
+    if (val) {
+        [val retain]; [_serverDescription release]; _serverDescription = val;
+        if (_descriptionField) [_descriptionField setStringValue:_serverDescription];
+    }
+    val = [dict objectForKey:@"BannerFile"];
+    if (val && _bannerFileField) [_bannerFileField setStringValue:val];
+    val = [dict objectForKey:@"FileRoot"];
+    if (val && _fileRootField) [_fileRootField setStringValue:val];
 
-        NSString *key = trimmedString([line substringToIndex:sep.location]);
-        NSString *val = yamlUnquote([line substringFromIndex:sep.location + 1]);
+    NSNumber *boolVal;
+    boolVal = [dict objectForKey:@"EnableBonjour"];
+    if (boolVal && _bonjourCheckbox)
+        [_bonjourCheckbox setState:[boolVal boolValue] ? NSOnState : NSOffState];
+    boolVal = [dict objectForKey:@"EnableTrackerRegistration"];
+    if (boolVal && _trackerCheckbox)
+        [_trackerCheckbox setState:[boolVal boolValue] ? NSOnState : NSOffState];
+    boolVal = [dict objectForKey:@"PreserveResourceForks"];
+    if (boolVal && _preserveForkCheckbox)
+        [_preserveForkCheckbox setState:[boolVal boolValue] ? NSOnState : NSOffState];
 
-        if ([key isEqualToString:@"Name"]) {
-            [val retain];
-            [_serverName release];
-            _serverName = val;
-            if (_serverNameField) [_serverNameField setStringValue:_serverName];
-        } else if ([key isEqualToString:@"Description"]) {
-            [val retain];
-            [_serverDescription release];
-            _serverDescription = val;
-            if (_descriptionField) [_descriptionField setStringValue:_serverDescription];
-        } else if ([key isEqualToString:@"BannerFile"]) {
-            if (_bannerFileField) [_bannerFileField setStringValue:val];
-        } else if ([key isEqualToString:@"FileRoot"]) {
-            if (_fileRootField) [_fileRootField setStringValue:val];
-        } else if ([key isEqualToString:@"EnableBonjour"]) {
-            if (_bonjourCheckbox) {
-                [_bonjourCheckbox setState:yamlBoolValue(val) ? NSOnState : NSOffState];
-            }
-        } else if ([key isEqualToString:@"EnableTrackerRegistration"]) {
-            if (_trackerCheckbox) {
-                [_trackerCheckbox setState:yamlBoolValue(val) ? NSOnState : NSOffState];
-            }
-        } else if ([key isEqualToString:@"Trackers"]) {
-            NSString *rawVal = trimmedString([line substringFromIndex:sep.location + 1]);
-            if ([rawVal length] == 0) {
-                inTrackersList = YES;
-            } else if (![rawVal isEqualToString:@"[]"]) {
-                parseInlineYAMLArray(rawVal, _trackerItems);
-            }
-        } else if ([key isEqualToString:@"IgnoreFiles"]) {
-            NSString *rawVal = trimmedString([line substringFromIndex:sep.location + 1]);
-            if ([rawVal length] == 0) {
-                inIgnoreFilesList = YES;
-            } else if (![rawVal isEqualToString:@"[]"]) {
-                parseInlineYAMLArray(rawVal, _ignoreFileItems);
-            }
-        } else if ([key isEqualToString:@"NewsDateFormat"]) {
-            if (_newsDateFormatPopup) {
-                NSInteger idx = [_newsDateFormatPopup indexOfItemWithTitle:val];
-                if (idx < 0 && [val length] > 0) {
-                    [_newsDateFormatPopup addItemWithTitle:val];
-                    idx = [_newsDateFormatPopup indexOfItemWithTitle:val];
-                }
-                if (idx >= 0) [_newsDateFormatPopup selectItemAtIndex:idx];
-            }
-        } else if ([key isEqualToString:@"NewsDelimiter"]) {
-            if (_newsDelimiterField) [_newsDelimiterField setStringValue:val];
-        } else if ([key isEqualToString:@"PreserveResourceForks"]) {
-            if (_preserveForkCheckbox) {
-                [_preserveForkCheckbox setState:yamlBoolValue(val) ? NSOnState : NSOffState];
-            }
-        } else if ([key isEqualToString:@"MaxDownloads"]) {
-            if (_maxDownloadsField) [_maxDownloadsField setIntValue:[val intValue]];
-        } else if ([key isEqualToString:@"MaxDownloadsPerClient"]) {
-            if (_maxDLPerClientField) [_maxDLPerClientField setIntValue:[val intValue]];
-        } else if ([key isEqualToString:@"MaxConnectionsPerIP"]) {
-            if (_maxConnPerIPField) [_maxConnPerIPField setIntValue:[val intValue]];
+    NSArray *trackers = [dict objectForKey:@"Trackers"];
+    if (trackers) {
+        unsigned i;
+        for (i = 0; i < [trackers count]; i++) {
+            NSString *item = [trackers objectAtIndex:i];
+            if ([item length] > 0 && ![_trackerItems containsObject:item])
+                [_trackerItems addObject:item];
         }
     }
+
+    val = [dict objectForKey:@"NewsDateFormat"];
+    if (val && _newsDateFormatPopup) {
+        int idx = [_newsDateFormatPopup indexOfItemWithTitle:val];
+        if (idx < 0 && [val length] > 0) {
+            [_newsDateFormatPopup addItemWithTitle:val];
+            idx = [_newsDateFormatPopup indexOfItemWithTitle:val];
+        }
+        if (idx >= 0) [_newsDateFormatPopup selectItemAtIndex:idx];
+    }
+    val = [dict objectForKey:@"NewsDelimiter"];
+    if (val && _newsDelimiterField) [_newsDelimiterField setStringValue:val];
+
+    NSNumber *numVal;
+    numVal = [dict objectForKey:@"MaxDownloads"];
+    if (numVal && _maxDownloadsField) [_maxDownloadsField setIntValue:[numVal intValue]];
+    numVal = [dict objectForKey:@"MaxDownloadsPerClient"];
+    if (numVal && _maxDLPerClientField) [_maxDLPerClientField setIntValue:[numVal intValue]];
+    numVal = [dict objectForKey:@"MaxConnectionsPerIP"];
+    if (numVal && _maxConnPerIPField) [_maxConnPerIPField setIntValue:[numVal intValue]];
 
     if (_filesTableView) [self refreshFilesList:nil];
     if (_accountsTableView) [self refreshAccountsList:nil];
@@ -372,12 +332,10 @@
         [_newsDateFormatPopup titleOfSelectedItem] : @"Jan02 15:04";
     NSString *newsDelimiter = _newsDelimiterField ?
         [_newsDelimiterField stringValue] : @"__________________________________________________________";
-    if (!newsDateFormat || [newsDateFormat length] == 0) {
+    if (!newsDateFormat || [newsDateFormat length] == 0)
         newsDateFormat = @"Jan02 15:04";
-    }
-    if (!newsDelimiter || [newsDelimiter length] == 0) {
+    if (!newsDelimiter || [newsDelimiter length] == 0)
         newsDelimiter = @"__________________________________________________________";
-    }
     BOOL preserveForks = _preserveForkCheckbox ? ([_preserveForkCheckbox state] == NSOnState) : NO;
     int maxDownloads = _maxDownloadsField ? [_maxDownloadsField intValue] : 0;
     int maxDLPerClient = _maxDLPerClientField ? [_maxDLPerClientField intValue] : 0;
@@ -387,67 +345,40 @@
     if (maxDLPerClient < 0) maxDLPerClient = 0;
     if (maxConnPerIP < 0) maxConnPerIP = 0;
 
-    NSFileManager *fm = [NSFileManager defaultManager];
+    /* Build plist dictionary */
+    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+    [dict setObject:name forKey:@"ServerName"];
+    [dict setObject:desc forKey:@"ServerDescription"];
+    [dict setObject:banner forKey:@"BannerFile"];
+    [dict setObject:fileRoot forKey:@"FileRoot"];
+    [dict setObject:[NSNumber numberWithBool:enableBonjour] forKey:@"EnableBonjour"];
+    [dict setObject:[NSNumber numberWithBool:enableTracker] forKey:@"EnableTrackerRegistration"];
+    [dict setObject:[NSNumber numberWithBool:preserveForks] forKey:@"PreserveResourceForks"];
+    [dict setObject:[NSNumber numberWithInt:maxDownloads] forKey:@"MaxDownloads"];
+    [dict setObject:[NSNumber numberWithInt:maxDLPerClient] forKey:@"MaxDownloadsPerClient"];
+    [dict setObject:[NSNumber numberWithInt:maxConnPerIP] forKey:@"MaxConnectionsPerIP"];
+    [dict setObject:(_trackerItems ? _trackerItems : [NSArray array]) forKey:@"Trackers"];
+    [dict setObject:newsDateFormat forKey:@"NewsDateFormat"];
+    [dict setObject:newsDelimiter forKey:@"NewsDelimiter"];
+    [dict setObject:@"macintosh" forKey:@"Encoding"];
+
+    /* Write to ~/Library/Preferences/com.lemoniscate.server.plist */
+    NSString *plistPath = [NSHomeDirectory()
+        stringByAppendingPathComponent:@"Library/Preferences/com.lemoniscate.server.plist"];
+    [dict writeToFile:plistPath atomically:YES];
+}
+
+/* Create directory and all intermediate parents (Tiger compatible) */
+static void createDirectoryWithParents(NSFileManager *fm, NSString *path)
+{
     BOOL isDir = NO;
-    if (![fm fileExistsAtPath:_configDir isDirectory:&isDir]) {
-        [fm createDirectoryAtPath:_configDir attributes:[NSDictionary dictionary]];
+    if ([fm fileExistsAtPath:path isDirectory:&isDir] && isDir) return;
+    /* Recursively create parent */
+    NSString *parent = [path stringByDeletingLastPathComponent];
+    if (parent && [parent length] > 1) {
+        createDirectoryWithParents(fm, parent);
     }
-
-    NSString *cfgPath = [_configDir stringByAppendingPathComponent:@"config.yaml"];
-    NSString *qName = [name stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
-    NSString *qDesc = [desc stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
-    NSString *qBanner = [banner stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
-    NSString *qRoot = [fileRoot stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
-    NSString *qNewsDate = [newsDateFormat stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
-    NSString *qNewsDelim = [newsDelimiter stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
-
-    NSMutableString *yaml = [NSMutableString stringWithFormat:
-        @"Name: \"%@\"\n"
-        @"Description: \"%@\"\n"
-        @"BannerFile: \"%@\"\n"
-        @"FileRoot: \"%@\"\n"
-        @"EnableTrackerRegistration: %@\n",
-        qName, qDesc, qBanner, qRoot,
-        enableTracker ? @"true" : @"false"];
-
-    if ([_trackerItems count] == 0) {
-        [yaml appendString:@"Trackers: []\n"];
-    } else {
-        unsigned i;
-        [yaml appendString:@"Trackers:\n"];
-        for (i = 0; i < [_trackerItems count]; i++) {
-            NSString *tracker = [_trackerItems objectAtIndex:i];
-            [yaml appendFormat:@"  - %@\n", yamlQuoted(tracker)];
-        }
-    }
-
-    if ([_ignoreFileItems count] == 0) {
-        [yaml appendString:@"IgnoreFiles: []\n"];
-    } else {
-        unsigned i;
-        [yaml appendString:@"IgnoreFiles:\n"];
-        for (i = 0; i < [_ignoreFileItems count]; i++) {
-            NSString *pattern = [_ignoreFileItems objectAtIndex:i];
-            [yaml appendFormat:@"  - %@\n", yamlQuoted(pattern)];
-        }
-    }
-
-    [yaml appendFormat:
-        @"NewsDateFormat: \"%@\"\n"
-        @"NewsDelimiter: \"%@\"\n"
-        @"EnableBonjour: %@\n"
-        @"Encoding: macintosh\n"
-        @"MaxDownloads: %d\n"
-        @"MaxDownloadsPerClient: %d\n"
-        @"MaxConnectionsPerIP: %d\n"
-        @"PreserveResourceForks: %@\n",
-        qNewsDate, qNewsDelim,
-        enableBonjour ? @"true" : @"false",
-        maxDownloads, maxDLPerClient, maxConnPerIP,
-        preserveForks ? @"true" : @"false"];
-
-    [yaml writeToFile:cfgPath atomically:YES
-             encoding:NSUTF8StringEncoding error:nil];
+    [fm createDirectoryAtPath:path attributes:[NSDictionary dictionary]];
 }
 
 - (void)ensureConfigScaffolding
@@ -455,7 +386,7 @@
     NSFileManager *fm = [NSFileManager defaultManager];
     BOOL isDir = NO;
     if (![fm fileExistsAtPath:_configDir isDirectory:&isDir]) {
-        [fm createDirectoryAtPath:_configDir attributes:[NSDictionary dictionary]];
+        createDirectoryWithParents(fm, _configDir);
     }
 
     NSString *filesDir = [_configDir stringByAppendingPathComponent:@"Files"];

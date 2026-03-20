@@ -12,6 +12,7 @@
 #include "hotline/tracker.h"
 #include "mobius/transaction_handlers.h"
 #include "mobius/config_loader.h"
+#include "mobius/config_plist.h"
 #include "mobius/agreement.h"
 #include "mobius/flat_news.h"
 #include "mobius/yaml_account_manager.h"
@@ -352,12 +353,36 @@ int main(int argc, char **argv)
     /* Set text encoding from config (default MacRoman for PPC) */
     srv->use_mac_roman = (strcmp(srv->config.encoding, "utf-8") != 0);
 
-    /* Load config from YAML */
+    /* Load config — try plist first (macOS native), then YAML fallback */
+    int config_loaded = 0;
     if (config_dir) {
-        if (mobius_load_config(&srv->config, config_dir) == 0) {
-            hl_log_info(srv->logger, "Loaded config from %s", config_dir);
-        } else {
-            hl_log_info(srv->logger, "No config found at %s, using defaults", config_dir);
+        /* Try plist in ~/Library/Preferences/ */
+        char plist_path[2048];
+        const char *home = getenv("HOME");
+        if (home) {
+            snprintf(plist_path, sizeof(plist_path),
+                     "%s/Library/Preferences/com.lemoniscate.server.plist", home);
+            if (mobius_load_config_plist(&srv->config, plist_path) == 0) {
+                hl_log_info(srv->logger, "Loaded config from %s", plist_path);
+                config_loaded = 1;
+            }
+        }
+        /* Try plist in config directory */
+        if (!config_loaded) {
+            snprintf(plist_path, sizeof(plist_path), "%s/config.plist", config_dir);
+            if (mobius_load_config_plist(&srv->config, plist_path) == 0) {
+                hl_log_info(srv->logger, "Loaded config from %s", plist_path);
+                config_loaded = 1;
+            }
+        }
+        /* Fall back to YAML */
+        if (!config_loaded) {
+            if (mobius_load_config(&srv->config, config_dir) == 0) {
+                hl_log_info(srv->logger, "Loaded config from %s", config_dir);
+                config_loaded = 1;
+            } else {
+                hl_log_info(srv->logger, "No config found, using defaults");
+            }
         }
 
         /* Resolve relative FileRoot against config directory */
