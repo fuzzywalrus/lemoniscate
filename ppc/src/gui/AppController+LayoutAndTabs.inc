@@ -1431,6 +1431,12 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_newsDeleteArticleButton setEnabled:NO];
     [_newsThreadedView addSubview:_newsDeleteArticleButton];
 
+    NSButton *refreshNewsBtn = makeButton(@"Refresh", self, @selector(refreshThreadedNews:));
+    [refreshNewsBtn setFrame:NSMakeRect(548, 530, 76, 24)];
+    [refreshNewsBtn setAutoresizingMask:NSViewMinXMargin];
+    [_newsThreadedView addSubview:refreshNewsBtn];
+    [_newsThreadedView addSubview:_newsDeleteArticleButton];
+
     NSScrollView *catsScroll = [[NSScrollView alloc]
         initWithFrame:NSMakeRect(4, 4, 220, 522)];
     [catsScroll setAutoresizingMask:(NSViewHeightSizable)];

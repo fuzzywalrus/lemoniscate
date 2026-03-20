@@ -16,7 +16,10 @@
         _logEntries = [[NSMutableArray alloc] init];
         _accountAccessKeys = [[NSMutableSet alloc] init];
         _accountPermissionCheckboxes = [[NSMutableDictionary alloc] init];
-        _trackerItems = [[NSMutableArray alloc] init];
+        _trackerItems = [[NSMutableArray alloc] initWithObjects:
+            @"tracked.mainecyber.com:5498",
+            @"tracker.preterhuman.net:5498",
+            @"badmoon.biz:5498", nil];
         _ignoreFileItems = [[NSMutableArray alloc] init];
         _bannedIPs = [[NSMutableArray alloc] init];
         _bannedUsers = [[NSMutableArray alloc] init];

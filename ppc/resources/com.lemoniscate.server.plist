@@ -13,7 +13,11 @@
 	<key>EnableTrackerRegistration</key>
 	<false/>
 	<key>Trackers</key>
-	<array/>
+	<array>
+		<string>tracked.mainecyber.com:5498</string>
+		<string>tracker.preterhuman.net:5498</string>
+		<string>badmoon.biz:5498</string>
+	</array>
 	<key>Encoding</key>
 	<string>macintosh</string>
 	<key>MaxDownloads</key>
