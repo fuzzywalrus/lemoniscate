@@ -83,8 +83,10 @@
         NSBundle *bundle = [NSBundle mainBundle];
         NSFileManager *fm = [NSFileManager defaultManager];
         NSString *binPath = nil;
+        /* Note: do NOT include "lemoniscate" — on HFS+ (case-insensitive)
+         * it matches "Lemoniscate" (the GUI binary). */
         NSArray *names = [NSArray arrayWithObjects:
-            @"lemoniscate-server", @"mobius-hotline-server", @"lemoniscate", nil];
+            @"lemoniscate-server", @"mobius-hotline-server", nil];
         unsigned idx;
         for (idx = 0; idx < [names count] && !binPath; idx++) {
             NSString *name = [names objectAtIndex:idx];
@@ -232,8 +234,7 @@
         [s retain]; [_serverDescription release]; _serverDescription = s;
     }
 
-    s = [d stringForKey:@"binaryPath"];
-    if (s && [s length]) [_processManager setBinaryPath:s];
+    /* binaryPath is discovered fresh on each launch — don't restore stale paths */
 }
 
 - (void)loadConfigFromDisk
@@ -345,6 +346,11 @@
     if (maxDLPerClient < 0) maxDLPerClient = 0;
     if (maxConnPerIP < 0) maxConnPerIP = 0;
 
+    /* Default banner to config dir copy if field is empty */
+    if (!banner || [banner length] == 0) {
+        banner = [_configDir stringByAppendingPathComponent:@"banner.jpg"];
+    }
+
     /* Build plist dictionary */
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
     [dict setObject:name forKey:@"ServerName"];
@@ -417,6 +423,16 @@ static void createDirectoryWithParents(NSFileManager *fm, NSString *path)
         [@"banList: {}\nbannedUsers: {}\nbannedNicks: {}\n"
             writeToFile:banlist atomically:YES
                encoding:NSUTF8StringEncoding error:nil];
+    }
+
+    /* Copy default banner from app bundle if none exists */
+    NSString *bannerDest = [_configDir stringByAppendingPathComponent:@"banner.jpg"];
+    if (![fm fileExistsAtPath:bannerDest]) {
+        NSString *bundleBanner = [[NSBundle mainBundle]
+            pathForResource:@"default-banner" ofType:@"jpg"];
+        if (bundleBanner) {
+            [fm copyPath:bundleBanner toPath:bannerDest handler:nil];
+        }
     }
 
     NSString *threadedNews = [_configDir stringByAppendingPathComponent:@"ThreadedNews.yaml"];
