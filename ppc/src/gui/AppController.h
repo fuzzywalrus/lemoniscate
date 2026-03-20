@@ -14,6 +14,7 @@
 #define APP_CONTROLLER_H
 
 #import <Cocoa/Cocoa.h>
+#import "TigerCompat.h"
 #import "ProcessManager.h"
 
 @interface AppController : NSObject
@@ -77,7 +78,7 @@
     NSTabView *_tabView;
 
     /* Server tab */
-    NSImageView *_statusIndicator;
+    StatusDotView *_statusIndicator;
     NSTextField *_statusLabel;
     NSTextField *_portInfoLabel;
     NSView *_serverButtonsRow;
@@ -175,7 +176,7 @@
     NSString *_newsSelectedArticleID;
 
     /* Footer */
-    NSImageView *_footerStatusDot;
+    StatusDotView *_footerStatusDot;
     NSTextField *_footerStatusLabel;
     NSTextField *_footerPortLabel;
     NSTextField *_footerConnectedLabel;

@@ -106,7 +106,8 @@ TEST_OBJC_OBJS = $(TEST_OBJC_SRCS:.m=.o)
 GUI_OBJC_SRCS = \
 	src/gui/main.m \
 	src/gui/AppController.m \
-	src/gui/ProcessManager.m
+	src/gui/ProcessManager.m \
+	src/gui/TigerCompat.m
 
 GUI_OBJC_OBJS = $(GUI_OBJC_SRCS:.m=.o)
 

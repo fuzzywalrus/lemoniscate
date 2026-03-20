@@ -215,6 +215,10 @@ hl_server_t *hl_server_new(void)
     if (ufd >= 0) {
         read(ufd, srv->tracker_pass_id, 4);
         close(ufd);
+    } else {
+        /* Fallback if /dev/urandom unavailable (e.g. chroot on Tiger) */
+        uint32_t seed = (uint32_t)(time(NULL) ^ getpid());
+        memcpy(srv->tracker_pass_id, &seed, 4);
     }
 
     srv->listen_fd = -1;
@@ -1448,7 +1452,7 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                     hl_client_conn_t **ul = srv->client_mgr->vt->list(
                         srv->client_mgr, &user_count);
                     if (ul) free(ul);
-                    hl_tracker_register_all(
+                    int reg_ok = hl_tracker_register_all(
                         (const char (*)[256])srv->config.trackers,
                         srv->config.tracker_count,
                         (uint16_t)srv->port,
@@ -1456,6 +1460,11 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                         srv->tracker_pass_id,
                         srv->config.name,
                         srv->config.description);
+                    if (reg_ok < srv->config.tracker_count) {
+                        hl_log_error(srv->logger,
+                            "Tracker re-registration: %d/%d succeeded",
+                            reg_ok, srv->config.tracker_count);
+                    }
                 }
             }
             else if ((int)ev->ident == srv->listen_fd) {

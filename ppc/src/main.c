@@ -295,7 +295,7 @@ int main(int argc, char **argv)
     }
 
     if (show_version) {
-        printf("lemoniscate 0.3.0\n");
+        printf("lemoniscate 0.1.1\n");
         return 0;
     }
 
@@ -491,14 +491,15 @@ int main(int argc, char **argv)
 
     /* Initial tracker registration */
     if (srv->config.enable_tracker_registration && srv->config.tracker_count > 0) {
-        hl_tracker_register_all(
+        int reg_ok = hl_tracker_register_all(
             (const char (*)[256])srv->config.trackers,
             srv->config.tracker_count,
             (uint16_t)port, 0,
             srv->tracker_pass_id,
             srv->config.name,
             srv->config.description);
-        hl_log_info(srv->logger, "Registered with %d tracker(s)", srv->config.tracker_count);
+        hl_log_info(srv->logger, "Tracker registration: %d/%d succeeded",
+                    reg_ok, srv->config.tracker_count);
     }
 
     /* Run the server (blocks until shutdown) */

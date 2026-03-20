@@ -112,7 +112,7 @@
     [_splitView setVertical:YES];
     [_splitView setAutoresizesSubviews:YES];
     [_splitView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
-    [_splitView setDividerStyle:NSSplitViewDividerStyleThin];
+    /* NSSplitViewDividerStyleThin is 10.5+; Tiger uses default divider */
     [_splitView setDelegate:self];
 
     NSView *leftPanel = [self createSettingsPanel]; NSView *rightPanel = [self createRightPanel]; NSRect svBounds = [_splitView bounds]; float divider = (float)LEFT_PANEL_WIDTH; [leftPanel setFrame:NSMakeRect(0, 0, divider, svBounds.size.height)]; [rightPanel setFrame:NSMakeRect(divider + 1, 0, svBounds.size.width - divider - 1, svBounds.size.height)]; [_splitView addSubview:leftPanel];
@@ -555,13 +555,10 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         initWithFrame:NSMakeRect(0, 0, 650, 28)];
     [footer setAutoresizingMask:(NSViewWidthSizable | NSViewMaxYMargin)];
 
-    NSBox *dot = [[NSBox alloc] initWithFrame:NSMakeRect(10, 9, 10, 10)];
-    [dot setBoxType:NSBoxCustom];
-    [dot setBorderType:NSLineBorder];
-    [dot setFillColor:[NSColor grayColor]];
-    [dot setCornerRadius:5.0];
+    StatusDotView *dot = [[StatusDotView alloc]
+        initWithFrame:NSMakeRect(10, 9, 10, 10)];
     [footer addSubview:dot];
-    _footerStatusDot = (NSImageView *)dot;
+    _footerStatusDot = dot;
 
     _footerStatusLabel = makeLabel(@"Stopped", 11.0, NO);
     [_footerStatusLabel setFrameOrigin:NSMakePoint(26, 6)];
@@ -656,16 +653,12 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
      * properly when the split view is resized. */
 
     /* Status dot — centered horizontally */
-    NSBox *sDot = [[NSBox alloc]
+    StatusDotView *sDot = [[StatusDotView alloc]
         initWithFrame:NSMakeRect(307, 330, 16, 16)];
-    [sDot setBoxType:NSBoxCustom];
-    [sDot setBorderType:NSLineBorder];
-    [sDot setFillColor:[NSColor grayColor]];
-    [sDot setCornerRadius:8.0];
     [sDot setAutoresizingMask:(NSViewMinXMargin | NSViewMaxXMargin |
                                NSViewMinYMargin | NSViewMaxYMargin)];
     [view addSubview:sDot];
-    _statusIndicator = (NSImageView *)sDot;
+    _statusIndicator = sDot;
 
     /* Status text — full width, centered */
     _statusLabel = makeLabel(@"Server is stopped", 20.0, NO);
@@ -1157,7 +1150,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     _onlineSplitView = [[NSSplitView alloc]
         initWithFrame:NSMakeRect(4, 4, 622, 554)];
     [_onlineSplitView setVertical:NO];
-    [_onlineSplitView setDividerStyle:NSSplitViewDividerStyleThin];
+    /* NSSplitViewDividerStyleThin is 10.5+; Tiger uses default divider */
     [_onlineSplitView setAutoresizesSubviews:YES];
     [_onlineSplitView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
 

@@ -3,6 +3,8 @@ Description: A test Lemoniscate server
 FileRoot: ./files
 Encoding: macintosh
 EnableBonjour: false
+EnableTrackerRegistration: false
 MaxDownloads: 10
 Trackers:
-  - tracker.example.com:5498
+  - hltracker.com:5499
+  - tracker.preterhuman.net:5499

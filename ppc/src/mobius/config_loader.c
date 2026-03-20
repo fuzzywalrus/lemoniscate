@@ -13,6 +13,12 @@
 #include <string.h>
 #include <sys/stat.h>
 
+/* Parse YAML boolean values: true/True/TRUE/yes/Yes/YES all → 1 */
+static int yaml_parse_bool(const char *val)
+{
+    return (strcasecmp(val, "true") == 0 || strcasecmp(val, "yes") == 0);
+}
+
 const char *mobius_config_search_paths[MOBIUS_CONFIG_SEARCH_COUNT] = {
     "config",
     "/usr/local/var/mobius/config",
@@ -95,7 +101,7 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
                 else if (strcmp(current_key, "FileRoot") == 0)
                     strncpy(cfg->file_root, val, HL_CONFIG_PATH_MAX - 1);
                 else if (strcmp(current_key, "EnableTrackerRegistration") == 0)
-                    cfg->enable_tracker_registration = (strcmp(val, "true") == 0);
+                    cfg->enable_tracker_registration = yaml_parse_bool(val);
                 else if (strcmp(current_key, "NewsDelimiter") == 0)
                     strncpy(cfg->news_delimiter, val, sizeof(cfg->news_delimiter) - 1);
                 else if (strcmp(current_key, "NewsDateFormat") == 0)
@@ -107,9 +113,9 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
                 else if (strcmp(current_key, "MaxConnectionsPerIP") == 0)
                     cfg->max_connections_per_ip = atoi(val);
                 else if (strcmp(current_key, "PreserveResourceForks") == 0)
-                    cfg->preserve_resource_forks = (strcmp(val, "true") == 0);
+                    cfg->preserve_resource_forks = yaml_parse_bool(val);
                 else if (strcmp(current_key, "EnableBonjour") == 0)
-                    cfg->enable_bonjour = (strcmp(val, "true") == 0);
+                    cfg->enable_bonjour = yaml_parse_bool(val);
                 else if (strcmp(current_key, "Encoding") == 0)
                     strncpy(cfg->encoding, val, sizeof(cfg->encoding) - 1);
 

@@ -96,8 +96,8 @@
         default:
             dotColor = [NSColor grayColor]; break;
     }
-    [(NSBox *)_statusIndicator setFillColor:dotColor];
-    [(NSBox *)_footerStatusDot setFillColor:dotColor];
+    [_statusIndicator setDotColor:dotColor];
+    [_footerStatusDot setDotColor:dotColor];
 
     [_startButton setEnabled:!running];
     [_stopButton setEnabled:running];

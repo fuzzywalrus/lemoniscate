@@ -27,8 +27,9 @@ int hl_tracker_register(const char *tracker_addr,
 {
     /* Parse host:port */
     char host[256];
-    int port = 5498; /* Default tracker port */
+    int port = 5499; /* Default tracker port (standard Hotline tracker) */
     strncpy(host, tracker_addr, sizeof(host) - 1);
+    host[sizeof(host) - 1] = '\0';
 
     char *colon = strchr(host, ':');
     if (colon) {
@@ -38,11 +39,18 @@ int hl_tracker_register(const char *tracker_addr,
 
     /* Resolve host */
     struct hostent *he = gethostbyname(host);
-    if (!he) return -1;
+    if (!he) {
+        fprintf(stderr, "[TRACKER] DNS resolution failed for '%s'\n", host);
+        return -1;
+    }
 
     /* Create UDP socket */
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) return -1;
+    if (fd < 0) {
+        fprintf(stderr, "[TRACKER] Failed to create UDP socket for '%s:%d'\n",
+                host, port);
+        return -1;
+    }
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -102,11 +110,17 @@ int hl_tracker_register(const char *tracker_addr,
                           (struct sockaddr *)&addr, sizeof(addr));
     close(fd);
 
+    if (sent <= 0) {
+        fprintf(stderr, "[TRACKER] %s:%d -> send failed (%zd/%zu bytes)\n",
+                host, port, sent, pos);
+        return -1;
+    }
+
     fprintf(stderr, "[TRACKER] %s:%d -> sent %zd/%zu bytes (name=\"%s\" port=%d users=%d)\n",
             host, port, sent, pos, name, server_port, user_count);
     fflush(stderr);
 
-    return (sent > 0) ? 0 : -1;
+    return 0;
 }
 
 int hl_tracker_register_all(const char trackers[][256], int tracker_count,
@@ -117,10 +131,12 @@ int hl_tracker_register_all(const char trackers[][256], int tracker_count,
                             const char *description)
 {
     int i;
+    int success_count = 0;
     for (i = 0; i < tracker_count; i++) {
         /* Parse "host:port" or "host:port:password" */
         char entry[256];
         strncpy(entry, trackers[i], sizeof(entry) - 1);
+        entry[sizeof(entry) - 1] = '\0';
 
         char *password = "";
         /* Find third colon for password */
@@ -133,8 +149,10 @@ int hl_tracker_register_all(const char trackers[][256], int tracker_count,
             }
         }
 
-        hl_tracker_register(entry, server_port, user_count,
-                           pass_id, name, description, password);
+        if (hl_tracker_register(entry, server_port, user_count,
+                               pass_id, name, description, password) == 0) {
+            success_count++;
+        }
     }
-    return 0;
+    return success_count;
 }
