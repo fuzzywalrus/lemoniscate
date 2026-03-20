@@ -1,6 +1,43 @@
 - (void)startServer:(id)sender
 {
     (void)sender;
+
+    /* Pre-flight validation with clear error messages */
+    if (![_processManager hasBinary]) {
+        NSRunAlertPanel(@"Cannot Start Server",
+            @"The server binary was not found inside the application bundle. "
+            @"Please reinstall Lemoniscate.",
+            @"OK", nil, nil);
+        return;
+    }
+
+    if (_serverPort < 1 || _serverPort > 65535) {
+        NSRunAlertPanel(@"Invalid Port",
+            @"The Hotline port must be between 1 and 65535. "
+            @"The default is 5500.",
+            @"OK", nil, nil);
+        return;
+    }
+
+    NSString *fileRoot = _fileRootField ? [_fileRootField stringValue] : @"";
+    if ([fileRoot length] == 0) {
+        NSRunAlertPanel(@"No File Root Set",
+            @"Please set a File Root directory in the server settings. "
+            @"This is the folder that will be shared with connected users.",
+            @"OK", nil, nil);
+        return;
+    }
+
+    BOOL isDir = NO;
+    if (![[NSFileManager defaultManager] fileExistsAtPath:fileRoot isDirectory:&isDir] || !isDir) {
+        NSRunAlertPanel(@"File Root Not Found",
+            [NSString stringWithFormat:
+                @"The File Root directory does not exist:\n\n%@\n\n"
+                @"Please create it or choose a different folder.", fileRoot],
+            @"OK", nil, nil);
+        return;
+    }
+
     [self saveSettings:nil];
     [self ensureConfigScaffolding];
     [self writeConfigToDisk];

@@ -99,13 +99,22 @@ NSString * const PMLogLineReceivedNotification = @"PMLogLineReceived";
     if (_task != nil) return;
 
     if (![self hasBinary]) {
-        [self setError:@"Server binary not found"];
+        [self setError:@"Server binary not found in application bundle. "
+                       @"Please reinstall Lemoniscate."];
         return;
     }
 
     /* Validate port */
     if (port < 1 || port > 65535) {
-        [self setError:@"Port must be between 1 and 65535"];
+        [self setError:@"Port must be between 1 and 65535. The default is 5500."];
+        return;
+    }
+
+    /* Check config directory exists */
+    BOOL isDir = NO;
+    if (![[NSFileManager defaultManager] fileExistsAtPath:configDir isDirectory:&isDir] || !isDir) {
+        [self setError:[NSString stringWithFormat:
+            @"Configuration directory not found: %@", configDir]];
         return;
     }
 
@@ -276,8 +285,27 @@ NSString * const PMLogLineReceivedNotification = @"PMLogLineReceived";
     if (exitStatus == 0 || exitStatus == SIGTERM || exitStatus == SIGINT) {
         [self setStatus:ServerStatusStopped];
     } else {
-        [self setError:[NSString stringWithFormat:
-            @"Server exited with code %d", exitStatus]];
+        NSString *detail;
+        switch (exitStatus) {
+            case 1:
+                detail = @"Server failed to start. Check that the port is not "
+                         @"already in use and the configuration is valid.";
+                break;
+            case 11: /* SIGSEGV */
+                detail = @"Server crashed (segmentation fault). "
+                         @"Please report this issue.";
+                break;
+            case 6: /* SIGABRT */
+                detail = @"Server aborted unexpectedly. "
+                         @"Check the log for details.";
+                break;
+            default:
+                detail = [NSString stringWithFormat:
+                    @"Server exited unexpectedly (code %d). "
+                    @"Check the log tab for details.", exitStatus];
+                break;
+        }
+        [self setError:detail];
     }
 }
 
