@@ -13,6 +13,7 @@
 #include "hotline/time_conv.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <time.h>
 
 /* Wire format constants */
@@ -45,6 +46,188 @@ void mobius_threaded_news_free(mobius_threaded_news_t *tn)
     if (!tn) return;
     pthread_mutex_destroy(&tn->mu);
     free(tn);
+}
+
+/* Escape YAML special chars in a string value */
+static void yaml_write_escaped(FILE *f, const char *s, size_t len)
+{
+    size_t i;
+    fputc('"', f);
+    for (i = 0; i < len; i++) {
+        if (s[i] == '"') fputs("\\\"", f);
+        else if (s[i] == '\n') fputs("\\n", f);
+        else if (s[i] == '\\') fputs("\\\\", f);
+        else fputc(s[i], f);
+    }
+    fputc('"', f);
+}
+
+int tn_save(mobius_threaded_news_t *tn)
+{
+    if (!tn || tn->file_path[0] == '\0') return -1;
+
+    pthread_mutex_lock(&tn->mu);
+
+    FILE *f = fopen(tn->file_path, "w");
+    if (!f) { pthread_mutex_unlock(&tn->mu); return -1; }
+
+    if (tn->category_count == 0) {
+        fprintf(f, "Categories: {}\n");
+        fclose(f);
+        pthread_mutex_unlock(&tn->mu);
+        return 0;
+    }
+
+    fprintf(f, "Categories:\n");
+    int i;
+    for (i = 0; i < tn->category_count; i++) {
+        tn_category_t *cat = &tn->categories[i];
+        fprintf(f, "  ");
+        yaml_write_escaped(f, cat->name, strlen(cat->name));
+        fprintf(f, ":\n");
+        fprintf(f, "    Name: \"%s\"\n", cat->name);
+        fprintf(f, "    Type: %s\n",
+                (cat->type[1] == 3) ? "category" : "bundle");
+
+        int has_articles = 0;
+        int j;
+        for (j = 0; j < cat->article_count; j++) {
+            if (cat->articles[j].active) { has_articles = 1; break; }
+        }
+
+        if (!has_articles) {
+            fprintf(f, "    Articles: {}\n");
+        } else {
+            fprintf(f, "    Articles:\n");
+            for (j = 0; j < cat->article_count; j++) {
+                tn_article_t *art = &cat->articles[j];
+                if (!art->active) continue;
+                fprintf(f, "      \"%u\":\n", art->id);
+                fprintf(f, "        Title: ");
+                yaml_write_escaped(f, art->title, strlen(art->title));
+                fprintf(f, "\n");
+                fprintf(f, "        Poster: ");
+                yaml_write_escaped(f, art->poster, strlen(art->poster));
+                fprintf(f, "\n");
+                fprintf(f, "        Body: ");
+                yaml_write_escaped(f, art->data, art->data_len);
+                fprintf(f, "\n");
+                fprintf(f, "        ParentID: %u\n", art->parent_id);
+            }
+        }
+    }
+
+    fclose(f);
+    pthread_mutex_unlock(&tn->mu);
+    return 0;
+}
+
+int tn_load(mobius_threaded_news_t *tn)
+{
+    if (!tn || tn->file_path[0] == '\0') return -1;
+
+    FILE *f = fopen(tn->file_path, "r");
+    if (!f) return -1;
+
+    /* Read entire file */
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (fsize <= 0 || fsize > 1048576) { fclose(f); return -1; }
+
+    char *buf = (char *)malloc((size_t)fsize + 1);
+    if (!buf) { fclose(f); return -1; }
+    fread(buf, 1, (size_t)fsize, f);
+    buf[fsize] = '\0';
+    fclose(f);
+
+    /* Skip if empty */
+    if (strstr(buf, "Categories: {}") || fsize < 20) {
+        free(buf);
+        return 0;
+    }
+
+    /* Simple line-by-line YAML parser matching our save format */
+    pthread_mutex_lock(&tn->mu);
+    tn->category_count = 0; /* Reset — will rebuild from file */
+
+    tn_category_t *cur_cat = NULL;
+    tn_article_t *cur_art = NULL;
+
+    char *line = strtok(buf, "\n");
+    while (line) {
+        int indent = 0;
+        while (line[indent] == ' ') indent++;
+        char *trimmed = line + indent;
+
+        if (indent == 2 && trimmed[0] == '"') {
+            /* Category key — just a marker, Name is on next line */
+            if (tn->category_count < TN_MAX_CATEGORIES) {
+                cur_cat = &tn->categories[tn->category_count];
+                memset(cur_cat, 0, sizeof(*cur_cat));
+                memcpy(cur_cat->type, "\x00\x03", 2); /* default to category */
+                cur_cat->next_article_id = 1;
+                tn->category_count++;
+                cur_art = NULL;
+            }
+        } else if (indent == 4 && cur_cat) {
+            if (strncmp(trimmed, "Name: ", 6) == 0) {
+                char *val = trimmed + 6;
+                if (val[0] == '"') val++;
+                size_t vlen = strlen(val);
+                if (vlen > 0 && val[vlen-1] == '"') vlen--;
+                if (vlen >= TN_MAX_NAME_LEN) vlen = TN_MAX_NAME_LEN - 1;
+                memcpy(cur_cat->name, val, vlen);
+                cur_cat->name[vlen] = '\0';
+            } else if (strncmp(trimmed, "Type: ", 6) == 0) {
+                if (strstr(trimmed, "bundle"))
+                    memcpy(cur_cat->type, "\x00\x02", 2);
+            }
+        } else if (indent == 6 && cur_cat && trimmed[0] == '"') {
+            /* Article ID */
+            if (cur_cat->article_count < TN_MAX_ARTICLES) {
+                cur_art = &cur_cat->articles[cur_cat->article_count];
+                memset(cur_art, 0, sizeof(*cur_art));
+                cur_art->active = 1;
+                cur_art->id = (uint32_t)atoi(trimmed + 1);
+                if (cur_art->id >= cur_cat->next_article_id)
+                    cur_cat->next_article_id = cur_art->id + 1;
+                cur_cat->article_count++;
+            }
+        } else if (indent == 8 && cur_art) {
+            if (strncmp(trimmed, "Title: ", 7) == 0) {
+                char *val = trimmed + 7;
+                if (val[0] == '"') val++;
+                size_t vlen = strlen(val);
+                if (vlen > 0 && val[vlen-1] == '"') vlen--;
+                if (vlen >= TN_MAX_TITLE_LEN) vlen = TN_MAX_TITLE_LEN - 1;
+                memcpy(cur_art->title, val, vlen);
+            } else if (strncmp(trimmed, "Poster: ", 8) == 0) {
+                char *val = trimmed + 8;
+                if (val[0] == '"') val++;
+                size_t vlen = strlen(val);
+                if (vlen > 0 && val[vlen-1] == '"') vlen--;
+                if (vlen >= TN_MAX_POSTER_LEN) vlen = TN_MAX_POSTER_LEN - 1;
+                memcpy(cur_art->poster, val, vlen);
+            } else if (strncmp(trimmed, "Body: ", 6) == 0) {
+                char *val = trimmed + 6;
+                if (val[0] == '"') val++;
+                size_t vlen = strlen(val);
+                if (vlen > 0 && val[vlen-1] == '"') vlen--;
+                if (vlen > TN_MAX_DATA_LEN) vlen = TN_MAX_DATA_LEN;
+                memcpy(cur_art->data, val, vlen);
+                cur_art->data_len = (uint16_t)vlen;
+            } else if (strncmp(trimmed, "ParentID: ", 10) == 0) {
+                cur_art->parent_id = (uint32_t)atoi(trimmed + 10);
+            }
+        }
+
+        line = strtok(NULL, "\n");
+    }
+
+    pthread_mutex_unlock(&tn->mu);
+    free(buf);
+    return 0;
 }
 
 /* Find a category by name. Returns NULL if not found. */
@@ -311,6 +494,7 @@ int tn_post_article(mobius_threaded_news_t *tn,
     cat->article_count++;
 
     pthread_mutex_unlock(&tn->mu);
+    tn_save(tn);
     return 0;
 }
 
@@ -340,6 +524,7 @@ int tn_create_category(mobius_threaded_news_t *tn,
     tn->category_count++;
 
     pthread_mutex_unlock(&tn->mu);
+    tn_save(tn);
     return 0;
 }
 
@@ -358,6 +543,7 @@ int tn_delete_news_item(mobius_threaded_news_t *tn, const char *name)
                 tn->categories[j] = tn->categories[j + 1];
             tn->category_count--;
             pthread_mutex_unlock(&tn->mu);
+            tn_save(tn);
             return 0;
         }
     }
@@ -384,6 +570,7 @@ int tn_delete_article(mobius_threaded_news_t *tn,
         if (cat->articles[i].id == article_id) {
             cat->articles[i].active = 0;
             pthread_mutex_unlock(&tn->mu);
+            tn_save(tn);
             return 0;
         }
     }

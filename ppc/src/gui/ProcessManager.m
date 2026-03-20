@@ -123,10 +123,12 @@ NSString * const PMLogLineReceivedNotification = @"PMLogLineReceived";
     /* Set up NSTask */
     NSTask *task = [[NSTask alloc] init];
     [task setLaunchPath:_binaryPath];
+    NSString *logFile = [configDir stringByAppendingPathComponent:@"server.log"];
     [task setArguments:[NSArray arrayWithObjects:
         @"--config", configDir,
         @"--bind", [NSString stringWithFormat:@"%d", port],
         @"--log-level", @"info",
+        @"--log-file", logFile,
         nil]];
 
     /* Set up pipes for log capture */
