@@ -8,7 +8,9 @@ A native C and Objective-C implementation of the Hotline protocol for Mac OS X 1
 
 ## What is this?
 
-This is a from-scratch (well, Agentic) rewrite of the Mobius Hotline server and client in C and Objective-C, targeting the PowerPC Macs that Hotline was originally built for. The goal is a native, lightweight binary that runs on PPC Macs (10.4 and 10.5).
+This is a from-scratch (well, Agentic) rewrite of the Mobius Hotline server and client in C and Objective-C, targeting the PowerPC Macs that Hotline was originally built for. The goal is a native, lightweight binary that runs on PPC Macs (10.4 and 10.5). 
+
+See the releases for the latest version!
 
 ## Why not just fork Mobius?
 
@@ -31,7 +33,7 @@ The codebase is split into two layers that mirror the Go package structure:
 - `src/gui/` -- Native AppKit admin GUI (`lemoniscate-gui`) that launches and supervises `lemoniscate`.
 - `docs/` -- Operator and implementation documentation.
 
-## Quickstart (CLI server)
+## Quickstart to rolling your own (CLI server)
 
 ### 1) Build
 
@@ -87,17 +89,95 @@ Important caveats:
 
 ## Feature status
 
-- Implemented:
-  - Core Hotline handshake/login, chat, users/accounts, flat message board, and base server lifecycle.
-  - Config loading from YAML and account/ban/agreement/message board file loading.
-  - Native AppKit GUI for start/stop/restart and runtime logs.
-- Partial:
-  - `SIGHUP` reload path exists but is not yet integrated into the active event loop.
-  - Threaded news handlers exist with access checks but currently return empty responses.
-  - File transfer-related handlers are present, but transfer-port data path is still stubbed.
-  - GUI settings persistence is currently focused on UI defaults/process launch, not full `config.yaml` authoring.
-- Planned:
-  - REST API parity with Mobius `/api/v1/` style endpoints.
+### Chat & Messaging
+
+- Public chat room with all connected users
+- Private chat rooms — create, invite users, set topics
+- Instant messages (private messages between users)
+- Auto-reply when a user is away or idle
+- /me action messages
+- Admin broadcast messages to all users
+
+### User Management
+
+- User accounts with login and password (salted SHA-1 hashed)
+- Guest access (no login required)
+- 41 individual permission bits per account
+- Admin account editor — create, modify, rename, and delete accounts
+- Batch account editing (v1.5+ multi-user editor)
+- Kick/disconnect users (with optional message)
+- Protected accounts that can't be disconnected
+
+### File Sharing
+
+- Browse server files and folders
+- Download files with progress tracking
+- Upload files to the server
+- Download entire folders (recursive)
+- Upload entire folders (recursive)
+- Resume interrupted downloads
+- File info — type, creator, size, dates, comments
+- Rename, move, and delete files and folders
+- Create new folders
+- Create file aliases (symlinks)
+- 70+ file type mappings for correct Mac type/creator codes
+
+### News & Message Board
+
+- Flat message board (classic Hotline "News")
+- Threaded news with categories and articles
+- Create and delete news categories
+- Post, read, and delete articles with threading
+- News data persists across server restarts
+
+### Server Administration
+
+- GUI admin application (Cocoa, native Tiger look)
+- Setup wizard for first-time configuration
+- macOS plist configuration (native format)
+- YAML fallback for compatibility
+- Server agreement displayed on login
+- Server banner image
+- Default banner bundled with the app
+- Start, stop, and restart from the GUI
+- Live server logs in the admin interface
+- Log file saved to Application Support
+
+### Networking
+
+- Hotline protocol on port 5500 (configurable)
+- File transfers on port 5501
+- Bonjour/mDNS for local network discovery
+- Tracker registration (UDP, periodic with live user count)
+- Idle/away detection (5 minutes, auto-broadcasts status)
+- Per-IP rate limiting
+- Ban list (IP addresses and usernames)
+
+## Access Control
+
+Granular per-account permissions including:
+
+- Download, upload, delete, rename, and move files
+- Create folders and file aliases
+- Read and send chat
+- Create and manage private chat rooms
+- Read, post, and delete news articles
+- Create and delete news categories
+- View and modify user accounts
+- Disconnect other users
+- Send broadcast messages
+- Upload location restrictions (Uploads/Drop Box only)
+- Drop box folder visibility control
+
+### Compatibility
+
+- Runs on Mac OS X 10.4 Tiger (PowerPC)
+- Works with Hotline Navigator, the mierau Swift client, and classic Hotline clients
+- FILP file transfer format with INFO and DATA forks
+- Hotline 1.8+ protocol (version 190)
+- CLI server binary for headless operation
+- Mobius-compatible account and news file formats
+
 
 ## Building
 
