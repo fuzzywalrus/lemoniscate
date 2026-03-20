@@ -88,7 +88,8 @@ MOBIUS_SRCS = \
 	src/mobius/ban_file.c \
 	src/mobius/threaded_news_yaml.c \
 	src/mobius/transaction_handlers.c \
-	src/mobius/logger_impl.c
+	src/mobius/logger_impl.c \
+	src/mobius/config_plist.c
 
 MOBIUS_OBJS = $(MOBIUS_SRCS:.c=.o)
 
@@ -191,6 +192,7 @@ app: lemoniscate $(SERVER_COMPAT_BIN) gui
 	cp resources/Info.plist $(APP_CONTENTS)/Info.plist
 	@test -f resources/Lemoniscate.icns || (echo "ERROR: missing resources/Lemoniscate.icns"; exit 1)
 	cp resources/Lemoniscate.icns $(APP_RESOURCES)/Lemoniscate.icns
+	@test -f resources/default-banner.jpg && cp resources/default-banner.jpg $(APP_RESOURCES)/default-banner.jpg || true
 	@echo "Built $(APP_BUNDLE)"
 	@echo "  Server binary: $(APP_MACOS)/lemoniscate-server"
 	@echo "  Compat binary: $(APP_MACOS)/$(SERVER_COMPAT_BIN)"

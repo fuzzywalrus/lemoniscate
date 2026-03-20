@@ -242,7 +242,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     /* ===== General ===== */
     {
-        float boxH = 7 * ROW_HEIGHT + 20;
+        float boxH = 7 * ROW_HEIGHT + 34;
         NSBox *box = makeSection(@"General", SECTION_MARGIN, y,
                                   secWidth, boxH);
         NSView *c = [box contentView];
@@ -307,7 +307,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     /* ===== Network ===== */
     {
-        float boxH = 2 * ROW_HEIGHT + 16;
+        float boxH = 2 * ROW_HEIGHT + 30;
         NSBox *box = makeSection(@"Network", SECTION_MARGIN, y,
                                   secWidth, boxH);
         NSView *c = [box contentView];
@@ -331,11 +331,16 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     /* ===== Tracker Registration ===== */
     {
-        float boxH = 154;
+        float boxH = 170;
         NSBox *box = makeSection(@"Tracker Registration", SECTION_MARGIN, y,
                                   secWidth, boxH);
         NSView *c = [box contentView];
         float iy = 4;
+        float listX = LABEL_WIDTH - 4;
+        float listW = fieldWidth - ROW_RIGHT_PAD - 12;
+        float entryW = listW - 158;
+        if (entryW < 180) entryW = 180;
+        float btnY = iy + 84;
 
         _trackerCheckbox = [[NSButton alloc]
             initWithFrame:NSZeroRect];
@@ -345,15 +350,14 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         iy = addCheckbox(c, _trackerCheckbox, iy);
 
         NSScrollView *tsv = [[NSScrollView alloc]
-            initWithFrame:NSMakeRect(LABEL_WIDTH - 4, iy + 2,
-                                     fieldWidth - ROW_RIGHT_PAD, 78)];
+            initWithFrame:NSMakeRect(listX, iy + 2, listW, 78)];
         [tsv setHasVerticalScroller:YES];
         [tsv setBorderType:NSBezelBorder];
         _trackerTableView = [[NSTableView alloc]
-            initWithFrame:NSMakeRect(0, 0, fieldWidth - ROW_RIGHT_PAD, 78)];
+            initWithFrame:NSMakeRect(0, 0, listW, 78)];
         NSTableColumn *tcol = [[NSTableColumn alloc] initWithIdentifier:@"tracker"];
         [[tcol headerCell] setStringValue:@"Trackers"];
-        [tcol setWidth:fieldWidth - ROW_RIGHT_PAD - 20];
+        [tcol setWidth:listW - 20];
         [_trackerTableView addTableColumn:tcol];
         [tcol release];
         [_trackerTableView setDataSource:(id)self];
@@ -363,16 +367,16 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [c addSubview:tsv];
         [tsv release];
 
-        _newTrackerField = makeEditField(248);
-        [_newTrackerField setFrame:NSMakeRect(LABEL_WIDTH - 4, iy + 84, 248, 22)];
+        _newTrackerField = makeEditField(entryW);
+        [_newTrackerField setFrame:NSMakeRect(listX, iy + 84, entryW, 22)];
         [c addSubview:_newTrackerField];
 
         _addTrackerButton = makeButton(@"Add", self, @selector(addTracker:));
-        [_addTrackerButton setFrame:NSMakeRect(LABEL_WIDTH + 248, iy + 84, 50, 22)];
+        [_addTrackerButton setFrame:NSMakeRect(listX + entryW + 8, btnY, 62, 24)];
         [c addSubview:_addTrackerButton];
 
         _removeTrackerButton = makeButton(@"Remove", self, @selector(removeTracker:));
-        [_removeTrackerButton setFrame:NSMakeRect(LABEL_WIDTH + 302, iy + 84, 70, 22)];
+        [_removeTrackerButton setFrame:NSMakeRect(listX + entryW + 76, btnY, 82, 24)];
         [_removeTrackerButton setEnabled:NO];
         [c addSubview:_removeTrackerButton];
 
@@ -383,11 +387,16 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     /* ===== Files ===== */
     {
-        float boxH = 154;
+        float boxH = 170;
         NSBox *box = makeSection(@"Files", SECTION_MARGIN, y,
                                   secWidth, boxH);
         NSView *c = [box contentView];
         float iy = 4;
+        float listX = LABEL_WIDTH - 4;
+        float listW = fieldWidth - ROW_RIGHT_PAD - 12;
+        float entryW = listW - 158;
+        if (entryW < 180) entryW = 180;
+        float btnY = iy + 84;
 
         _preserveForkCheckbox = [[NSButton alloc]
             initWithFrame:NSZeroRect];
@@ -397,15 +406,14 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         iy = addCheckbox(c, _preserveForkCheckbox, iy);
 
         NSScrollView *isv = [[NSScrollView alloc]
-            initWithFrame:NSMakeRect(LABEL_WIDTH - 4, iy + 2,
-                                     fieldWidth - ROW_RIGHT_PAD, 78)];
+            initWithFrame:NSMakeRect(listX, iy + 2, listW, 78)];
         [isv setHasVerticalScroller:YES];
         [isv setBorderType:NSBezelBorder];
         _ignoreFilesTableView = [[NSTableView alloc]
-            initWithFrame:NSMakeRect(0, 0, fieldWidth - ROW_RIGHT_PAD, 78)];
+            initWithFrame:NSMakeRect(0, 0, listW, 78)];
         NSTableColumn *icol = [[NSTableColumn alloc] initWithIdentifier:@"ignore_pattern"];
         [[icol headerCell] setStringValue:@"Ignore Patterns"];
-        [icol setWidth:fieldWidth - ROW_RIGHT_PAD - 20];
+        [icol setWidth:listW - 20];
         [_ignoreFilesTableView addTableColumn:icol];
         [icol release];
         [_ignoreFilesTableView setDataSource:(id)self];
@@ -415,16 +423,16 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [c addSubview:isv];
         [isv release];
 
-        _newIgnoreFileField = makeEditField(248);
-        [_newIgnoreFileField setFrame:NSMakeRect(LABEL_WIDTH - 4, iy + 84, 248, 22)];
+        _newIgnoreFileField = makeEditField(entryW);
+        [_newIgnoreFileField setFrame:NSMakeRect(listX, iy + 84, entryW, 22)];
         [c addSubview:_newIgnoreFileField];
 
         _addIgnoreFileButton = makeButton(@"Add", self, @selector(addIgnoreFilePattern:));
-        [_addIgnoreFileButton setFrame:NSMakeRect(LABEL_WIDTH + 248, iy + 84, 50, 22)];
+        [_addIgnoreFileButton setFrame:NSMakeRect(listX + entryW + 8, btnY, 62, 24)];
         [c addSubview:_addIgnoreFileButton];
 
         _removeIgnoreFileButton = makeButton(@"Remove", self, @selector(removeIgnoreFilePattern:));
-        [_removeIgnoreFileButton setFrame:NSMakeRect(LABEL_WIDTH + 302, iy + 84, 70, 22)];
+        [_removeIgnoreFileButton setFrame:NSMakeRect(listX + entryW + 76, btnY, 82, 24)];
         [_removeIgnoreFileButton setEnabled:NO];
         [c addSubview:_removeIgnoreFileButton];
 
@@ -435,7 +443,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     /* ===== Limits ===== */
     {
-        float boxH = 2 * ROW_HEIGHT + 20;
+        float boxH = 2 * ROW_HEIGHT + 34;
         NSBox *box = makeSection(@"News", SECTION_MARGIN, y,
                                   secWidth, boxH);
         NSView *c = [box contentView];
@@ -469,7 +477,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     /* ===== Limits ===== */
     {
-        float boxH = 3 * ROW_HEIGHT + 24;
+        float boxH = 3 * ROW_HEIGHT + 42;
         NSBox *box = makeSection(@"Limits", SECTION_MARGIN, y,
                                   secWidth, boxH);
         NSView *c = [box contentView];
@@ -1485,4 +1493,3 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 }
 
 /* ===== Actions ===== */
-
