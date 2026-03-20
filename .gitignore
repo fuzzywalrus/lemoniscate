@@ -47,6 +47,7 @@ core.*
 
 # Claude / local AI workspace artifacts
 .claude/
+.claude/settings.local.json
 
 # Local per-user config (repo should not keep user-specific state)
 config/Users/
@@ -58,3 +59,4 @@ test_client
 lemoniscate
 lemoniscate-gui
 Lemoniscate.app/
+
