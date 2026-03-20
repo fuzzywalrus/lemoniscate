@@ -74,6 +74,34 @@
     }
 }
 
+- (void)chooseWizardFileRoot:(id)sender
+{
+    (void)sender;
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    [panel setCanChooseFiles:NO];
+    [panel setCanChooseDirectories:YES];
+    [panel setAllowsMultipleSelection:NO];
+    [panel setTitle:@"Select files directory"];
+    if ([panel runModal] == NSOKButton) {
+        [_wizardFileRootField setStringValue:
+            [[panel filenames] objectAtIndex:0]];
+    }
+}
+
+- (void)chooseWizardBannerFile:(id)sender
+{
+    (void)sender;
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    [panel setCanChooseFiles:YES];
+    [panel setCanChooseDirectories:NO];
+    [panel setAllowsMultipleSelection:NO];
+    [panel setTitle:@"Select banner image (JPG or GIF)"];
+    if ([panel runModal] == NSOKButton) {
+        [_wizardBannerField setStringValue:
+            [[panel filenames] objectAtIndex:0]];
+    }
+}
+
 - (void)editAgreementFile:(id)sender
 {
     (void)sender;
@@ -316,16 +344,26 @@
         [rootLabel setFrame:NSMakeRect(10, 224, 110, 20)];
         [_wizardStepContainer addSubview:rootLabel];
         [rootLabel release];
-        [_wizardFileRootField setFrame:NSMakeRect(126, 222, 436, 22)];
+        [_wizardFileRootField setFrame:NSMakeRect(126, 222, 348, 22)];
         [_wizardStepContainer addSubview:_wizardFileRootField];
+        NSButton *rootBrowse = makeButton(@"Browse...", self,
+                                          @selector(chooseWizardFileRoot:));
+        [rootBrowse setFrame:NSMakeRect(482, 220, 80, 24)];
+        [_wizardStepContainer addSubview:rootBrowse];
+        [rootBrowse release];
 
         NSTextField *bannerLabel = makeLabel(@"Banner File:", 11.0, NO);
         [bannerLabel setAlignment:NSRightTextAlignment];
         [bannerLabel setFrame:NSMakeRect(10, 190, 110, 20)];
         [_wizardStepContainer addSubview:bannerLabel];
         [bannerLabel release];
-        [_wizardBannerField setFrame:NSMakeRect(126, 188, 436, 22)];
+        [_wizardBannerField setFrame:NSMakeRect(126, 188, 348, 22)];
         [_wizardStepContainer addSubview:_wizardBannerField];
+        NSButton *bannerBrowse = makeButton(@"Browse...", self,
+                                            @selector(chooseWizardBannerFile:));
+        [bannerBrowse setFrame:NSMakeRect(482, 186, 80, 24)];
+        [_wizardStepContainer addSubview:bannerBrowse];
+        [bannerBrowse release];
 
         [_wizardTrackerCheckbox setFrame:NSMakeRect(126, 156, 260, 18)];
         [_wizardStepContainer addSubview:_wizardTrackerCheckbox];
@@ -699,4 +737,3 @@
         [_processManager reloadConfiguration];
     }
 }
-
