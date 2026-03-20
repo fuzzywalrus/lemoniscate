@@ -115,10 +115,8 @@
     [_splitView setDividerStyle:NSSplitViewDividerStyleThin];
     [_splitView setDelegate:self];
 
-    [_splitView addSubview:[self createSettingsPanel]];
-    [_splitView addSubview:[self createRightPanel]];
-    [_splitView setPosition:(float)LEFT_PANEL_WIDTH ofDividerAtIndex:0];
-    [self splitView:_splitView resizeSubviewsWithOldSize:NSZeroSize];
+    NSView *leftPanel = [self createSettingsPanel]; NSView *rightPanel = [self createRightPanel]; NSRect svBounds = [_splitView bounds]; float divider = (float)LEFT_PANEL_WIDTH; [leftPanel setFrame:NSMakeRect(0, 0, divider, svBounds.size.height)]; [rightPanel setFrame:NSMakeRect(divider + 1, 0, svBounds.size.width - divider - 1, svBounds.size.height)]; [_splitView addSubview:leftPanel];
+    [_splitView addSubview:rightPanel];
 
     [[_mainWindow contentView] addSubview:_splitView];
     [_mainWindow center];
@@ -340,7 +338,6 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         float listW = fieldWidth - ROW_RIGHT_PAD - 12;
         float entryW = listW - 158;
         if (entryW < 180) entryW = 180;
-        float btnY = iy + 84;
 
         _trackerCheckbox = [[NSButton alloc]
             initWithFrame:NSZeroRect];
@@ -372,11 +369,11 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [c addSubview:_newTrackerField];
 
         _addTrackerButton = makeButton(@"Add", self, @selector(addTracker:));
-        [_addTrackerButton setFrame:NSMakeRect(listX + entryW + 8, btnY, 62, 24)];
+        [_addTrackerButton setFrame:NSMakeRect(listX + entryW + 8, iy + 84, 62, 24)];
         [c addSubview:_addTrackerButton];
 
         _removeTrackerButton = makeButton(@"Remove", self, @selector(removeTracker:));
-        [_removeTrackerButton setFrame:NSMakeRect(listX + entryW + 76, btnY, 82, 24)];
+        [_removeTrackerButton setFrame:NSMakeRect(listX + entryW + 76, iy + 84, 82, 24)];
         [_removeTrackerButton setEnabled:NO];
         [c addSubview:_removeTrackerButton];
 
@@ -396,7 +393,6 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         float listW = fieldWidth - ROW_RIGHT_PAD - 12;
         float entryW = listW - 158;
         if (entryW < 180) entryW = 180;
-        float btnY = iy + 84;
 
         _preserveForkCheckbox = [[NSButton alloc]
             initWithFrame:NSZeroRect];
@@ -428,11 +424,11 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [c addSubview:_newIgnoreFileField];
 
         _addIgnoreFileButton = makeButton(@"Add", self, @selector(addIgnoreFilePattern:));
-        [_addIgnoreFileButton setFrame:NSMakeRect(listX + entryW + 8, btnY, 62, 24)];
+        [_addIgnoreFileButton setFrame:NSMakeRect(listX + entryW + 8, iy + 84, 62, 24)];
         [c addSubview:_addIgnoreFileButton];
 
         _removeIgnoreFileButton = makeButton(@"Remove", self, @selector(removeIgnoreFilePattern:));
-        [_removeIgnoreFileButton setFrame:NSMakeRect(listX + entryW + 76, btnY, 82, 24)];
+        [_removeIgnoreFileButton setFrame:NSMakeRect(listX + entryW + 76, iy + 84, 82, 24)];
         [_removeIgnoreFileButton setEnabled:NO];
         [c addSubview:_removeIgnoreFileButton];
 
@@ -601,6 +597,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         initWithFrame:NSMakeRect(0, 28, 650, 622)];
     [_tabView setAutoresizesSubviews:YES];
     [_tabView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [_tabView setDelegate:(id)self];
 
     NSTabViewItem *tab;
 
@@ -1223,10 +1220,11 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_onlineLogTextView setFont:[NSFont fontWithName:@"Monaco" size:10.0]];
     [_onlineLogScrollView setDocumentView:_onlineLogTextView];
 
+    [usersSV setFrame:NSMakeRect(0, 190, 622, 364)];
+    [_onlineLogScrollView setFrame:NSMakeRect(0, 0, 622, 186)];
     [_onlineSplitView addSubview:usersSV];
     [_onlineSplitView addSubview:_onlineLogScrollView];
     [usersSV release];
-    [_onlineSplitView setPosition:364 ofDividerAtIndex:0];
     [view addSubview:_onlineSplitView];
 
     if (!_onlineRefreshTimer) {
@@ -1379,9 +1377,15 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     _saveMessageBoardButton = makeButton(@"Save Message Board", self,
                                          @selector(saveMessageBoard:));
-    [_saveMessageBoardButton setFrame:NSMakeRect(488, 5, 136, 24)];
+    [_saveMessageBoardButton setFrame:NSMakeRect(460, 5, 164, 24)];
     [_saveMessageBoardButton setAutoresizingMask:(NSViewMinXMargin | NSViewMaxYMargin)];
     [_newsMessageBoardView addSubview:_saveMessageBoardButton];
+
+    /* Refresh button */
+    NSButton *refreshBoardBtn = makeButton(@"Refresh", self, @selector(loadMessageBoardText));
+    [refreshBoardBtn setFrame:NSMakeRect(388, 5, 68, 24)];
+    [refreshBoardBtn setAutoresizingMask:(NSViewMinXMargin | NSViewMaxYMargin)];
+    [_newsMessageBoardView addSubview:refreshBoardBtn];
 
     _newsThreadedView = [[NSView alloc]
         initWithFrame:NSMakeRect(0, 0, 630, 560)];

@@ -147,6 +147,17 @@
     }
     [_accountPermissionCheckboxes removeAllObjects];
 
+    float contentW = 366.0f;
+    if (_accountPermissionsScrollView) {
+        NSSize cs = [_accountPermissionsScrollView contentSize];
+        if (cs.width > 120.0f) contentW = cs.width;
+    }
+    float leftPad = 8.0f;
+    float rightPad = 8.0f;
+    float colGap = 8.0f;
+    float colWidth = (contentW - leftPad - rightPad - colGap) / 2.0f;
+    if (colWidth < 148.0f) colWidth = 148.0f;
+
     NSString *lastGroup = nil;
     float y = 6.0f;
     int col = 0;
@@ -163,7 +174,7 @@
             }
             if (lastGroup) y += 6.0f;
             NSTextField *groupLabel = makeLabel(group, 11.0, YES);
-            [groupLabel setFrame:NSMakeRect(8, y, 340, 16)];
+            [groupLabel setFrame:NSMakeRect(leftPad, y, contentW - leftPad - rightPad, 16)];
             [_accountPermissionsContentView addSubview:groupLabel];
             [groupLabel release];
             y += 18.0f;
@@ -171,7 +182,7 @@
         }
 
         NSButton *cb = [[NSButton alloc] initWithFrame:NSMakeRect(
-            8.0f + (float)col * 184.0f, y, 178.0f, 18.0f)];
+            leftPad + (float)col * (colWidth + colGap), y, colWidth, 18.0f)];
         [cb setButtonType:NSSwitchButton];
         [cb setTitle:label];
         [cb setFont:[NSFont systemFontOfSize:10.0]];
@@ -193,7 +204,7 @@
 
     float minH = 304.0f;
     if (y + 8.0f < minH) y = minH - 8.0f;
-    [_accountPermissionsContentView setFrame:NSMakeRect(0, 0, 366, y + 8.0f)];
+    [_accountPermissionsContentView setFrame:NSMakeRect(0, 0, contentW, y + 8.0f)];
 }
 
 - (void)syncPermissionCheckboxesFromAccess
@@ -356,4 +367,3 @@
 
     [yaml writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
-

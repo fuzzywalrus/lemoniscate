@@ -158,6 +158,18 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
     [self populateAccountEditorFromData:acct];
 }
 
+/* ===== Tab view delegate ===== */
+
+- (void)tabView:(NSTabView *)tv didSelectTabViewItem:(NSTabViewItem *)item
+{
+    (void)tv;
+    NSString *ident = [item identifier];
+    if ([ident isEqualToString:@"news"]) {
+        [self loadMessageBoardText];
+        [self refreshThreadedNews:nil];
+    }
+}
+
 /* ===== Notifications ===== */
 
 - (void)serverStatusChanged:(NSNotification *)note
