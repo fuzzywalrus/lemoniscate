@@ -1,12 +1,13 @@
 - (void)createMainMenu
 {
     NSMenu *mainMenu = [[NSMenu alloc] initWithTitle:@"MainMenu"];
+    NSMenuItem *mi;
 
-    /* App menu */
+    /* Application menu (first item — macOS auto-titles it with app name) */
     NSMenuItem *appItem = [[NSMenuItem alloc]
         initWithTitle:@"" action:nil keyEquivalent:@""];
-    NSMenu *appMenu = [[NSMenu alloc] initWithTitle:@"Lemoniscate"];
-    NSMenuItem *mi;
+    NSMenu *appMenu = [[NSMenu alloc] initWithTitle:@""];
+
     mi = [[NSMenuItem alloc] initWithTitle:@"About Lemoniscate"
         action:@selector(showAboutPanel:) keyEquivalent:@""];
     [mi setTarget:self];
@@ -20,36 +21,13 @@
     [mi release];
 
     [appMenu addItem:[NSMenuItem separatorItem]];
-
-    mi = [[NSMenuItem alloc] initWithTitle:@"Project Homepage"
-        action:@selector(openProjectHomepage:) keyEquivalent:@""];
-    [mi setTarget:self];
-    [appMenu addItem:mi];
-    [mi release];
-
-    mi = [[NSMenuItem alloc] initWithTitle:@"GUI Repository"
-        action:@selector(openGUIRepository:) keyEquivalent:@""];
-    [mi setTarget:self];
-    [appMenu addItem:mi];
-    [mi release];
-
-    mi = [[NSMenuItem alloc] initWithTitle:@"Server Repository"
-        action:@selector(openServerRepository:) keyEquivalent:@""];
-    [mi setTarget:self];
-    [appMenu addItem:mi];
-    [mi release];
-
-    mi = [[NSMenuItem alloc] initWithTitle:@"Download Latest Build"
-        action:@selector(openDownloadPage:) keyEquivalent:@""];
-    [mi setTarget:self];
-    [appMenu addItem:mi];
-    [mi release];
-
-    [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Quit Lemoniscate"
                        action:@selector(terminate:) keyEquivalent:@"q"];
+
     [appItem setSubmenu:appMenu];
     [mainMenu addItem:appItem];
+    /* setAppleMenu: merges our submenu into the bold app name menu on Tiger */
+    [NSApp setAppleMenu:appMenu];
     [appMenu release]; [appItem release];
 
     /* Server menu */
@@ -88,6 +66,33 @@
     [srvItem setSubmenu:srvMenu];
     [mainMenu addItem:srvItem];
     [srvMenu release]; [srvItem release];
+
+    /* Help menu */
+    NSMenuItem *helpItem = [[NSMenuItem alloc]
+        initWithTitle:@"" action:nil keyEquivalent:@""];
+    NSMenu *helpMenu = [[NSMenu alloc] initWithTitle:@"Help"];
+
+    mi = [[NSMenuItem alloc] initWithTitle:@"Lemoniscate Homepage"
+        action:@selector(openProjectHomepage:) keyEquivalent:@""];
+    [mi setTarget:self]; [helpMenu addItem:mi]; [mi release];
+
+    mi = [[NSMenuItem alloc] initWithTitle:@"Download Latest Build"
+        action:@selector(openDownloadPage:) keyEquivalent:@""];
+    [mi setTarget:self]; [helpMenu addItem:mi]; [mi release];
+
+    [helpMenu addItem:[NSMenuItem separatorItem]];
+
+    mi = [[NSMenuItem alloc] initWithTitle:@"GUI Source Code"
+        action:@selector(openGUIRepository:) keyEquivalent:@""];
+    [mi setTarget:self]; [helpMenu addItem:mi]; [mi release];
+
+    mi = [[NSMenuItem alloc] initWithTitle:@"Server Source Code"
+        action:@selector(openServerRepository:) keyEquivalent:@""];
+    [mi setTarget:self]; [helpMenu addItem:mi]; [mi release];
+
+    [helpItem setSubmenu:helpMenu];
+    [mainMenu addItem:helpItem];
+    [helpMenu release]; [helpItem release];
 
     [NSApp setMainMenu:mainMenu];
     [mainMenu release];
@@ -349,6 +354,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         NSScrollView *tsv = [[NSScrollView alloc]
             initWithFrame:NSMakeRect(listX, iy + 2, listW, 78)];
         [tsv setHasVerticalScroller:YES];
+        [tsv setAutohidesScrollers:YES];
         [tsv setBorderType:NSBezelBorder];
         _trackerTableView = [[NSTableView alloc]
             initWithFrame:NSMakeRect(0, 0, listW, 78)];
@@ -404,6 +410,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         NSScrollView *isv = [[NSScrollView alloc]
             initWithFrame:NSMakeRect(listX, iy + 2, listW, 78)];
         [isv setHasVerticalScroller:YES];
+        [isv setAutohidesScrollers:YES];
         [isv setBorderType:NSBezelBorder];
         _ignoreFilesTableView = [[NSTableView alloc]
             initWithFrame:NSMakeRect(0, 0, listW, 78)];
@@ -503,29 +510,36 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         y += boxH + 8;
     }
 
-    /* ===== Server Binary ===== */
+    /* ===== Monitoring ===== */
     {
-        float boxH = 38;
-        NSBox *box = makeSection(@"Server Binary", SECTION_MARGIN, y,
+        float boxH = ROW_HEIGHT + 32;
+        NSBox *box = makeSection(@"Monitoring", SECTION_MARGIN, y,
                                   secWidth, boxH);
         NSView *c = [box contentView];
+        float iy = 4;
 
-        NSString *binMsg;
-        NSColor *binColor;
-        if ([_processManager hasBinary]) {
-            binMsg = [NSString stringWithFormat:@"Found: %@",
-                [[_processManager binaryPath] lastPathComponent]];
-            binColor = [NSColor colorWithCalibratedRed:0.0
-                green:0.5 blue:0.0 alpha:1.0];
-        } else {
-            binMsg = @"Not found - place lemoniscate-server or mobius-hotline-server in bundle";
-            binColor = [NSColor redColor];
-        }
-        NSTextField *bl = makeLabel(binMsg, 10.0, NO);
-        [bl setTextColor:binColor];
-        [bl setFrame:NSMakeRect(6, 2, secWidth - 28, 14)];
-        [c addSubview:bl];
-        [bl release];
+        NSTextField *lbl = makeLabel(@"Polling Rate:", 12.0, NO);
+        [lbl setFrame:NSMakeRect(6, iy + 2, LABEL_WIDTH, 18)];
+        [c addSubview:lbl];
+        [lbl release];
+
+        _pollingRatePopup = [[NSPopUpButton alloc]
+            initWithFrame:NSMakeRect(FIELD_X, iy, 140, 22) pullsDown:NO];
+        [_pollingRatePopup addItemWithTitle:@"1 second"];
+        [_pollingRatePopup addItemWithTitle:@"5 seconds"];
+        [_pollingRatePopup addItemWithTitle:@"10 seconds"];
+        [_pollingRatePopup addItemWithTitle:@"30 seconds"];
+        [_pollingRatePopup addItemWithTitle:@"1 minute"];
+        [_pollingRatePopup addItemWithTitle:@"5 minutes"];
+        [_pollingRatePopup addItemWithTitle:@"30 minutes"];
+        [_pollingRatePopup addItemWithTitle:@"1 hour"];
+        [_pollingRatePopup setTarget:self];
+        [_pollingRatePopup setAction:@selector(pollingRateChanged:)];
+        [c addSubview:_pollingRatePopup];
+
+        /* Select saved value */
+        int idx = [self pollingIntervalToIndex:_pollingInterval];
+        [_pollingRatePopup selectItemAtIndex:idx];
 
         [doc addSubview:box];
         [box release];
@@ -730,19 +744,6 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [buttonRow addSubview:_setupWizardButton];
     [buttonRow release];
 
-    if (![_processManager hasBinary]) {
-        NSTextField *w = makeLabel(
-            @"Server binary not found in app bundle (lemoniscate-server or mobius-hotline-server).",
-            11.0, NO);
-        [w setTextColor:[NSColor redColor]];
-        [w setAlignment:NSCenterTextAlignment];
-        [w setFrame:NSMakeRect(20, 185, [view bounds].size.width - 40, 20)];
-        [w setAutoresizingMask:(NSViewWidthSizable |
-                                NSViewMinYMargin | NSViewMaxYMargin)];
-        [view addSubview:w];
-        [w release];
-    }
-
     return [view autorelease];
 }
 
@@ -882,6 +883,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         initWithFrame:NSMakeRect(4, 4, 212, 552)];
     [sv setAutoresizingMask:(NSViewHeightSizable)];
     [sv setHasVerticalScroller:YES];
+    [sv setAutohidesScrollers:YES];
     [sv setBorderType:NSBezelBorder];
 
     _accountsTableView = [[NSTableView alloc]
@@ -1005,10 +1007,12 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [box setTitleFont:[NSFont boldSystemFontOfSize:11.0]];
         NSView *c = [box contentView];
 
-        NSScrollView *bsv = [[NSScrollView alloc] initWithFrame:NSMakeRect(6, 56, 185, 456)];
+        NSScrollView *bsv = [[NSScrollView alloc] initWithFrame:NSMakeRect(6, 32, 185, 480)];
         [bsv setHasVerticalScroller:YES];
+        [bsv setAutohidesScrollers:YES];
         [bsv setBorderType:NSBezelBorder];
-        _bannedIPsTableView = [[NSTableView alloc] initWithFrame:NSMakeRect(0, 0, 185, 456)];
+        _bannedIPsTableView = [[DeletableTableView alloc] initWithFrame:NSMakeRect(0, 0, 185, 480)];
+        [(DeletableTableView *)_bannedIPsTableView setDeleteTarget:self action:@selector(removeIPBan:)];
         col = [[NSTableColumn alloc] initWithIdentifier:@"ban_ip"];
         [[col headerCell] setStringValue:@"IP"];
         [col setWidth:170];
@@ -1016,21 +1020,22 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [col release];
         [_bannedIPsTableView setDataSource:(id)self];
         [_bannedIPsTableView setDelegate:(id)self];
+        NSMenu *ipMenu = [[NSMenu alloc] initWithTitle:@""];
+        [ipMenu addItemWithTitle:@"Delete" action:@selector(removeIPBan:) keyEquivalent:@""];
+        [_bannedIPsTableView setMenu:ipMenu];
+        [ipMenu release];
         [bsv setDocumentView:_bannedIPsTableView];
         [c addSubview:bsv];
         [bsv release];
 
-        _newBanIPField = makeEditField(132);
-        [_newBanIPField setFrame:NSMakeRect(6, 30, 132, 22)];
+        _newBanIPField = makeEditField(120);
+        [[_newBanIPField cell] setPlaceholderString:@"192.168.1.1"];
+        [_newBanIPField setFrame:NSMakeRect(6, 4, 120, 22)];
         [c addSubview:_newBanIPField];
         NSButton *add = makeButton(@"Add", self, @selector(addIPBan:));
-        [add setFrame:NSMakeRect(142, 30, 50, 22)];
+        [add setFrame:NSMakeRect(130, 4, 60, 22)];
         [c addSubview:add];
         [add release];
-        NSButton *rem = makeButton(@"Remove", self, @selector(removeIPBan:));
-        [rem setFrame:NSMakeRect(126, 4, 66, 22)];
-        [c addSubview:rem];
-        [rem release];
 
         [_accountsBansView addSubview:box];
         [box release];
@@ -1042,10 +1047,12 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [box setTitleFont:[NSFont boldSystemFontOfSize:11.0]];
         NSView *c = [box contentView];
 
-        NSScrollView *bsv = [[NSScrollView alloc] initWithFrame:NSMakeRect(6, 56, 185, 456)];
+        NSScrollView *bsv = [[NSScrollView alloc] initWithFrame:NSMakeRect(6, 32, 185, 480)];
         [bsv setHasVerticalScroller:YES];
+        [bsv setAutohidesScrollers:YES];
         [bsv setBorderType:NSBezelBorder];
-        _bannedUsersTableView = [[NSTableView alloc] initWithFrame:NSMakeRect(0, 0, 185, 456)];
+        _bannedUsersTableView = [[DeletableTableView alloc] initWithFrame:NSMakeRect(0, 0, 185, 480)];
+        [(DeletableTableView *)_bannedUsersTableView setDeleteTarget:self action:@selector(removeUserBan:)];
         col = [[NSTableColumn alloc] initWithIdentifier:@"ban_user"];
         [[col headerCell] setStringValue:@"Username"];
         [col setWidth:170];
@@ -1053,21 +1060,21 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [col release];
         [_bannedUsersTableView setDataSource:(id)self];
         [_bannedUsersTableView setDelegate:(id)self];
+        NSMenu *userMenu = [[NSMenu alloc] initWithTitle:@""];
+        [userMenu addItemWithTitle:@"Delete" action:@selector(removeUserBan:) keyEquivalent:@""];
+        [_bannedUsersTableView setMenu:userMenu];
+        [userMenu release];
         [bsv setDocumentView:_bannedUsersTableView];
         [c addSubview:bsv];
         [bsv release];
 
-        _newBanUserField = makeEditField(132);
-        [_newBanUserField setFrame:NSMakeRect(6, 30, 132, 22)];
+        _newBanUserField = makeEditField(120);
+        [_newBanUserField setFrame:NSMakeRect(6, 4, 120, 22)];
         [c addSubview:_newBanUserField];
         NSButton *add = makeButton(@"Add", self, @selector(addUserBan:));
-        [add setFrame:NSMakeRect(142, 30, 50, 22)];
+        [add setFrame:NSMakeRect(130, 4, 60, 22)];
         [c addSubview:add];
         [add release];
-        NSButton *rem = makeButton(@"Remove", self, @selector(removeUserBan:));
-        [rem setFrame:NSMakeRect(126, 4, 66, 22)];
-        [c addSubview:rem];
-        [rem release];
 
         [_accountsBansView addSubview:box];
         [box release];
@@ -1079,10 +1086,12 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [box setTitleFont:[NSFont boldSystemFontOfSize:11.0]];
         NSView *c = [box contentView];
 
-        NSScrollView *bsv = [[NSScrollView alloc] initWithFrame:NSMakeRect(6, 56, 185, 456)];
+        NSScrollView *bsv = [[NSScrollView alloc] initWithFrame:NSMakeRect(6, 32, 185, 480)];
         [bsv setHasVerticalScroller:YES];
+        [bsv setAutohidesScrollers:YES];
         [bsv setBorderType:NSBezelBorder];
-        _bannedNicksTableView = [[NSTableView alloc] initWithFrame:NSMakeRect(0, 0, 185, 456)];
+        _bannedNicksTableView = [[DeletableTableView alloc] initWithFrame:NSMakeRect(0, 0, 185, 480)];
+        [(DeletableTableView *)_bannedNicksTableView setDeleteTarget:self action:@selector(removeNickBan:)];
         col = [[NSTableColumn alloc] initWithIdentifier:@"ban_nick"];
         [[col headerCell] setStringValue:@"Nickname"];
         [col setWidth:170];
@@ -1090,15 +1099,19 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [col release];
         [_bannedNicksTableView setDataSource:(id)self];
         [_bannedNicksTableView setDelegate:(id)self];
+        NSMenu *nickMenu = [[NSMenu alloc] initWithTitle:@""];
+        [nickMenu addItemWithTitle:@"Delete" action:@selector(removeNickBan:) keyEquivalent:@""];
+        [_bannedNicksTableView setMenu:nickMenu];
+        [nickMenu release];
         [bsv setDocumentView:_bannedNicksTableView];
         [c addSubview:bsv];
         [bsv release];
 
-        _newBanNickField = makeEditField(132);
-        [_newBanNickField setFrame:NSMakeRect(6, 30, 132, 22)];
+        _newBanNickField = makeEditField(120);
+        [_newBanNickField setFrame:NSMakeRect(6, 4, 120, 22)];
         [c addSubview:_newBanNickField];
         NSButton *add = makeButton(@"Add", self, @selector(addNickBan:));
-        [add setFrame:NSMakeRect(142, 30, 50, 22)];
+        [add setFrame:NSMakeRect(130, 4, 60, 22)];
         [c addSubview:add];
         [add release];
         NSButton *rem = makeButton(@"Remove", self, @selector(removeNickBan:));
@@ -1158,6 +1171,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         initWithFrame:NSMakeRect(0, 190, 622, 364)];
     [usersSV setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
     [usersSV setHasVerticalScroller:YES];
+    [usersSV setAutohidesScrollers:YES];
     [usersSV setBorderType:NSBezelBorder];
 
     _onlineTableView = [[NSTableView alloc]
@@ -1221,7 +1235,8 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [view addSubview:_onlineSplitView];
 
     if (!_onlineRefreshTimer) {
-        _onlineRefreshTimer = [[NSTimer scheduledTimerWithTimeInterval:5.0
+        NSTimeInterval interval = _pollingInterval > 0 ? _pollingInterval : 10.0;
+        _onlineRefreshTimer = [[NSTimer scheduledTimerWithTimeInterval:interval
                                                                  target:self
                                                                selector:@selector(refreshOnlineUsers:)
                                                                userInfo:nil
@@ -1272,6 +1287,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         initWithFrame:NSMakeRect(4, 4, 622, 554)];
     [sv setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
     [sv setHasVerticalScroller:YES];
+    [sv setAutohidesScrollers:YES];
     [sv setBorderType:NSBezelBorder];
 
     _filesTableView = [[NSTableView alloc]
@@ -1434,6 +1450,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         initWithFrame:NSMakeRect(4, 4, 220, 522)];
     [catsScroll setAutoresizingMask:(NSViewHeightSizable)];
     [catsScroll setHasVerticalScroller:YES];
+    [catsScroll setAutohidesScrollers:YES];
     [catsScroll setBorderType:NSBezelBorder];
 
     _newsCategoriesTableView = [[NSTableView alloc]
@@ -1454,6 +1471,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         initWithFrame:NSMakeRect(228, 4, 398, 522)];
     [artsScroll setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
     [artsScroll setHasVerticalScroller:YES];
+    [artsScroll setAutohidesScrollers:YES];
     [artsScroll setBorderType:NSBezelBorder];
 
     _newsArticlesTableView = [[NSTableView alloc]

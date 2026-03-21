@@ -160,13 +160,38 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
 
 /* ===== Tab view delegate ===== */
 
+- (void)refreshNewsTimer:(id)sender
+{
+    (void)sender;
+    [self loadMessageBoardText];
+    [self refreshThreadedNews:nil];
+}
+
 - (void)tabView:(NSTabView *)tv didSelectTabViewItem:(NSTabViewItem *)item
 {
     (void)tv;
     NSString *ident = [item identifier];
+    NSTimeInterval interval = _pollingInterval > 0 ? _pollingInterval : 10.0;
+
+    /* Start news polling when News tab is selected */
     if ([ident isEqualToString:@"news"]) {
         [self loadMessageBoardText];
         [self refreshThreadedNews:nil];
+        if (!_newsRefreshTimer) {
+            _newsRefreshTimer = [[NSTimer
+                scheduledTimerWithTimeInterval:interval
+                                        target:self
+                                      selector:@selector(refreshNewsTimer:)
+                                      userInfo:nil
+                                       repeats:YES] retain];
+        }
+    } else {
+        /* Stop news polling when leaving News tab */
+        if (_newsRefreshTimer) {
+            [_newsRefreshTimer invalidate];
+            [_newsRefreshTimer release];
+            _newsRefreshTimer = nil;
+        }
     }
 }
 

@@ -20,6 +20,39 @@
 - (BOOL)isFlipped { return YES; }
 @end
 
+/* ===== DeletableTableView =====
+ * NSTableView subclass that forwards Delete/Backspace key to a
+ * configurable target+action, enabling keyboard-driven row deletion. */
+
+@interface DeletableTableView : NSTableView
+{
+    id _deleteTarget;
+    SEL _deleteAction;
+}
+- (void)setDeleteTarget:(id)target action:(SEL)action;
+@end
+
+@implementation DeletableTableView
+- (void)setDeleteTarget:(id)target action:(SEL)action
+{
+    _deleteTarget = target;
+    _deleteAction = action;
+}
+- (void)keyDown:(NSEvent *)event
+{
+    unichar ch = [[event characters] length] > 0
+        ? [[event characters] characterAtIndex:0] : 0;
+    if ((ch == NSDeleteCharacter || ch == NSBackspaceCharacter ||
+         ch == 0x7F || ch == 0x08) && _deleteTarget && _deleteAction) {
+        if ([self selectedRow] >= 0) {
+            [_deleteTarget performSelector:_deleteAction withObject:self];
+            return;
+        }
+    }
+    [super keyDown:event];
+}
+@end
+
 /* ===== Layout constants ===== */
 #define LEFT_PANEL_WIDTH  560
 #define SECTION_MARGIN    12
@@ -42,6 +75,29 @@ static NSTextField *makeLabel(NSString *text, float fontSize, BOOL bold)
                         : [NSFont systemFontOfSize:fontSize]];
     [label sizeToFit];
     return label;
+}
+
+/* Validate an IPv4 address string (1-255.0-255.0-255.0-255) */
+static BOOL isValidIPv4(NSString *str)
+{
+    NSArray *parts = [str componentsSeparatedByString:@"."];
+    if ([parts count] != 4) return NO;
+    unsigned i;
+    for (i = 0; i < 4; i++) {
+        NSString *p = [parts objectAtIndex:i];
+        if ([p length] == 0 || [p length] > 3) return NO;
+        int val = [p intValue];
+        /* Reject non-numeric or leading zeros (except "0" itself) */
+        if (val < 0 || val > 255) return NO;
+        if ([p length] > 1 && [p characterAtIndex:0] == '0') return NO;
+        /* Verify all chars are digits */
+        unsigned j;
+        for (j = 0; j < [p length]; j++) {
+            unichar c = [p characterAtIndex:j];
+            if (c < '0' || c > '9') return NO;
+        }
+    }
+    return YES;
 }
 
 static NSTextField *makeEditField(float width)
@@ -363,6 +419,8 @@ static const unsigned kAccountPermissionDefCount =
 - (void)loadConfigFromDisk;
 - (void)writeConfigToDisk;
 - (void)ensureConfigScaffolding;
+- (int)pollingIntervalToIndex:(NSTimeInterval)interval;
+- (void)refreshNewsTimer:(id)sender;
 @end
 
 @implementation AppController
