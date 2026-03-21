@@ -594,12 +594,16 @@
         NSView *content = [_aboutWindow contentView];
         float cx = winW / 2.0f; /* center x */
 
-        /* App icon — load from bundle resources or icns */
+        /* App icon — load lemoniscate-256.png from bundle, fall back to app icon */
         float iconSz = 128;
         NSImageView *iconView = [[NSImageView alloc]
             initWithFrame:NSMakeRect(cx - iconSz / 2, winH - iconSz - 20,
                                      iconSz, iconSz)];
-        NSImage *appIcon = [NSImage imageNamed:@"NSApplicationIcon"];
+        NSString *iconPath = [[NSBundle mainBundle]
+            pathForResource:@"lemoniscate-256" ofType:@"png"];
+        NSImage *appIcon = iconPath
+            ? [[[NSImage alloc] initWithContentsOfFile:iconPath] autorelease]
+            : [NSImage imageNamed:@"NSApplicationIcon"];
         if (appIcon) [iconView setImage:appIcon];
         [iconView setImageFrameStyle:NSImageFrameNone];
         [iconView setEditable:NO];

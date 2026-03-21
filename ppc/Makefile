@@ -191,8 +191,9 @@ app: lemoniscate $(SERVER_COMPAT_BIN) gui
 	cp lemoniscate $(APP_MACOS)/lemoniscate-server
 	cp $(SERVER_COMPAT_BIN) $(APP_MACOS)/$(SERVER_COMPAT_BIN)
 	cp resources/Info.plist $(APP_CONTENTS)/Info.plist
-	@test -f resources/Lemoniscate.icns || (echo "ERROR: missing resources/Lemoniscate.icns"; exit 1)
-	cp resources/Lemoniscate.icns $(APP_RESOURCES)/Lemoniscate.icns
+	@test -f resources/lemoniscate.icns || (echo "ERROR: missing resources/lemoniscate.icns"; exit 1)
+	cp resources/lemoniscate.icns $(APP_RESOURCES)/Lemoniscate.icns
+	@test -f resources/lemoniscate-256.png && cp resources/lemoniscate-256.png $(APP_RESOURCES)/lemoniscate-256.png || true
 	@test -f resources/default-banner.jpg && cp resources/default-banner.jpg $(APP_RESOURCES)/default-banner.jpg || true
 	@echo "Built $(APP_BUNDLE)"
 	@echo "  Server binary: $(APP_MACOS)/lemoniscate-server"
