@@ -100,8 +100,8 @@
     NSRect frame = NSMakeRect(60, 60, 1280, 700);
     _mainWindow = [[NSWindow alloc]
         initWithContentRect:frame
-                  styleMask:(NSTitledWindowMask | NSClosableWindowMask |
-                             NSMiniaturizableWindowMask | NSResizableWindowMask)
+                  styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                             NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
                     backing:NSBackingStoreBuffered
                       defer:NO];
     [_mainWindow setTitle:@"Lemoniscate"];
@@ -123,25 +123,25 @@
     [_mainWindow makeKeyAndOrderFront:nil];
 }
 
-- (float)splitView:(NSSplitView *)splitView
-constrainMinCoordinate:(float)proposed
-      ofSubviewAt:(int)dividerIndex
+- (CGFloat)splitView:(NSSplitView *)splitView
+constrainMinCoordinate:(CGFloat)proposed
+      ofSubviewAt:(NSInteger)dividerIndex
 {
     (void)splitView;
     (void)dividerIndex;
-    if (proposed < 430.0f) return 430.0f;
+    if (proposed < 430.0) return 430.0;
     return proposed;
 }
 
-- (float)splitView:(NSSplitView *)splitView
-constrainMaxCoordinate:(float)proposed
-      ofSubviewAt:(int)dividerIndex
+- (CGFloat)splitView:(NSSplitView *)splitView
+constrainMaxCoordinate:(CGFloat)proposed
+      ofSubviewAt:(NSInteger)dividerIndex
 {
     (void)dividerIndex;
-    float minRightWidth = 420.0f;
-    float maxLeft = [splitView bounds].size.width
+    CGFloat minRightWidth = 420.0;
+    CGFloat maxLeft = [splitView bounds].size.width
         - [splitView dividerThickness] - minRightWidth;
-    if (maxLeft < 430.0f) maxLeft = 430.0f;
+    if (maxLeft < 430.0) maxLeft = 430.0;
     if (proposed > maxLeft) return maxLeft;
     return proposed;
 }
@@ -317,9 +317,9 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         _bonjourCheckbox = [[NSButton alloc]
             initWithFrame:NSZeroRect];
-        [_bonjourCheckbox setButtonType:NSSwitchButton];
+        [_bonjourCheckbox setButtonType:NSButtonTypeSwitch];
         [_bonjourCheckbox setTitle:@"Enable Bonjour"];
-        [_bonjourCheckbox setState:NSOnState];
+        [_bonjourCheckbox setState:NSControlStateValueOn];
         iy = addCheckbox(c, _bonjourCheckbox, iy);
 
         [doc addSubview:box];
@@ -341,9 +341,9 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         _trackerCheckbox = [[NSButton alloc]
             initWithFrame:NSZeroRect];
-        [_trackerCheckbox setButtonType:NSSwitchButton];
+        [_trackerCheckbox setButtonType:NSButtonTypeSwitch];
         [_trackerCheckbox setTitle:@"Enable Tracker Registration"];
-        [_trackerCheckbox setState:NSOffState];
+        [_trackerCheckbox setState:NSControlStateValueOff];
         iy = addCheckbox(c, _trackerCheckbox, iy);
 
         NSScrollView *tsv = [[NSScrollView alloc]
@@ -396,9 +396,9 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         _preserveForkCheckbox = [[NSButton alloc]
             initWithFrame:NSZeroRect];
-        [_preserveForkCheckbox setButtonType:NSSwitchButton];
+        [_preserveForkCheckbox setButtonType:NSButtonTypeSwitch];
         [_preserveForkCheckbox setTitle:@"Preserve Resource Forks"];
-        [_preserveForkCheckbox setState:NSOffState];
+        [_preserveForkCheckbox setState:NSControlStateValueOff];
         iy = addCheckbox(c, _preserveForkCheckbox, iy);
 
         NSScrollView *isv = [[NSScrollView alloc]
@@ -454,7 +454,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_newsDateFormatPopup addItemWithTitle:@"Mon Jan 2 15:04:05"];
         [_newsDateFormatPopup selectItemAtIndex:0];
         NSTextField *dateFmtLabel = makeLabel(@"Date Format:", 11.0, NO);
-        [dateFmtLabel setAlignment:NSRightTextAlignment];
+        [dateFmtLabel setAlignment:NSTextAlignmentRight];
         [dateFmtLabel setFrame:NSMakeRect(6, iy + 3, LABEL_WIDTH - 12, 17)];
         [c addSubview:dateFmtLabel];
         [dateFmtLabel release];
@@ -662,7 +662,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     /* Status text — full width, centered */
     _statusLabel = makeLabel(@"Server is stopped", 20.0, NO);
-    [_statusLabel setAlignment:NSCenterTextAlignment];
+    [_statusLabel setAlignment:NSTextAlignmentCenter];
     [_statusLabel setFrame:NSMakeRect(20, 290,
                                       [view bounds].size.width - 40, 30)];
     [_statusLabel setAutoresizingMask:(NSViewWidthSizable |
@@ -671,7 +671,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     /* Port info — full width, centered */
     _portInfoLabel = makeLabel(@"", 12.0, NO);
-    [_portInfoLabel setAlignment:NSCenterTextAlignment];
+    [_portInfoLabel setAlignment:NSTextAlignmentCenter];
     [_portInfoLabel setTextColor:[NSColor grayColor]];
     [_portInfoLabel setFrame:NSMakeRect(20, 264,
                                         [view bounds].size.width - 40, 20)];
@@ -735,7 +735,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
             @"Server binary not found in app bundle (lemoniscate-server or mobius-hotline-server).",
             11.0, NO);
         [w setTextColor:[NSColor redColor]];
-        [w setAlignment:NSCenterTextAlignment];
+        [w setAlignment:NSTextAlignmentCenter];
         [w setFrame:NSMakeRect(20, 185, [view bounds].size.width - 40, 20)];
         [w setAutoresizingMask:(NSViewWidthSizable |
                                 NSViewMinYMargin | NSViewMaxYMargin)];
@@ -762,9 +762,9 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     _autoScrollCheckbox = [[NSButton alloc]
         initWithFrame:NSMakeRect(8, 6, 110, 18)];
-    [_autoScrollCheckbox setButtonType:NSSwitchButton];
+    [_autoScrollCheckbox setButtonType:NSButtonTypeSwitch];
     [_autoScrollCheckbox setTitle:@"Auto-scroll"];
-    [_autoScrollCheckbox setState:NSOnState];
+    [_autoScrollCheckbox setState:NSControlStateValueOn];
     [_autoScrollCheckbox setFont:[NSFont systemFontOfSize:11.0]];
     [_autoScrollCheckbox setTarget:self];
     [_autoScrollCheckbox setAction:@selector(toggleAutoScroll:)];
@@ -782,9 +782,9 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     _showStdoutCheckbox = [[NSButton alloc]
         initWithFrame:NSMakeRect(360, 6, 62, 18)];
-    [_showStdoutCheckbox setButtonType:NSSwitchButton];
+    [_showStdoutCheckbox setButtonType:NSButtonTypeSwitch];
     [_showStdoutCheckbox setTitle:@"stdout"];
-    [_showStdoutCheckbox setState:NSOnState];
+    [_showStdoutCheckbox setState:NSControlStateValueOn];
     [_showStdoutCheckbox setFont:[NSFont systemFontOfSize:11.0]];
     [_showStdoutCheckbox setTarget:self];
     [_showStdoutCheckbox setAction:@selector(toggleStdoutVisibility:)];
@@ -792,9 +792,9 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     _showStderrCheckbox = [[NSButton alloc]
         initWithFrame:NSMakeRect(428, 6, 58, 18)];
-    [_showStderrCheckbox setButtonType:NSSwitchButton];
+    [_showStderrCheckbox setButtonType:NSButtonTypeSwitch];
     [_showStderrCheckbox setTitle:@"stderr"];
-    [_showStderrCheckbox setState:NSOnState];
+    [_showStderrCheckbox setState:NSControlStateValueOn];
     [_showStderrCheckbox setFont:[NSFont systemFontOfSize:11.0]];
     [_showStderrCheckbox setTarget:self];
     [_showStderrCheckbox setAction:@selector(toggleStderrVisibility:)];
@@ -908,7 +908,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     NSTextField *l;
 
     l = makeLabel(@"Login:", 11.0, NO);
-    [l setAlignment:NSRightTextAlignment];
+    [l setAlignment:NSTextAlignmentRight];
     [l setFrame:NSMakeRect(6, 496, 70, 17)];
     [ec addSubview:l];
     [l release];
@@ -918,7 +918,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [ec addSubview:_accountLoginField];
 
     l = makeLabel(@"Display Name:", 11.0, NO);
-    [l setAlignment:NSRightTextAlignment];
+    [l setAlignment:NSTextAlignmentRight];
     [l setFrame:NSMakeRect(6, 464, 70, 17)];
     [ec addSubview:l];
     [l release];
@@ -927,7 +927,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [ec addSubview:_accountNameField];
 
     l = makeLabel(@"File Root:", 11.0, NO);
-    [l setAlignment:NSRightTextAlignment];
+    [l setAlignment:NSTextAlignmentRight];
     [l setFrame:NSMakeRect(6, 432, 70, 17)];
     [ec addSubview:l];
     [l release];
@@ -936,7 +936,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [ec addSubview:_accountFileRootField];
 
     l = makeLabel(@"Template:", 11.0, NO);
-    [l setAlignment:NSRightTextAlignment];
+    [l setAlignment:NSTextAlignmentRight];
     [l setFrame:NSMakeRect(6, 400, 70, 17)];
     [ec addSubview:l];
     [l release];

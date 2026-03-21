@@ -5,7 +5,7 @@
 
     NSString *usersDir = [_configDir stringByAppendingPathComponent:@"Users"];
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *contents = [fm directoryContentsAtPath:usersDir];
+    NSArray *contents = [fm contentsOfDirectoryAtPath:usersDir error:NULL];
     if (contents) {
         NSArray *sorted = [contents sortedArrayUsingSelector:
             @selector(caseInsensitiveCompare:)];
@@ -34,7 +34,7 @@
         if (idx == NSNotFound && [_accountsItems count] > 0) idx = 0;
 
         if (idx != NSNotFound) {
-            [_accountsTableView selectRow:(int)idx byExtendingSelection:NO];
+            [_accountsTableView selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)idx] byExtendingSelection:NO];
             NSDictionary *acct = [self loadAccountDataForLogin:
                 [_accountsItems objectAtIndex:idx]];
             [self populateAccountEditorFromData:acct];
@@ -183,10 +183,10 @@
 
         NSButton *cb = [[NSButton alloc] initWithFrame:NSMakeRect(
             leftPad + (float)col * (colWidth + colGap), y, colWidth, 18.0f)];
-        [cb setButtonType:NSSwitchButton];
+        [cb setButtonType:NSButtonTypeSwitch];
         [cb setTitle:label];
         [cb setFont:[NSFont systemFontOfSize:10.0]];
-        [cb setState:[_accountAccessKeys containsObject:key] ? NSOnState : NSOffState];
+        [cb setState:[_accountAccessKeys containsObject:key] ? NSControlStateValueOn : NSControlStateValueOff];
         [cb setToolTip:key];
         [cb setTarget:self];
         [cb setAction:@selector(toggleAccountPermission:)];
@@ -214,7 +214,7 @@
     for (i = 0; i < [keys count]; i++) {
         NSString *key = [keys objectAtIndex:i];
         NSButton *cb = [_accountPermissionCheckboxes objectForKey:key];
-        [cb setState:[_accountAccessKeys containsObject:key] ? NSOnState : NSOffState];
+        [cb setState:[_accountAccessKeys containsObject:key] ? NSControlStateValueOn : NSControlStateValueOff];
     }
 }
 

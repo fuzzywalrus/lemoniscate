@@ -1,14 +1,14 @@
 /*
  * password.c - Salted SHA-1 password hashing
  *
- * Uses OpenSSL 0.9.7 SHA-1 (available on Tiger 10.4).
+ * Uses CommonCrypto SHA-1 (available on all macOS versions).
  * Format: "sha1:<8-byte hex salt>:<40-byte hex SHA-1>"
  *
  * Hash = SHA1(salt_bytes + password_bytes)
  */
 
 #include "hotline/password.h"
-#include <openssl/sha.h>
+#include <CommonCrypto/CommonDigest.h>
 #include <string.h>
 #include <stdio.h>
 #include <fcntl.h>
@@ -58,18 +58,18 @@ int hl_password_hash(const char *password, char *out, size_t out_len)
     if (random_bytes(salt, sizeof(salt)) < 0) return -1;
 
     /* SHA1(salt + password) */
-    SHA_CTX ctx;
-    unsigned char digest[SHA_DIGEST_LENGTH]; /* 20 bytes */
-    SHA1_Init(&ctx);
-    SHA1_Update(&ctx, salt, sizeof(salt));
-    SHA1_Update(&ctx, password, strlen(password));
-    SHA1_Final(digest, &ctx);
+    CC_SHA1_CTX ctx;
+    unsigned char digest[CC_SHA1_DIGEST_LENGTH]; /* 20 bytes */
+    CC_SHA1_Init(&ctx);
+    CC_SHA1_Update(&ctx, salt, sizeof(salt));
+    CC_SHA1_Update(&ctx, password, strlen(password));
+    CC_SHA1_Final(digest, &ctx);
 
     /* Format: "sha1:<salt_hex>:<hash_hex>" */
     char salt_hex[9];
     char hash_hex[41];
     bytes_to_hex(salt, sizeof(salt), salt_hex, sizeof(salt_hex));
-    bytes_to_hex(digest, SHA_DIGEST_LENGTH, hash_hex, sizeof(hash_hex));
+    bytes_to_hex(digest, CC_SHA1_DIGEST_LENGTH, hash_hex, sizeof(hash_hex));
 
     int needed = snprintf(out, out_len, "sha1:%s:%s", salt_hex, hash_hex);
     if (needed < 0 || (size_t)needed >= out_len) return -1;
@@ -105,16 +105,16 @@ int hl_password_verify(const char *password, const char *stored)
     if (salt_len <= 0) return 0;
 
     /* Compute SHA1(salt + password) */
-    SHA_CTX ctx;
-    unsigned char digest[SHA_DIGEST_LENGTH];
-    SHA1_Init(&ctx);
-    SHA1_Update(&ctx, salt, (size_t)salt_len);
-    SHA1_Update(&ctx, password, strlen(password));
-    SHA1_Final(digest, &ctx);
+    CC_SHA1_CTX ctx;
+    unsigned char digest[CC_SHA1_DIGEST_LENGTH];
+    CC_SHA1_Init(&ctx);
+    CC_SHA1_Update(&ctx, salt, (size_t)salt_len);
+    CC_SHA1_Update(&ctx, password, strlen(password));
+    CC_SHA1_Final(digest, &ctx);
 
     /* Compare hex */
     char computed_hex[41];
-    bytes_to_hex(digest, SHA_DIGEST_LENGTH, computed_hex, sizeof(computed_hex));
+    bytes_to_hex(digest, CC_SHA1_DIGEST_LENGTH, computed_hex, sizeof(computed_hex));
 
     return strcmp(computed_hex, expected_hex) == 0 ? 1 : 0;
 }

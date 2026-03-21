@@ -4,37 +4,24 @@
 
     /* Pre-flight validation with clear error messages */
     if (![_processManager hasBinary]) {
-        NSRunAlertPanel(@"Cannot Start Server",
-            @"The server binary was not found inside the application bundle. "
-            @"Please reinstall Lemoniscate.",
-            @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Cannot Start Server"]; [a setInformativeText:@"The server binary was not found inside the application bundle. Please reinstall Lemoniscate."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
     if (_serverPort < 1 || _serverPort > 65535) {
-        NSRunAlertPanel(@"Invalid Port",
-            @"The Hotline port must be between 1 and 65535. "
-            @"The default is 5500.",
-            @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Invalid Port"]; [a setInformativeText:@"The Hotline port must be between 1 and 65535. The default is 5500."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
     NSString *fileRoot = _fileRootField ? [_fileRootField stringValue] : @"";
     if ([fileRoot length] == 0) {
-        NSRunAlertPanel(@"No File Root Set",
-            @"Please set a File Root directory in the server settings. "
-            @"This is the folder that will be shared with connected users.",
-            @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"No File Root Set"]; [a setInformativeText:@"Please set a File Root directory in the server settings. This is the folder that will be shared with connected users."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
     BOOL isDir = NO;
     if (![[NSFileManager defaultManager] fileExistsAtPath:fileRoot isDirectory:&isDir] || !isDir) {
-        NSRunAlertPanel(@"File Root Not Found",
-            [NSString stringWithFormat:
-                @"The File Root directory does not exist:\n\n%@\n\n"
-                @"Please create it or choose a different folder.", fileRoot],
-            @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"File Root Not Found"]; [a setInformativeText:[NSString stringWithFormat:@"The File Root directory does not exist:\n\n%@\n\nPlease create it or choose a different folder.", fileRoot]]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
@@ -67,8 +54,8 @@
     [panel setCanChooseDirectories:YES];
     [panel setAllowsMultipleSelection:NO];
     [panel setTitle:@"Select config directory"];
-    if ([panel runModal] == NSOKButton) {
-        NSString *path = [[panel filenames] objectAtIndex:0];
+    if ([panel runModal] == NSModalResponseOK) {
+        NSString *path = [[[panel URLs] objectAtIndex:0] path];
         [_configDir release];
         _configDir = [path retain];
         [_configDirField setStringValue:_configDir];
@@ -90,9 +77,9 @@
     [panel setCanChooseDirectories:YES];
     [panel setAllowsMultipleSelection:NO];
     [panel setTitle:@"Select files directory"];
-    if ([panel runModal] == NSOKButton) {
+    if ([panel runModal] == NSModalResponseOK) {
         [_fileRootField setStringValue:
-            [[panel filenames] objectAtIndex:0]];
+            [[[panel URLs] objectAtIndex:0] path]];
         [self refreshFilesList:nil];
     }
 }
@@ -105,9 +92,9 @@
     [panel setCanChooseDirectories:NO];
     [panel setAllowsMultipleSelection:NO];
     [panel setTitle:@"Select banner image (JPG or GIF)"];
-    if ([panel runModal] == NSOKButton) {
+    if ([panel runModal] == NSModalResponseOK) {
         [_bannerFileField setStringValue:
-            [[panel filenames] objectAtIndex:0]];
+            [[[panel URLs] objectAtIndex:0] path]];
     }
 }
 
@@ -119,9 +106,9 @@
     [panel setCanChooseDirectories:YES];
     [panel setAllowsMultipleSelection:NO];
     [panel setTitle:@"Select files directory"];
-    if ([panel runModal] == NSOKButton) {
+    if ([panel runModal] == NSModalResponseOK) {
         [_wizardFileRootField setStringValue:
-            [[panel filenames] objectAtIndex:0]];
+            [[[panel URLs] objectAtIndex:0] path]];
     }
 }
 
@@ -133,9 +120,9 @@
     [panel setCanChooseDirectories:NO];
     [panel setAllowsMultipleSelection:NO];
     [panel setTitle:@"Select banner image (JPG or GIF)"];
-    if ([panel runModal] == NSOKButton) {
+    if ([panel runModal] == NSModalResponseOK) {
         [_wizardBannerField setStringValue:
-            [[panel filenames] objectAtIndex:0]];
+            [[[panel URLs] objectAtIndex:0] path]];
     }
 }
 
@@ -158,8 +145,8 @@
     if (!_wizardWindow) {
         _wizardWindow = [[NSWindow alloc]
             initWithContentRect:NSMakeRect(0, 0, 660, 430)
-                      styleMask:(NSTitledWindowMask | NSClosableWindowMask |
-                                 NSMiniaturizableWindowMask)
+                      styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                                 NSWindowStyleMaskMiniaturizable)
                         backing:NSBackingStoreBuffered
                           defer:NO];
         [_wizardWindow setTitle:@"Server Setup Wizard"];
@@ -215,15 +202,15 @@
         _wizardMaxConnPerIPField = makeEditField(80);
 
         _wizardBonjourCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
-        [_wizardBonjourCheckbox setButtonType:NSSwitchButton];
+        [_wizardBonjourCheckbox setButtonType:NSButtonTypeSwitch];
         [_wizardBonjourCheckbox setTitle:@"Enable Bonjour"];
 
         _wizardTrackerCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
-        [_wizardTrackerCheckbox setButtonType:NSSwitchButton];
+        [_wizardTrackerCheckbox setButtonType:NSButtonTypeSwitch];
         [_wizardTrackerCheckbox setTitle:@"Enable Tracker Registration"];
 
         _wizardPreserveForkCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
-        [_wizardPreserveForkCheckbox setButtonType:NSSwitchButton];
+        [_wizardPreserveForkCheckbox setButtonType:NSButtonTypeSwitch];
         [_wizardPreserveForkCheckbox setTitle:@"Preserve Resource Forks"];
 
         _wizardSummaryTextView = [[NSTextView alloc]
@@ -243,11 +230,11 @@
     [_wizardBannerField setStringValue:
         _bannerFileField ? [_bannerFileField stringValue] : @""];
     [_wizardBonjourCheckbox setState:
-        (_bonjourCheckbox && [_bonjourCheckbox state] == NSOffState) ? NSOffState : NSOnState];
+        (_bonjourCheckbox && [_bonjourCheckbox state] == NSControlStateValueOff) ? NSControlStateValueOff : NSControlStateValueOn];
     [_wizardTrackerCheckbox setState:
-        (_trackerCheckbox && [_trackerCheckbox state] == NSOnState) ? NSOnState : NSOffState];
+        (_trackerCheckbox && [_trackerCheckbox state] == NSControlStateValueOn) ? NSControlStateValueOn : NSControlStateValueOff];
     [_wizardPreserveForkCheckbox setState:
-        (_preserveForkCheckbox && [_preserveForkCheckbox state] == NSOnState) ? NSOnState : NSOffState];
+        (_preserveForkCheckbox && [_preserveForkCheckbox state] == NSControlStateValueOn) ? NSControlStateValueOn : NSControlStateValueOff];
     [_wizardMaxDownloadsField setIntValue:
         _maxDownloadsField ? [_maxDownloadsField intValue] : 0];
     [_wizardMaxDLPerClientField setIntValue:
@@ -343,7 +330,7 @@
         [intro release];
 
         NSTextField *nameLabel = makeLabel(@"Server Name:", 11.0, NO);
-        [nameLabel setAlignment:NSRightTextAlignment];
+        [nameLabel setAlignment:NSTextAlignmentRight];
         [nameLabel setFrame:NSMakeRect(10, 224, 110, 20)];
         [_wizardStepContainer addSubview:nameLabel];
         [nameLabel release];
@@ -351,7 +338,7 @@
         [_wizardStepContainer addSubview:_wizardNameField];
 
         NSTextField *descLabel = makeLabel(@"Description:", 11.0, NO);
-        [descLabel setAlignment:NSRightTextAlignment];
+        [descLabel setAlignment:NSTextAlignmentRight];
         [descLabel setFrame:NSMakeRect(10, 190, 110, 20)];
         [_wizardStepContainer addSubview:descLabel];
         [descLabel release];
@@ -359,7 +346,7 @@
         [_wizardStepContainer addSubview:_wizardDescriptionField];
 
         NSTextField *portLabel = makeLabel(@"Hotline Port:", 11.0, NO);
-        [portLabel setAlignment:NSRightTextAlignment];
+        [portLabel setAlignment:NSTextAlignmentRight];
         [portLabel setFrame:NSMakeRect(10, 156, 110, 20)];
         [_wizardStepContainer addSubview:portLabel];
         [portLabel release];
@@ -377,7 +364,7 @@
         [intro release];
 
         NSTextField *rootLabel = makeLabel(@"File Root:", 11.0, NO);
-        [rootLabel setAlignment:NSRightTextAlignment];
+        [rootLabel setAlignment:NSTextAlignmentRight];
         [rootLabel setFrame:NSMakeRect(10, 224, 110, 20)];
         [_wizardStepContainer addSubview:rootLabel];
         [rootLabel release];
@@ -390,7 +377,7 @@
         [rootBrowse release];
 
         NSTextField *bannerLabel = makeLabel(@"Banner File:", 11.0, NO);
-        [bannerLabel setAlignment:NSRightTextAlignment];
+        [bannerLabel setAlignment:NSTextAlignmentRight];
         [bannerLabel setFrame:NSMakeRect(10, 190, 110, 20)];
         [_wizardStepContainer addSubview:bannerLabel];
         [bannerLabel release];
@@ -424,7 +411,7 @@
         [_wizardStepContainer addSubview:_wizardPreserveForkCheckbox];
 
         NSTextField *maxDL = makeLabel(@"Max Downloads:", 11.0, NO);
-        [maxDL setAlignment:NSRightTextAlignment];
+        [maxDL setAlignment:NSTextAlignmentRight];
         [maxDL setFrame:NSMakeRect(10, 190, 110, 20)];
         [_wizardStepContainer addSubview:maxDL];
         [maxDL release];
@@ -432,7 +419,7 @@
         [_wizardStepContainer addSubview:_wizardMaxDownloadsField];
 
         NSTextField *maxPer = makeLabel(@"Max DL/Client:", 11.0, NO);
-        [maxPer setAlignment:NSRightTextAlignment];
+        [maxPer setAlignment:NSTextAlignmentRight];
         [maxPer setFrame:NSMakeRect(10, 156, 110, 20)];
         [_wizardStepContainer addSubview:maxPer];
         [maxPer release];
@@ -440,7 +427,7 @@
         [_wizardStepContainer addSubview:_wizardMaxDLPerClientField];
 
         NSTextField *maxIP = makeLabel(@"Max Conn/IP:", 11.0, NO);
-        [maxIP setAlignment:NSRightTextAlignment];
+        [maxIP setAlignment:NSTextAlignmentRight];
         [maxIP setFrame:NSMakeRect(10, 122, 110, 20)];
         [_wizardStepContainer addSubview:maxIP];
         [maxIP release];
@@ -472,9 +459,9 @@
             [_wizardPortField intValue],
             [_wizardFileRootField stringValue],
             [_wizardBannerField stringValue],
-            ([_wizardBonjourCheckbox state] == NSOnState ? @"Enabled" : @"Disabled"),
-            ([_wizardTrackerCheckbox state] == NSOnState ? @"Enabled" : @"Disabled"),
-            ([_wizardPreserveForkCheckbox state] == NSOnState ? @"Enabled" : @"Disabled"),
+            ([_wizardBonjourCheckbox state] == NSControlStateValueOn ? @"Enabled" : @"Disabled"),
+            ([_wizardTrackerCheckbox state] == NSControlStateValueOn ? @"Enabled" : @"Disabled"),
+            ([_wizardPreserveForkCheckbox state] == NSControlStateValueOn ? @"Enabled" : @"Disabled"),
             [_wizardMaxDownloadsField intValue],
             [_wizardMaxDLPerClientField intValue],
             [_wizardMaxConnPerIPField intValue]];
@@ -496,9 +483,7 @@
         NSString *name = trimmedString([_wizardNameField stringValue]);
         if ([name length] == 0) {
             if (showAlert) {
-                NSRunAlertPanel(@"Missing Server Name",
-                                @"Enter a server name before continuing.",
-                                @"OK", nil, nil);
+                { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Missing Server Name"]; [a setInformativeText:@"Enter a server name before continuing."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
             }
             return NO;
         }
@@ -506,9 +491,7 @@
         int port = [_wizardPortField intValue];
         if (port < 1 || port > 65535) {
             if (showAlert) {
-                NSRunAlertPanel(@"Invalid Port",
-                                @"Hotline port must be between 1 and 65535.",
-                                @"OK", nil, nil);
+                { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Invalid Port"]; [a setInformativeText:@"Hotline port must be between 1 and 65535."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
             }
             return NO;
         }
@@ -516,9 +499,7 @@
         NSString *root = trimmedString([_wizardFileRootField stringValue]);
         if ([root length] == 0) {
             if (showAlert) {
-                NSRunAlertPanel(@"Missing File Root",
-                                @"Enter a file root path before continuing.",
-                                @"OK", nil, nil);
+                { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Missing File Root"]; [a setInformativeText:@"Enter a file root path before continuing."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
             }
             return NO;
         }
@@ -527,9 +508,7 @@
             [_wizardMaxDLPerClientField intValue] < 0 ||
             [_wizardMaxConnPerIPField intValue] < 0) {
             if (showAlert) {
-                NSRunAlertPanel(@"Invalid Limits",
-                                @"Limit values cannot be negative.",
-                                @"OK", nil, nil);
+                { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Invalid Limits"]; [a setInformativeText:@"Limit values cannot be negative."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
             }
             return NO;
         }
@@ -583,8 +562,8 @@
     if (!_aboutWindow) {
         _aboutWindow = [[NSWindow alloc]
             initWithContentRect:NSMakeRect(0, 0, 560, 320)
-                      styleMask:(NSTitledWindowMask | NSClosableWindowMask |
-                                 NSMiniaturizableWindowMask)
+                      styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                                 NSWindowStyleMaskMiniaturizable)
                         backing:NSBackingStoreBuffered
                           defer:NO];
         [_aboutWindow setTitle:@"About Lemoniscate"];
@@ -680,16 +659,12 @@
 
     NSURL *url = [NSURL URLWithString:urlString];
     if (!url) {
-        NSRunAlertPanel(@"Invalid URL",
-                        @"Could not open requested link.",
-                        @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Invalid URL"]; [a setInformativeText:@"Could not open requested link."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
     if (![[NSWorkspace sharedWorkspace] openURL:url]) {
-        NSRunAlertPanel(@"Open Failed",
-                        @"Unable to open link in the default browser.",
-                        @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Open Failed"]; [a setInformativeText:@"Unable to open link in the default browser."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
     }
 }
 

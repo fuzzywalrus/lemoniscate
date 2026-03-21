@@ -45,6 +45,9 @@ core.*
 .idea/
 *.iml
 
+# Secrets / credentials
+.env
+
 # Claude / local AI workspace artifacts
 .claude/
 .claude/settings.local.json
@@ -60,3 +63,5 @@ lemoniscate
 lemoniscate-gui
 lemoniscate.zip
 Lemoniscate.app/
+Lemoniscate.dmg
+Lemoniscate.zip

@@ -16,8 +16,8 @@
     if (!_textEditorWindow) {
         _textEditorWindow = [[NSWindow alloc]
             initWithContentRect:NSMakeRect(0, 0, 640, 500)
-                      styleMask:(NSTitledWindowMask | NSClosableWindowMask |
-                                 NSMiniaturizableWindowMask | NSResizableWindowMask)
+                      styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                                 NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
                         backing:NSBackingStoreBuffered
                           defer:NO];
         [_textEditorWindow setReleasedWhenClosed:NO];
@@ -77,7 +77,7 @@
     NSString *text = [_textEditorTextView string];
     if (![text writeToFile:_textEditorFilePath atomically:YES
                   encoding:NSUTF8StringEncoding error:nil]) {
-        NSRunAlertPanel(@"Unable to Save", @"Could not save the file.", @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Unable to Save"]; [a setInformativeText:@"Could not save the file."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 

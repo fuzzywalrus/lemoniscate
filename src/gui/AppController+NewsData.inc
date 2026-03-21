@@ -123,7 +123,7 @@
                 idx = [_newsCategoryItems indexOfObject:_newsSelectedCategoryKey];
             }
             if (idx == NSNotFound) idx = 0;
-            [_newsCategoriesTableView selectRow:(int)idx byExtendingSelection:NO];
+            [_newsCategoriesTableView selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)idx] byExtendingSelection:NO];
             [_newsSelectedCategoryKey release];
             _newsSelectedCategoryKey = [[_newsCategoryItems objectAtIndex:idx] retain];
         } else {
@@ -247,7 +247,7 @@
             }
         }
         if (targetRow >= 0) {
-            [_newsArticlesTableView selectRow:targetRow byExtendingSelection:NO];
+            [_newsArticlesTableView selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)targetRow] byExtendingSelection:NO];
         } else {
             [_newsArticlesTableView deselectAll:nil];
             [_newsSelectedArticleID release];

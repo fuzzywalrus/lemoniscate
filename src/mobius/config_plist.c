@@ -109,14 +109,12 @@ int mobius_load_config_plist(hl_config_t *cfg, const char *plist_path)
     CFDataRef data = CFDataCreate(NULL, buf, bytes_read);
     if (!data) return -1;
 
-    /* Parse plist — use Tiger-compatible API */
-    CFStringRef error_string = NULL;
-    CFPropertyListRef plist = CFPropertyListCreateFromXMLData(
-        NULL, data, kCFPropertyListImmutable, &error_string);
+    /* Parse plist */
+    CFPropertyListRef plist = CFPropertyListCreateWithData(
+        NULL, data, kCFPropertyListImmutable, NULL, NULL);
     CFRelease(data);
 
     if (!plist) {
-        if (error_string) CFRelease(error_string);
         return -1;
     }
 

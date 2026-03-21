@@ -1521,7 +1521,7 @@ static int handle_post_news_art(hl_client_conn_t *cc, const hl_transaction_t *re
     }
 
     tn_post_article(srv->threaded_news, cat_name, parent_id,
-                    title, cc->user_name, data, data_len);
+                    title, (const char *)cc->user_name, data, data_len);
 
     return reply_empty(cc, req, out, out_count);
 }
@@ -2366,6 +2366,8 @@ void mobius_register_handlers(hl_server_t *srv)
     hl_server_handle_func(srv, TRAN_NEW_FOLDER,          handle_new_folder);
     hl_server_handle_func(srv, TRAN_MAKE_FILE_ALIAS,     handle_make_alias);
     hl_server_handle_func(srv, TRAN_DOWNLOAD_FILE,       handle_download_file);
+    hl_server_handle_func(srv, TRAN_UPLOAD_FILE,         handle_upload_file);
+    hl_server_handle_func(srv, TRAN_DOWNLOAD_FLDR,       handle_download_folder);
     hl_server_handle_func(srv, TRAN_UPLOAD_FLDR,         handle_upload_folder);
     hl_server_handle_func(srv, TRAN_DOWNLOAD_BANNER,     handle_download_banner);
 }

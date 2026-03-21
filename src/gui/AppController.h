@@ -17,7 +17,7 @@
 #import "TigerCompat.h"
 #import "ProcessManager.h"
 
-@interface AppController : NSObject
+@interface AppController : NSObject <NSApplicationDelegate, NSSplitViewDelegate>
 {
     /* Process management */
     ProcessManager *_processManager;

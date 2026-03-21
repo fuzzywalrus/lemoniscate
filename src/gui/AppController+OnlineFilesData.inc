@@ -177,7 +177,7 @@
     if (_filesPathLabel) [_filesPathLabel setStringValue:_filesCurrentPath];
 
     [_filesItems removeAllObjects];
-    NSArray *contents = [fm directoryContentsAtPath:_filesCurrentPath];
+    NSArray *contents = [fm contentsOfDirectoryAtPath:_filesCurrentPath error:NULL];
     NSArray *sorted = contents ? [contents sortedArrayUsingSelector:
         @selector(caseInsensitiveCompare:)] : [NSArray array];
     NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
@@ -192,7 +192,7 @@
         BOOL entryIsDir = NO;
         if (![fm fileExistsAtPath:fullPath isDirectory:&entryIsDir]) continue;
 
-        NSDictionary *attrs = [fm fileAttributesAtPath:fullPath traverseLink:YES];
+        NSDictionary *attrs = [fm attributesOfItemAtPath:fullPath error:NULL];
         NSString *sizeText = entryIsDir ? @"—" : @"";
         NSString *dateText = @"";
 

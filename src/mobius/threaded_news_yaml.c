@@ -17,7 +17,6 @@
 #include <time.h>
 
 /* Wire format constants */
-static const uint8_t NEWS_BUNDLE[2]   = {0x00, 0x02};
 static const uint8_t NEWS_CATEGORY[2] = {0x00, 0x03};
 static const char NEWS_FLAVOR[] = "text/plain";
 

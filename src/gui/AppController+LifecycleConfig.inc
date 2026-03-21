@@ -270,13 +270,13 @@
     NSNumber *boolVal;
     boolVal = [dict objectForKey:@"EnableBonjour"];
     if (boolVal && _bonjourCheckbox)
-        [_bonjourCheckbox setState:[boolVal boolValue] ? NSOnState : NSOffState];
+        [_bonjourCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
     boolVal = [dict objectForKey:@"EnableTrackerRegistration"];
     if (boolVal && _trackerCheckbox)
-        [_trackerCheckbox setState:[boolVal boolValue] ? NSOnState : NSOffState];
+        [_trackerCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
     boolVal = [dict objectForKey:@"PreserveResourceForks"];
     if (boolVal && _preserveForkCheckbox)
-        [_preserveForkCheckbox setState:[boolVal boolValue] ? NSOnState : NSOffState];
+        [_preserveForkCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
 
     NSArray *trackers = [dict objectForKey:@"Trackers"];
     if (trackers) {
@@ -330,8 +330,8 @@
     NSString *desc = _descriptionField ? [_descriptionField stringValue] : _serverDescription;
     NSString *banner = _bannerFileField ? [_bannerFileField stringValue] : @"";
     NSString *fileRoot = _fileRootField ? [_fileRootField stringValue] : @"";
-    BOOL enableBonjour = _bonjourCheckbox ? ([_bonjourCheckbox state] == NSOnState) : YES;
-    BOOL enableTracker = _trackerCheckbox ? ([_trackerCheckbox state] == NSOnState) : NO;
+    BOOL enableBonjour = _bonjourCheckbox ? ([_bonjourCheckbox state] == NSControlStateValueOn) : YES;
+    BOOL enableTracker = _trackerCheckbox ? ([_trackerCheckbox state] == NSControlStateValueOn) : NO;
     NSString *newsDateFormat = _newsDateFormatPopup ?
         [_newsDateFormatPopup titleOfSelectedItem] : @"Jan02 15:04";
     NSString *newsDelimiter = _newsDelimiterField ?
@@ -340,7 +340,7 @@
         newsDateFormat = @"Jan02 15:04";
     if (!newsDelimiter || [newsDelimiter length] == 0)
         newsDelimiter = @"__________________________________________________________";
-    BOOL preserveForks = _preserveForkCheckbox ? ([_preserveForkCheckbox state] == NSOnState) : NO;
+    BOOL preserveForks = _preserveForkCheckbox ? ([_preserveForkCheckbox state] == NSControlStateValueOn) : NO;
     int maxDownloads = _maxDownloadsField ? [_maxDownloadsField intValue] : 0;
     int maxDLPerClient = _maxDLPerClientField ? [_maxDLPerClientField intValue] : 0;
     int maxConnPerIP = _maxConnPerIPField ? [_maxConnPerIPField intValue] : 0;
@@ -387,7 +387,7 @@ static void createDirectoryWithParents(NSFileManager *fm, NSString *path)
     if (parent && [parent length] > 1) {
         createDirectoryWithParents(fm, parent);
     }
-    [fm createDirectoryAtPath:path attributes:[NSDictionary dictionary]];
+    [fm createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:NULL];
 }
 
 - (void)ensureConfigScaffolding
@@ -400,12 +400,12 @@ static void createDirectoryWithParents(NSFileManager *fm, NSString *path)
 
     NSString *filesDir = [_configDir stringByAppendingPathComponent:@"Files"];
     if (![fm fileExistsAtPath:filesDir isDirectory:&isDir]) {
-        [fm createDirectoryAtPath:filesDir attributes:[NSDictionary dictionary]];
+        [fm createDirectoryAtPath:filesDir withIntermediateDirectories:YES attributes:nil error:NULL];
     }
 
     NSString *usersDir = [_configDir stringByAppendingPathComponent:@"Users"];
     if (![fm fileExistsAtPath:usersDir isDirectory:&isDir]) {
-        [fm createDirectoryAtPath:usersDir attributes:[NSDictionary dictionary]];
+        [fm createDirectoryAtPath:usersDir withIntermediateDirectories:YES attributes:nil error:NULL];
     }
 
     NSString *agreement = [_configDir stringByAppendingPathComponent:@"Agreement.txt"];
@@ -434,7 +434,7 @@ static void createDirectoryWithParents(NSFileManager *fm, NSString *path)
         NSString *bundleBanner = [[NSBundle mainBundle]
             pathForResource:@"default-banner" ofType:@"jpg"];
         if (bundleBanner) {
-            [fm copyPath:bundleBanner toPath:bannerDest handler:nil];
+            [fm copyItemAtPath:bundleBanner toPath:bannerDest error:NULL];
         }
     }
 

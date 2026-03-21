@@ -1,27 +1,37 @@
-# Makefile for mobius-c
-# Targeting Mac OS X 10.4 Tiger on PowerPC with GCC 4.0
+# Makefile for mobius-c (Lemoniscate)
 #
-# On Tiger: CC = gcc-4.0
-# On modern macOS for development/testing: CC = cc
+# Modern macOS (10.13+): CC = cc (default)
+# Tiger (10.4 PPC):      uncomment Tiger-specific flags below
 
 CC ?= cc
-CFLAGS = -std=c99 -Wall -Wextra -pedantic -O2 \
+
+# Detect Homebrew prefix (arm64 vs x86_64)
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_M),arm64)
+    HOMEBREW_PREFIX ?= /opt/homebrew
+else
+    HOMEBREW_PREFIX ?= /usr/local
+endif
+
+CFLAGS = -std=c11 -Wall -Wextra -pedantic -O2 \
+         -mmacosx-version-min=10.11 \
          -I./include \
-         -I/opt/homebrew/include \
+         -I$(HOMEBREW_PREFIX)/include \
          -DTARGET_OS_MAC=1
 
-YAML_LDFLAGS = -L/opt/homebrew/lib -lyaml
+YAML_LDFLAGS = -L$(HOMEBREW_PREFIX)/lib -lyaml
 
-# Obj-C flags (no -std=c99 - Obj-C uses its own standard)
+# Obj-C flags (no -std= flag - Obj-C uses its own standard)
 OBJCFLAGS = -Wall -Wextra -O2 \
+            -mmacosx-version-min=10.11 \
             -I./include \
-            -I/opt/homebrew/include \
+            -I$(HOMEBREW_PREFIX)/include \
             -DTARGET_OS_MAC=1
 
 # Tiger-specific flags (uncomment on Tiger):
 # CC = gcc-4.0
-# CFLAGS += -mmacosx-version-min=10.4 -I/usr/local/include
-# OBJCFLAGS += -mmacosx-version-min=10.4 -I/usr/local/include
+# CFLAGS = -std=c99 -Wall -Wextra -pedantic -O2 -mmacosx-version-min=10.4 -I./include -I/usr/local/include -DTARGET_OS_MAC=1
+# OBJCFLAGS = -Wall -Wextra -O2 -mmacosx-version-min=10.4 -I./include -I/usr/local/include -DTARGET_OS_MAC=1
 # YAML_LDFLAGS = -L/usr/local/lib -lyaml
 
 LDFLAGS = -framework CoreFoundation \
@@ -30,12 +40,6 @@ LDFLAGS = -framework CoreFoundation \
 
 # CoreServices needed for Bonjour (dns_sd.h)
 LDFLAGS += -framework CoreServices
-
-# OpenSSL for SHA-1 password hashing (available on Tiger 10.4)
-LDFLAGS += -lcrypto
-
-# libyaml needed for Phase 4 (persistence)
-# LDFLAGS += -lyaml
 
 # --- Source files ---
 

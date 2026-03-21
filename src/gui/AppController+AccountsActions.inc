@@ -27,7 +27,7 @@
     if (!_newAccountWindow) {
         _newAccountWindow = [[NSWindow alloc]
             initWithContentRect:NSMakeRect(0, 0, 360, 176)
-                      styleMask:(NSTitledWindowMask | NSClosableWindowMask)
+                      styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
                         backing:NSBackingStoreBuffered
                           defer:NO];
         [_newAccountWindow setReleasedWhenClosed:NO];
@@ -37,7 +37,7 @@
         NSView *content = [_newAccountWindow contentView];
 
         NSTextField *ll = makeLabel(@"Login:", 11.0, NO);
-        [ll setAlignment:NSRightTextAlignment];
+        [ll setAlignment:NSTextAlignmentRight];
         [ll setFrame:NSMakeRect(14, 118, 70, 18)];
         [content addSubview:ll];
         [ll release];
@@ -47,7 +47,7 @@
         [content addSubview:_newAccountLoginField];
 
         NSTextField *nl = makeLabel(@"Display Name:", 11.0, NO);
-        [nl setAlignment:NSRightTextAlignment];
+        [nl setAlignment:NSTextAlignmentRight];
         [nl setFrame:NSMakeRect(14, 86, 70, 18)];
         [content addSubview:nl];
         [nl release];
@@ -93,7 +93,7 @@
     (void)sender;
     NSString *login = [trimmedString([_newAccountLoginField stringValue]) lowercaseString];
     if ([login length] == 0) {
-        NSRunAlertPanel(@"Invalid Login", @"Login cannot be empty.", @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Invalid Login"]; [a setInformativeText:@"Login cannot be empty."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
@@ -103,9 +103,7 @@
     for (i = 0; i < [login length]; i++) {
         unichar ch = [login characterAtIndex:i];
         if (![allowed characterIsMember:ch]) {
-            NSRunAlertPanel(@"Invalid Login",
-                            @"Use lowercase letters, numbers, '-' or '_'.",
-                            @"OK", nil, nil);
+            { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Invalid Login"]; [a setInformativeText:@"Use lowercase letters, numbers, '-' or '_'."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
             return;
         }
     }
@@ -114,9 +112,7 @@
     NSString *path = [usersDir stringByAppendingPathComponent:
         [NSString stringWithFormat:@"%@.yaml", login]];
     if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
-        NSRunAlertPanel(@"Account Exists",
-                        @"An account with that login already exists.",
-                        @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Account Exists"]; [a setInformativeText:@"An account with that login already exists."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
@@ -153,7 +149,7 @@
     NSString *key = [cb toolTip];
     if (!key || [key length] == 0) return;
 
-    if ([cb state] == NSOnState) {
+    if ([cb state] == NSControlStateValueOn) {
         [_accountAccessKeys addObject:key];
     } else {
         [_accountAccessKeys removeObject:key];
@@ -166,10 +162,7 @@
     (void)sender;
     if (!_selectedAccountLogin || [_selectedAccountLogin length] == 0) return;
 
-    int rc = NSRunAlertPanel(@"Reset Password",
-                             @"Clear password for \"%@\" so login requires no password?",
-                             @"Reset", @"Cancel", nil, _selectedAccountLogin);
-    if (rc != NSAlertDefaultReturn) return;
+    { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Reset Password"]; [a setInformativeText:[NSString stringWithFormat:@"Clear password for \"%@\" so login requires no password?", _selectedAccountLogin]]; [a addButtonWithTitle:@"Reset"]; [a addButtonWithTitle:@"Cancel"]; if ([a runModal] != NSAlertFirstButtonReturn) { [a release]; return; } [a release]; }
 
     [_selectedAccountPassword release];
     _selectedAccountPassword = [@"" retain];
@@ -184,7 +177,7 @@
 
     NSString *login = [trimmedString([_accountLoginField stringValue]) lowercaseString];
     if ([login length] == 0) {
-        NSRunAlertPanel(@"Invalid Account", @"Login cannot be empty.", @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Invalid Account"]; [a setInformativeText:@"Login cannot be empty."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
@@ -194,9 +187,7 @@
     for (i = 0; i < [login length]; i++) {
         unichar ch = [login characterAtIndex:i];
         if (![allowed characterIsMember:ch]) {
-            NSRunAlertPanel(@"Invalid Login",
-                            @"Use lowercase letters, numbers, '-' or '_'.",
-                            @"OK", nil, nil);
+            { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Invalid Login"]; [a setInformativeText:@"Use lowercase letters, numbers, '-' or '_'."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
             return;
         }
     }
@@ -212,9 +203,7 @@
     if (!_selectedAccountLogin || ![_selectedAccountLogin isEqualToString:login]) {
         NSFileManager *fm = [NSFileManager defaultManager];
         if ([fm fileExistsAtPath:path]) {
-            NSRunAlertPanel(@"Account Exists",
-                            @"An account with that login already exists.",
-                            @"OK", nil, nil);
+            { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Account Exists"]; [a setInformativeText:@"An account with that login already exists."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
             return;
         }
     }
@@ -235,7 +224,7 @@
     }
 
     if (![yaml writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]) {
-        NSRunAlertPanel(@"Save Failed", @"Could not write account file.", @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Save Failed"]; [a setInformativeText:@"Could not write account file."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
@@ -245,7 +234,7 @@
     [self refreshAccountsList:nil];
     NSUInteger row = [_accountsItems indexOfObject:login];
     if (row != NSNotFound) {
-        [_accountsTableView selectRow:(int)row byExtendingSelection:NO];
+        [_accountsTableView selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row] byExtendingSelection:NO];
     }
 }
 
@@ -255,16 +244,13 @@
     NSString *login = _selectedAccountLogin;
     if (!login || [login length] == 0) return;
 
-    int result = NSRunAlertPanel(@"Delete Account",
-                                 @"Delete account \"%@\"?",
-                                 @"Delete", @"Cancel", nil, login);
-    if (result != NSAlertDefaultReturn) return;
+    { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Delete Account"]; [a setInformativeText:[NSString stringWithFormat:@"Delete account \"%@\"?", login]]; [a addButtonWithTitle:@"Delete"]; [a addButtonWithTitle:@"Cancel"]; if ([a runModal] != NSAlertFirstButtonReturn) { [a release]; return; } [a release]; }
 
     NSString *path = [[_configDir stringByAppendingPathComponent:@"Users"]
         stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.yaml", login]];
     NSFileManager *fm = [NSFileManager defaultManager];
     if ([fm fileExistsAtPath:path]) {
-        [fm removeFileAtPath:path handler:nil];
+        [fm removeItemAtPath:path error:NULL];
     }
 
     [self populateAccountEditorForNewAccount];

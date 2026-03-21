@@ -17,7 +17,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
-#include <libkern/OSAtomic.h>
+#include <stdatomic.h>
 
 #define HL_KEEPALIVE_INTERVAL 300  /* seconds, maps to Go keepaliveInterval */
 #define HL_CONNECT_TIMEOUT    5    /* seconds, maps to Go net.DialTimeout 5s */
@@ -353,12 +353,8 @@ static NSData *taskKeyFromID(const uint8_t id[4])
 {
     /* Maps to: Go Client.Disconnect() */
     _shouldStop = YES;
-    /* Ensure _shouldStop is visible to other threads on PPC.
-     * OSMemoryBarrier is the correct Tiger/Leopard API (deprecated in 10.12+). */
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    OSMemoryBarrier();
-#pragma clang diagnostic pop
+    /* Ensure _shouldStop is visible to other threads */
+    atomic_thread_fence(memory_order_seq_cst);
 
     if (_socketFD >= 0) {
         /* Closing the socket will unblock the read() in receiveLoop */

@@ -9,7 +9,7 @@
 - (void)toggleAutoScroll:(id)sender
 {
     (void)sender;
-    _autoScroll = ([_autoScrollCheckbox state] == NSOnState);
+    _autoScroll = ([_autoScrollCheckbox state] == NSControlStateValueOn);
 }
 
 - (void)logFilterChanged:(id)sender
@@ -21,14 +21,14 @@
 - (void)toggleStdoutVisibility:(id)sender
 {
     (void)sender;
-    _showStdout = ([_showStdoutCheckbox state] == NSOnState);
+    _showStdout = ([_showStdoutCheckbox state] == NSControlStateValueOn);
     [self refreshLogTextView];
 }
 
 - (void)toggleStderrVisibility:(id)sender
 {
     (void)sender;
-    _showStderr = ([_showStderrCheckbox state] == NSOnState);
+    _showStderr = ([_showStderrCheckbox state] == NSControlStateValueOn);
     [self refreshLogTextView];
 }
 

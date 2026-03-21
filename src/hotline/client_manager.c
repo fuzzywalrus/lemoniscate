@@ -11,7 +11,7 @@
 #include "hotline/client_conn.h"
 #include <stdlib.h>
 #include <string.h>
-#include <libkern/OSAtomic.h>
+#include <stdatomic.h>
 
 /* Internal linked list node */
 typedef struct client_node {
@@ -24,7 +24,7 @@ typedef struct {
     hl_client_mgr_t      base;          /* Must be first (vtable pointer) */
     client_node_t        *head;         /* Go: clients map[ClientID]*ClientConn */
     pthread_mutex_t       mu;           /* Go: mu sync.Mutex */
-    volatile int32_t      next_id;      /* Go: nextClientID atomic.Uint32 */
+    _Atomic int32_t       next_id;      /* Go: nextClientID atomic.Uint32 */
 } mem_client_mgr_t;
 
 /* Forward declarations of vtable methods */
@@ -146,9 +146,8 @@ static void mem_add(hl_client_mgr_t *self, hl_client_conn_t *cc)
     mem_client_mgr_t *mgr = (mem_client_mgr_t *)self;
 
     /* Atomic increment for thread-safe ID assignment.
-     * Maps to: Go nextClientID.Add(1)
-     * OSAtomicIncrement32 is available since 10.4 and not deprecated on Tiger. */
-    int32_t new_id = OSAtomicIncrement32(&mgr->next_id);
+     * Maps to: Go nextClientID.Add(1) */
+    int32_t new_id = atomic_fetch_add(&mgr->next_id, 1) + 1;
     hl_write_u16(cc->id, (uint16_t)new_id);
 
     client_node_t *node = (client_node_t *)malloc(sizeof(client_node_t));

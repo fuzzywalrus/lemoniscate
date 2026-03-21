@@ -14,8 +14,7 @@
     NSString *text = [_messageBoardTextView string];
     if (![text writeToFile:path atomically:YES
                   encoding:NSUTF8StringEncoding error:nil]) {
-        NSRunAlertPanel(@"Unable to Save", @"Could not save MessageBoard.txt.",
-                        @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Unable to Save"]; [a setInformativeText:@"Could not save MessageBoard.txt."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
     [self setMessageBoardDirty:NO];
@@ -34,9 +33,7 @@
     if ([name length] == 0) return;
 
     if ([_newsCategoriesByKey objectForKey:name]) {
-        NSRunAlertPanel(@"Category Exists",
-                        @"A category named \"%@\" already exists.",
-                        @"OK", nil, nil, name);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Category Exists"]; [a setInformativeText:[NSString stringWithFormat:@"A category named \"%@\" already exists.", name]]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
@@ -62,10 +59,7 @@
     NSString *key = [_newsCategoryItems objectAtIndex:(unsigned)row];
     if (![_newsCategoriesByKey objectForKey:key]) return;
 
-    int rc = NSRunAlertPanel(@"Delete Category",
-                             @"Delete \"%@\" and all listed articles?",
-                             @"Delete", @"Cancel", nil, key);
-    if (rc != NSAlertDefaultReturn) return;
+    { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Delete Category"]; [a setInformativeText:[NSString stringWithFormat:@"Delete \"%@\" and all listed articles?", key]]; [a addButtonWithTitle:@"Delete"]; [a addButtonWithTitle:@"Cancel"]; if ([a runModal] != NSAlertFirstButtonReturn) { [a release]; return; } [a release]; }
 
     [_newsCategoriesByKey removeObjectForKey:key];
     [_newsSelectedCategoryKey release];
@@ -93,9 +87,7 @@
 - (void)openNewsArticleEditorForNew:(BOOL)isNew
 {
     if (!_newsSelectedCategoryKey || [_newsSelectedCategoryKey length] == 0) {
-        NSRunAlertPanel(@"Select Category",
-                        @"Select a category before editing articles.",
-                        @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Select Category"]; [a setInformativeText:@"Select a category before editing articles."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
@@ -107,8 +99,8 @@
     if (!_newsArticleEditorWindow) {
         _newsArticleEditorWindow = [[NSWindow alloc]
             initWithContentRect:NSMakeRect(0, 0, 640, 430)
-                      styleMask:(NSTitledWindowMask | NSClosableWindowMask |
-                                 NSMiniaturizableWindowMask | NSResizableWindowMask)
+                      styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                                 NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
                         backing:NSBackingStoreBuffered
                           defer:NO];
         [_newsArticleEditorWindow setReleasedWhenClosed:NO];
@@ -117,7 +109,7 @@
         NSView *content = [_newsArticleEditorWindow contentView];
 
         NSTextField *tl = makeLabel(@"Title:", 11.0, NO);
-        [tl setAlignment:NSRightTextAlignment];
+        [tl setAlignment:NSTextAlignmentRight];
         [tl setFrame:NSMakeRect(8, 396, 70, 17)];
         [content addSubview:tl];
         [tl release];
@@ -126,7 +118,7 @@
         [content addSubview:_newsArticleTitleField];
 
         NSTextField *pl = makeLabel(@"Poster:", 11.0, NO);
-        [pl setAlignment:NSRightTextAlignment];
+        [pl setAlignment:NSTextAlignmentRight];
         [pl setFrame:NSMakeRect(8, 364, 70, 17)];
         [content addSubview:pl];
         [pl release];
@@ -135,7 +127,7 @@
         [content addSubview:_newsArticlePosterField];
 
         NSTextField *dl = makeLabel(@"Date:", 11.0, NO);
-        [dl setAlignment:NSRightTextAlignment];
+        [dl setAlignment:NSTextAlignmentRight];
         [dl setFrame:NSMakeRect(308, 364, 60, 17)];
         [content addSubview:dl];
         [dl release];
@@ -227,10 +219,7 @@
     (void)sender;
     if (!_newsSelectedCategoryKey || !_newsSelectedArticleID) return;
 
-    int rc = NSRunAlertPanel(@"Delete Article",
-                             @"Delete selected article from \"%@\"?",
-                             @"Delete", @"Cancel", nil, _newsSelectedCategoryKey);
-    if (rc != NSAlertDefaultReturn) return;
+    { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Delete Article"]; [a setInformativeText:[NSString stringWithFormat:@"Delete selected article from \"%@\"?", _newsSelectedCategoryKey]]; [a addButtonWithTitle:@"Delete"]; [a addButtonWithTitle:@"Cancel"]; if ([a runModal] != NSAlertFirstButtonReturn) { [a release]; return; } [a release]; }
 
     NSMutableDictionary *cat = [_newsCategoriesByKey objectForKey:_newsSelectedCategoryKey];
     NSMutableDictionary *articles = [cat objectForKey:@"articles"];
@@ -258,7 +247,7 @@
     NSString *date = trimmedString([_newsArticleDateField stringValue]);
     NSString *body = [_newsArticleBodyTextView string];
     if ([title length] == 0) {
-        NSRunAlertPanel(@"Missing Title", @"Article title is required.", @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Missing Title"]; [a setInformativeText:@"Article title is required."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
     if ([poster length] == 0) poster = @"admin";

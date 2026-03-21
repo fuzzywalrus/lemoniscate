@@ -57,7 +57,7 @@ static NSButton *makeButton(NSString *title, id target, SEL action)
     NSButton *btn = [[NSButton alloc]
         initWithFrame:NSMakeRect(0, 0, 80, 28)];
     [btn setTitle:title];
-    [btn setBezelStyle:NSRoundedBezelStyle];
+    [btn setBezelStyle:NSBezelStyleRounded];
     [btn setTarget:target];
     [btn setAction:action];
     [btn sizeToFit];
@@ -73,7 +73,7 @@ static float addRow(NSView *parent, NSString *labelText,
                     NSTextField *field, float y, float fieldWidth)
 {
     NSTextField *label = makeLabel(labelText, 11.0, NO);
-    [label setAlignment:NSRightTextAlignment];
+    [label setAlignment:NSTextAlignmentRight];
     [label setFrame:NSMakeRect(6, y + 3, LABEL_WIDTH - 12, 17)];
     [parent addSubview:label];
     [label release];
@@ -91,7 +91,7 @@ static float addRowWithButton(NSView *parent, NSString *labelText,
                                float y, float fieldWidth)
 {
     NSTextField *label = makeLabel(labelText, 11.0, NO);
-    [label setAlignment:NSRightTextAlignment];
+    [label setAlignment:NSTextAlignmentRight];
     [label setFrame:NSMakeRect(6, y + 3, LABEL_WIDTH - 12, 17)];
     [parent addSubview:label];
     [label release];
@@ -154,13 +154,6 @@ static NSString *yamlUnquote(NSString *value)
     return v;
 }
 
-static BOOL yamlBoolValue(NSString *value)
-{
-    NSString *v = [[trimmedString(value) lowercaseString] stringByTrimmingCharactersInSet:
-        [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    return [v isEqualToString:@"true"] || [v isEqualToString:@"yes"] || [v isEqualToString:@"1"];
-}
-
 static int leadingSpaces(NSString *s)
 {
     unsigned i;
@@ -186,26 +179,6 @@ static NSString *yamlQuoted(NSString *s)
                           options:0
                             range:NSMakeRange(0, [m length])];
     return [NSString stringWithFormat:@"\"%@\"", m];
-}
-
-static void parseInlineYAMLArray(NSString *value, NSMutableArray *outItems)
-{
-    if (!value || !outItems) return;
-    NSString *v = trimmedString(value);
-    if (![v hasPrefix:@"["] || ![v hasSuffix:@"]"]) return;
-    if ([v length] < 2) return;
-
-    NSString *inner = trimmedString([v substringWithRange:
-        NSMakeRange(1, [v length] - 2)]);
-    if ([inner length] == 0) return;
-
-    NSArray *parts = [inner componentsSeparatedByString:@","];
-    unsigned i;
-    for (i = 0; i < [parts count]; i++) {
-        NSString *item = yamlUnquote(trimmedString([parts objectAtIndex:i]));
-        if ([item length] == 0) continue;
-        if (![outItems containsObject:item]) [outItems addObject:item];
-    }
 }
 
 static NSString *humanFileSize(unsigned long long size)
