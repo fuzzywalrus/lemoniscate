@@ -70,6 +70,10 @@
     NSTextField *_maxDLPerClientField;
     NSTextField *_maxConnPerIPField;
 
+    /* Monitoring section */
+    NSPopUpButton *_pollingRatePopup;
+    NSTimeInterval _pollingInterval;
+
     /* News settings section */
     NSPopUpButton *_newsDateFormatPopup;
     NSTextField *_newsDelimiterField;
@@ -145,6 +149,7 @@
     NSButton *_onlineBanButton;
     NSButton *_onlineRefreshButton;
     NSTimer *_onlineRefreshTimer;
+    NSTimer *_newsRefreshTimer;
     int _onlinePeakConnections;
 
     /* Files tab */
@@ -297,6 +302,7 @@
 - (void)deleteNewsArticle:(id)sender;
 - (void)saveNewsArticleEditor:(id)sender;
 - (void)cancelNewsArticleEditor:(id)sender;
+- (void)pollingRateChanged:(id)sender;
 
 @end
 

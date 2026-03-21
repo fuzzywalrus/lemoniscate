@@ -82,6 +82,14 @@
         _aboutVersionLabel = nil;
         _aboutUpdateLabel = nil;
 
+        /* Load polling interval preference (default 10s) */
+        {
+            NSNumber *pval = [[NSUserDefaults standardUserDefaults]
+                objectForKey:@"pollingInterval"];
+            _pollingInterval = pval ? [pval doubleValue] : 10.0;
+            if (_pollingInterval <= 0) _pollingInterval = 10.0;
+        }
+
         /* Find server binary (supports Lemoniscate + MobiusAdmin names). */
         NSBundle *bundle = [NSBundle mainBundle];
         NSFileManager *fm = [NSFileManager defaultManager];
@@ -153,6 +161,11 @@
         [_onlineRefreshTimer invalidate];
         [_onlineRefreshTimer release];
         _onlineRefreshTimer = nil;
+    }
+    if (_newsRefreshTimer) {
+        [_newsRefreshTimer invalidate];
+        [_newsRefreshTimer release];
+        _newsRefreshTimer = nil;
     }
     [_onlineUsersByID release];
     [_onlineUsersItems release];

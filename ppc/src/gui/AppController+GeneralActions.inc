@@ -581,10 +581,10 @@
     (void)sender;
 
     if (!_aboutWindow) {
+        float winW = 340, winH = 380;
         _aboutWindow = [[NSWindow alloc]
-            initWithContentRect:NSMakeRect(0, 0, 560, 320)
-                      styleMask:(NSTitledWindowMask | NSClosableWindowMask |
-                                 NSMiniaturizableWindowMask)
+            initWithContentRect:NSMakeRect(0, 0, winW, winH)
+                      styleMask:(NSTitledWindowMask | NSClosableWindowMask)
                         backing:NSBackingStoreBuffered
                           defer:NO];
         [_aboutWindow setTitle:@"About Lemoniscate"];
@@ -592,55 +592,81 @@
         [_aboutWindow setDelegate:(id)self];
 
         NSView *content = [_aboutWindow contentView];
+        float cx = winW / 2.0f; /* center x */
 
-        NSTextField *title = makeLabel(@"Lemoniscate Server GUI", 18.0, YES);
-        [title setFrame:NSMakeRect(20, 280, 360, 28)];
+        /* App icon — load from bundle resources or icns */
+        float iconSz = 128;
+        NSImageView *iconView = [[NSImageView alloc]
+            initWithFrame:NSMakeRect(cx - iconSz / 2, winH - iconSz - 20,
+                                     iconSz, iconSz)];
+        NSImage *appIcon = [NSImage imageNamed:@"NSApplicationIcon"];
+        if (appIcon) [iconView setImage:appIcon];
+        [iconView setImageFrameStyle:NSImageFrameNone];
+        [iconView setEditable:NO];
+        [content addSubview:iconView];
+        [iconView release];
+
+        /* Title */
+        NSTextField *title = makeLabel(@"Lemoniscate", 22.0, YES);
+        [title setAlignment:NSCenterTextAlignment];
+        [title setFrame:NSMakeRect(20, winH - iconSz - 52, winW - 40, 28)];
         [content addSubview:title];
         [title release];
 
-        _aboutVersionLabel = makeLabel(@"", 12.0, NO);
-        [_aboutVersionLabel setFrame:NSMakeRect(20, 254, 520, 18)];
+        /* Subtitle */
+        NSTextField *subtitle = makeLabel(
+            @"A modern Hotline server for PowerPC OS X", 12.0, NO);
+        [subtitle setAlignment:NSCenterTextAlignment];
+        [subtitle setTextColor:[NSColor grayColor]];
+        [subtitle setFrame:NSMakeRect(20, winH - iconSz - 72, winW - 40, 18)];
+        [content addSubview:subtitle];
+        [subtitle release];
+
+        /* Version */
+        _aboutVersionLabel = makeLabel(@"", 11.0, NO);
+        [_aboutVersionLabel setAlignment:NSCenterTextAlignment];
+        [_aboutVersionLabel setTextColor:[NSColor grayColor]];
+        [_aboutVersionLabel setFrame:NSMakeRect(20, winH - iconSz - 92,
+                                                 winW - 40, 16)];
         [content addSubview:_aboutVersionLabel];
 
-        _aboutUpdateLabel = makeLabel(@"No update check run yet.", 11.0, NO);
-        [_aboutUpdateLabel setTextColor:[NSColor grayColor]];
-        [_aboutUpdateLabel setFrame:NSMakeRect(20, 228, 520, 18)];
-        [content addSubview:_aboutUpdateLabel];
+        /* Divider line */
+        NSBox *divider = [[NSBox alloc]
+            initWithFrame:NSMakeRect(30, winH - iconSz - 106, winW - 60, 1)];
+        [divider setBoxType:NSBoxSeparator];
+        [content addSubview:divider];
+        [divider release];
 
-        NSButton *checkBtn = makeButton(@"Check for Updates...", self,
-                                        @selector(checkForUpdates:));
-        [checkBtn setFrame:NSMakeRect(20, 190, 158, 28)];
-        [content addSubview:checkBtn];
-        [checkBtn release];
+        /* Buttons — centered row */
+        float btnW = 130, btnH = 28, btnGap = 10;
+        float btnY = winH - iconSz - 142;
 
-        NSButton *downloadBtn = makeButton(@"Download Latest Build", self,
-                                           @selector(openDownloadPage:));
-        [downloadBtn setFrame:NSMakeRect(188, 190, 172, 28)];
-        [content addSubview:downloadBtn];
-        [downloadBtn release];
-
-        NSButton *homeBtn = makeButton(@"Project Homepage", self,
+        NSButton *homeBtn = makeButton(@"Homepage", self,
                                        @selector(openProjectHomepage:));
-        [homeBtn setFrame:NSMakeRect(20, 146, 140, 28)];
+        [homeBtn setFrame:NSMakeRect(cx - btnW - btnGap / 2, btnY, btnW, btnH)];
         [content addSubview:homeBtn];
         [homeBtn release];
 
-        NSButton *guiBtn = makeButton(@"GUI Repository", self,
-                                      @selector(openGUIRepository:));
-        [guiBtn setFrame:NSMakeRect(170, 146, 120, 28)];
-        [content addSubview:guiBtn];
-        [guiBtn release];
+        NSButton *ghBtn = makeButton(@"GitHub", self,
+                                     @selector(openGUIRepository:));
+        [ghBtn setFrame:NSMakeRect(cx + btnGap / 2, btnY, btnW, btnH)];
+        [content addSubview:ghBtn];
+        [ghBtn release];
 
-        NSButton *srvBtn = makeButton(@"Server Repository", self,
-                                      @selector(openServerRepository:));
-        [srvBtn setFrame:NSMakeRect(300, 146, 140, 28)];
-        [content addSubview:srvBtn];
-        [srvBtn release];
+        /* Update status */
+        _aboutUpdateLabel = makeLabel(@"", 10.0, NO);
+        [_aboutUpdateLabel setAlignment:NSCenterTextAlignment];
+        [_aboutUpdateLabel setTextColor:[NSColor grayColor]];
+        [_aboutUpdateLabel setFrame:NSMakeRect(20, 42, winW - 40, 14)];
+        [content addSubview:_aboutUpdateLabel];
 
-        NSButton *closeBtn = makeButton(@"Close", _aboutWindow, @selector(performClose:));
-        [closeBtn setFrame:NSMakeRect(470, 16, 70, 28)];
-        [content addSubview:closeBtn];
-        [closeBtn release];
+        /* Check for updates button */
+        NSButton *checkBtn = makeButton(@"Check for Updates...", self,
+                                        @selector(checkForUpdates:));
+        float checkW = 170;
+        [checkBtn setFrame:NSMakeRect(cx - checkW / 2, 12, checkW, btnH)];
+        [content addSubview:checkBtn];
+        [checkBtn release];
     }
 
     NSString *shortVer = [[NSBundle mainBundle]
@@ -772,5 +798,57 @@
 
     if ([_processManager isRunning]) {
         [_processManager reloadConfiguration];
+    }
+}
+
+/* ===== Polling rate ===== */
+
+static NSTimeInterval pollingIntervalValues[] = {
+    1.0, 5.0, 10.0, 30.0, 60.0, 300.0, 1800.0, 3600.0
+};
+static int pollingIntervalCount = 8;
+
+- (int)pollingIntervalToIndex:(NSTimeInterval)interval
+{
+    int i;
+    for (i = 0; i < pollingIntervalCount; i++) {
+        if (interval <= pollingIntervalValues[i]) return i;
+    }
+    return 2; /* default: 10 seconds */
+}
+
+- (void)pollingRateChanged:(id)sender
+{
+    (void)sender;
+    int idx = [_pollingRatePopup indexOfSelectedItem];
+    if (idx < 0 || idx >= pollingIntervalCount) idx = 2;
+    _pollingInterval = pollingIntervalValues[idx];
+
+    /* Save preference */
+    [[NSUserDefaults standardUserDefaults]
+        setDouble:_pollingInterval forKey:@"pollingInterval"];
+
+    /* Restart online timer with new interval */
+    if (_onlineRefreshTimer) {
+        [_onlineRefreshTimer invalidate];
+        [_onlineRefreshTimer release];
+        _onlineRefreshTimer = nil;
+    }
+    _onlineRefreshTimer = [[NSTimer scheduledTimerWithTimeInterval:_pollingInterval
+                                                             target:self
+                                                           selector:@selector(refreshOnlineUsers:)
+                                                           userInfo:nil
+                                                            repeats:YES] retain];
+
+    /* Restart news timer if active */
+    if (_newsRefreshTimer) {
+        [_newsRefreshTimer invalidate];
+        [_newsRefreshTimer release];
+        _newsRefreshTimer = nil;
+        _newsRefreshTimer = [[NSTimer scheduledTimerWithTimeInterval:_pollingInterval
+                                                               target:self
+                                                             selector:@selector(refreshNewsTimer:)
+                                                             userInfo:nil
+                                                              repeats:YES] retain];
     }
 }
