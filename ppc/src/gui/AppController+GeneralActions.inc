@@ -708,13 +708,13 @@
 - (void)openProjectHomepage:(id)sender
 {
     (void)sender;
-    [self openProjectURL:@"https://github.com/fuzzywalrus/its-morbin-time"];
+    [self openProjectURL:@"http://old.hotlinenavigator.com/lemoniscate"];
 }
 
 - (void)openDownloadPage:(id)sender
 {
     (void)sender;
-    [self openProjectURL:@"https://github.com/fuzzywalrus/its-morbin-time/releases"];
+    [self openProjectURL:@"http://old.hotlinenavigator.com/lemoniscate"];
 }
 
 - (void)addTracker:(id)sender
