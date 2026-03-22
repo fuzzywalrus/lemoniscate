@@ -18,6 +18,7 @@
 #include "hotline/file_transfer.h"
 #include "hotline/flattened_file_object.h"
 #include "hotline/file_types.h"
+#include "hotline/file_path.h"
 #include "mobius/transaction_handlers.h"
 
 #include <sys/event.h>
@@ -572,10 +573,13 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
         uint16_t len = f_name->data_len < sizeof(cc->user_name) - 1
                      ? f_name->data_len : (uint16_t)(sizeof(cc->user_name) - 1);
         memcpy(cc->user_name, f_name->data, len);
+        cc->user_name[len] = '\0';
         cc->user_name_len = len;
     } else {
-        memcpy(cc->user_name, login_str, strlen(login_str));
-        cc->user_name_len = (uint16_t)strlen(login_str);
+        uint16_t len = (uint16_t)strlen(login_str);
+        memcpy(cc->user_name, login_str, len);
+        cc->user_name[len] = '\0';
+        cc->user_name_len = len;
     }
 
     if (f_icon && f_icon->data_len >= 2) {
@@ -1261,6 +1265,9 @@ upload_cleanup:
                         goto folder_upload_done;
                     seg_name[seg_len] = '\0';
                 }
+                /* Reject traversal attempts (e.g. ".." or embedded "/") */
+                if (!hl_is_safe_path_component(seg_name, seg_len))
+                    goto folder_upload_done;
                 if (rp_len > 0 && rp_len < sizeof(rel_path) - 1)
                     rel_path[rp_len++] = '/';
                 size_t copy_len = seg_len;

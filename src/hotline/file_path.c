@@ -8,7 +8,7 @@
 #include <string.h>
 
 /* Reject path components that could escape the file root */
-static int is_safe_path_component(const char *name, uint8_t len)
+int hl_is_safe_path_component(const char *name, uint8_t len)
 {
     if (len == 0) return 0;
     /* Reject "." and ".." */
@@ -43,7 +43,7 @@ int hl_file_path_deserialize(hl_file_path_t *fp, const uint8_t *buf, size_t buf_
         if (name_len > HL_FILE_PATH_NAME_MAX) return -1;
 
         /* Reject traversal attempts */
-        if (!is_safe_path_component((const char *)(buf + offset + 3), name_len))
+        if (!hl_is_safe_path_component((const char *)(buf + offset + 3), name_len))
             return -1;
 
         memcpy(fp->items[i].name, buf + offset + 3, name_len);

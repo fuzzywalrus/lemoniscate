@@ -262,6 +262,10 @@
     (void)sender;
     NSString *value = trimmedString([_newBanIPField stringValue]);
     if ([value length] == 0) return;
+    if (!isValidIPv4(value)) {
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Invalid IP Address"]; [a setInformativeText:@"Enter a valid IPv4 address (e.g. 192.168.1.1)."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
+        return;
+    }
     if (![_bannedIPs containsObject:value]) [_bannedIPs addObject:value];
     [_newBanIPField setStringValue:@""];
     [self writeBanListData];

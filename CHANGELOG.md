@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.1.3 — 2026-03-22
+
+### Fixed
+
+- **Path traversal in folder uploads**: client-supplied path segments are now validated against traversal attacks (`..`, embedded `/`) using the existing `is_safe_path_component` check.
+- **Missing handler registrations**: `handle_upload_file` and `handle_download_folder` were defined but never registered — single-file uploads and folder downloads now work.
+- **Filename validation in make_alias**: filenames are now checked with `is_safe_filename` before creating symlinks, preventing path escape.
+- **user_name null termination**: `user_name` is now explicitly null-terminated after every `memcpy`, preventing stale data when users change their nickname to something shorter.
+
 ## 0.1.1 — 2026-03-21
 
 ### Fixed

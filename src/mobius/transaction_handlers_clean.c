@@ -98,6 +98,7 @@ static int handle_agreed(hl_client_conn_t *cc, const hl_transaction_t *req,
             uint16_t len = f_name->data_len;
             if (len > sizeof(cc->user_name) - 1) len = sizeof(cc->user_name) - 1;
             memcpy(cc->user_name, f_name->data, len);
+            cc->user_name[len] = '\0';
             cc->user_name_len = len;
         }
     }
@@ -164,6 +165,7 @@ static int handle_set_client_user_info(hl_client_conn_t *cc, const hl_transactio
         uint16_t len = f_name->data_len;
         if (len > sizeof(cc->user_name) - 1) len = sizeof(cc->user_name) - 1;
         memcpy(cc->user_name, f_name->data, len);
+        cc->user_name[len] = '\0';
         cc->user_name_len = len;
     }
 
@@ -1926,6 +1928,9 @@ static int handle_make_alias(hl_client_conn_t *cc, const hl_transaction_t *req,
     size_t nlen = f_name->data_len < 255 ? f_name->data_len : 255;
     memcpy(filename, f_name->data, nlen);
     filename[nlen] = '\0';
+
+    if (!is_safe_filename(filename, nlen))
+        return reply_err(cc, req, "Invalid file name.", out, out_count);
 
     char src_path[2048];
     snprintf(src_path, sizeof(src_path), "%s/%s", dir_path, filename);
