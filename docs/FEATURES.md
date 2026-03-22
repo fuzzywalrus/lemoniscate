@@ -1,6 +1,6 @@
 # Lemoniscate Server Features
 
-**Version 0.1.2** — A Hotline server for Mac OS X Tiger (PowerPC)
+**Version 0.1.3** — A Hotline server for Mac OS X Tiger (PowerPC)
 
 ---
 
