@@ -2,6 +2,22 @@
 
 This file tracks what was and wasn't integrated from the `main` branch into the `modern` branch, and why. The `modern` branch targets macOS 10.11+ with zero deprecation warnings, using current APIs throughout.
 
+## Sync process
+
+When new commits land on `main`:
+
+1. `git fetch origin main`
+2. `git diff HEAD..origin/main` — review what changed
+3. Manually re-implement changes on `modern`, replacing deprecated APIs with modern equivalents
+4. Update the "Integrated from main" section below with what was ported
+5. `git merge origin/main -s ours` — record commit parity without overwriting files
+6. The merge commit message should reference this file
+
+### Last synced
+
+- **main commit:** `ea86c90` (v0.1.3 + Documentation update, 2026-03-21)
+- **Parity merge on modern:** `git merge origin/main -s ours`
+
 ## Integrated from main
 
 ### Security Fixes
