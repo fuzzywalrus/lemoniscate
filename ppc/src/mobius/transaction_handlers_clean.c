@@ -98,6 +98,7 @@ static int handle_agreed(hl_client_conn_t *cc, const hl_transaction_t *req,
             uint16_t len = f_name->data_len;
             if (len > sizeof(cc->user_name) - 1) len = sizeof(cc->user_name) - 1;
             memcpy(cc->user_name, f_name->data, len);
+            cc->user_name[len] = '\0';
             cc->user_name_len = len;
         }
     }
@@ -164,6 +165,7 @@ static int handle_set_client_user_info(hl_client_conn_t *cc, const hl_transactio
         uint16_t len = f_name->data_len;
         if (len > sizeof(cc->user_name) - 1) len = sizeof(cc->user_name) - 1;
         memcpy(cc->user_name, f_name->data, len);
+        cc->user_name[len] = '\0';
         cc->user_name_len = len;
     }
 
@@ -1927,6 +1929,9 @@ static int handle_make_alias(hl_client_conn_t *cc, const hl_transaction_t *req,
     memcpy(filename, f_name->data, nlen);
     filename[nlen] = '\0';
 
+    if (!is_safe_filename(filename, nlen))
+        return reply_err(cc, req, "Invalid file name.", out, out_count);
+
     char src_path[2048];
     snprintf(src_path, sizeof(src_path), "%s/%s", dir_path, filename);
 
@@ -2366,6 +2371,8 @@ void mobius_register_handlers(hl_server_t *srv)
     hl_server_handle_func(srv, TRAN_NEW_FOLDER,          handle_new_folder);
     hl_server_handle_func(srv, TRAN_MAKE_FILE_ALIAS,     handle_make_alias);
     hl_server_handle_func(srv, TRAN_DOWNLOAD_FILE,       handle_download_file);
+    hl_server_handle_func(srv, TRAN_UPLOAD_FILE,         handle_upload_file);
     hl_server_handle_func(srv, TRAN_UPLOAD_FLDR,         handle_upload_folder);
+    hl_server_handle_func(srv, TRAN_DOWNLOAD_FLDR,       handle_download_folder);
     hl_server_handle_func(srv, TRAN_DOWNLOAD_BANNER,     handle_download_banner);
 }

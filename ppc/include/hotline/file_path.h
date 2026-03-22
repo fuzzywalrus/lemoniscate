@@ -55,4 +55,11 @@ int hl_file_path_to_platform(const hl_file_path_t *fp, const char *root,
  */
 int hl_file_path_from_string(hl_file_path_t *fp, const char *path);
 
+/*
+ * hl_is_safe_path_component - Reject path components that could escape the
+ * file root (".", "..", or containing '/' or '\\').
+ * Returns 1 if safe, 0 if unsafe.
+ */
+int hl_is_safe_path_component(const char *name, uint8_t len);
+
 #endif /* HOTLINE_FILE_PATH_H */
