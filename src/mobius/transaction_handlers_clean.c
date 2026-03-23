@@ -122,11 +122,14 @@ static int handle_agreed(hl_client_conn_t *cc, const hl_transaction_t *req,
         cc->auto_reply_len = len;
     }
 
-    /* Notify all other clients of this user's presence */
-    hl_transaction_t notify;
-    hl_build_notify_change_user(cc, &notify);
-    hl_server_broadcast(cc->server, cc, &notify);
-    hl_build_notify_change_user_free(&notify);
+    /* Notify all other clients of this user's presence (unless hidden) */
+    if (!cc->account ||
+        hl_access_is_set(cc->account->access, ACCESS_SHOW_IN_LIST)) {
+        hl_transaction_t notify;
+        hl_build_notify_change_user(cc, &notify);
+        hl_server_broadcast(cc->server, cc, &notify);
+        hl_build_notify_change_user_free(&notify);
+    }
 
     /* Send server banner notification with banner type */
     if (cc->server->banner && cc->server->banner_len > 0) {
@@ -173,11 +176,14 @@ static int handle_set_client_user_info(hl_client_conn_t *cc, const hl_transactio
         memcpy(cc->icon, f_icon->data + (f_icon->data_len - 2), 2);
     }
 
-    /* Broadcast change to all clients */
-    hl_transaction_t notify;
-    hl_build_notify_change_user(cc, &notify);
-    hl_server_broadcast(cc->server, cc, &notify);
-    hl_build_notify_change_user_free(&notify);
+    /* Broadcast change to all clients (unless hidden) */
+    if (!cc->account ||
+        hl_access_is_set(cc->account->access, ACCESS_SHOW_IN_LIST)) {
+        hl_transaction_t notify;
+        hl_build_notify_change_user(cc, &notify);
+        hl_server_broadcast(cc->server, cc, &notify);
+        hl_build_notify_change_user_free(&notify);
+    }
 
     *out = NULL;
     *out_count = 0;
@@ -360,6 +366,12 @@ static int handle_get_user_name_list(hl_client_conn_t *cc, const hl_transaction_
         if (fields) {
             int i;
             for (i = 0; i < client_count; i++) {
+                /* Skip users without ShowInList permission */
+                if (clients[i]->account &&
+                    !hl_access_is_set(clients[i]->account->access,
+                                      ACCESS_SHOW_IN_LIST))
+                    continue;
+
                 hl_user_t u;
                 memcpy(u.id, clients[i]->id, 2);
                 memcpy(u.icon, clients[i]->icon, 2);
@@ -1954,9 +1966,9 @@ static int handle_make_alias(hl_client_conn_t *cc, const hl_transaction_t *req,
     return reply_empty(cc, req, out, out_count);
 }
 
-/* File transfer handlers — these set up transfers but actual data movement
- * happens on the file transfer port (port+1). For now, return empty replies
- * since the file transfer port handler is a stub. */
+/* File transfer handlers — these set up transfer entries and return reference
+ * numbers. Actual data movement happens on the file transfer port (port+1)
+ * in handle_file_transfer_connection(). */
 
 static int handle_download_file(hl_client_conn_t *cc, const hl_transaction_t *req,
                                 hl_transaction_t **out, int *out_count)
@@ -2035,10 +2047,11 @@ static int handle_download_file(hl_client_conn_t *cc, const hl_transaction_t *re
     if (srv->file_transfer_mgr)
         srv->file_transfer_mgr->vt->add(srv->file_transfer_mgr, ft);
 
-    /* Reply with ref_num, transfer_size, file_size, waiting_count */
+    /* Reply with ref_num, transfer_size, file_size, waiting_count, resume flag */
     uint8_t wait_count[2] = {0, 0};
+    uint8_t resume_supported[2] = {0x00, 0x01}; /* Advertise resume capability */
 
-    hl_field_t fields[4];
+    hl_field_t fields[5];
     hl_field_new(&fields[0], FIELD_REF_NUM, ft->ref_num, 4);
     hl_field_new(&fields[1], FIELD_TRANSFER_SIZE, ft->transfer_size, 4);
 
@@ -2046,14 +2059,15 @@ static int handle_download_file(hl_client_conn_t *cc, const hl_transaction_t *re
     hl_write_u32(fsize_bytes, file_size);
     hl_field_new(&fields[2], FIELD_FILE_SIZE, fsize_bytes, 4);
     hl_field_new(&fields[3], FIELD_WAITING_COUNT, wait_count, 2);
+    hl_field_new(&fields[4], FIELD_FILE_TRANSFER_OPTS, resume_supported, 2);
 
     hl_transaction_t *reply = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
-    hl_transaction_new(reply, req->type, cc->id, fields, 4);
+    hl_transaction_new(reply, req->type, cc->id, fields, 5);
     reply->is_reply = 1;
     memcpy(reply->id, req->id, 4);
 
     int k;
-    for (k = 0; k < 4; k++) hl_field_free(&fields[k]);
+    for (k = 0; k < 5; k++) hl_field_free(&fields[k]);
     free(ft); /* add() copied it into the manager's internal array */
 
     *out = reply;

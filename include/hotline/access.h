@@ -26,7 +26,7 @@
 #define ACCESS_SEND_CHAT          10   /* Can Send Chat */
 #define ACCESS_OPEN_CHAT          11   /* Can Initiate Private Chat */
 #define ACCESS_CLOSE_CHAT         12   /* (Unused in practice) */
-#define ACCESS_SHOW_IN_LIST       13   /* (Unused in practice) */
+#define ACCESS_SHOW_IN_LIST       13   /* Show user in user list */
 #define ACCESS_CREATE_USER        14   /* Can Create Accounts */
 #define ACCESS_DELETE_USER        15   /* Can Delete Accounts */
 #define ACCESS_OPEN_USER          16   /* Can Read Accounts */
