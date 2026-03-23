@@ -320,17 +320,20 @@ static void disconnect_client(hl_server_t *srv, hl_client_conn_t *cc, int kq)
     close(cc->fd);
     cc->fd = -1;
 
-    /* Notify other clients */
-    hl_transaction_t notify;
-    memset(&notify, 0, sizeof(notify));
-    memcpy(notify.type, TRAN_NOTIFY_DELETE_USER, 2);
-    hl_field_t nfield;
-    hl_field_new(&nfield, FIELD_USER_ID, cc->id, 2);
-    notify.fields = &nfield;
-    notify.field_count = 1;
-    hl_server_broadcast(srv, cc, &notify);
-    hl_field_free(&nfield);
-    notify.fields = NULL;
+    /* Notify other clients (skip for users without ShowInList permission) */
+    if (!cc->account ||
+        hl_access_is_set(cc->account->access, ACCESS_SHOW_IN_LIST)) {
+        hl_transaction_t notify;
+        memset(&notify, 0, sizeof(notify));
+        memcpy(notify.type, TRAN_NOTIFY_DELETE_USER, 2);
+        hl_field_t nfield;
+        hl_field_new(&nfield, FIELD_USER_ID, cc->id, 2);
+        notify.fields = &nfield;
+        notify.field_count = 1;
+        hl_server_broadcast(srv, cc, &notify);
+        hl_field_free(&nfield);
+        notify.fields = NULL;
+    }
 
     /* Remove from client manager */
     srv->client_mgr->vt->del(srv->client_mgr, cc->id);
@@ -398,8 +401,11 @@ static void process_client_data(hl_server_t *srv, hl_client_conn_t *cc, int kq)
                 /* Clear away flag if set */
                 if (hl_user_flags_is_set(cc->flags, HL_USER_FLAG_AWAY)) {
                     hl_user_flags_set(cc->flags, HL_USER_FLAG_AWAY, 0);
-                    /* Notify others that user is no longer away. */
-                    broadcast_notify_change_user(srv, cc);
+                    /* Notify others that user is no longer away (skip hidden) */
+                    if (!cc->account ||
+                        hl_access_is_set(cc->account->access,
+                                         ACCESS_SHOW_IN_LIST))
+                        broadcast_notify_change_user(srv, cc);
                 }
                 pthread_rwlock_unlock(&cc->mu);
             }
@@ -464,17 +470,36 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
         return;
     }
 
+    /* Quick peek to detect zero-data connections (e.g. tracker probes).
+     * Trackers do a TCP connect-back with no data to verify the server
+     * is reachable — handle these fast instead of blocking for seconds. */
+    {
+        struct timeval peek_tv;
+        peek_tv.tv_sec = 1;
+        peek_tv.tv_usec = 0;
+        setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &peek_tv, sizeof(peek_tv));
+        uint8_t peek_buf[1];
+        ssize_t peeked = recv(client_fd, peek_buf, 1, MSG_PEEK);
+        if (peeked <= 0) {
+            hl_log_info(srv->logger, "Zero-data connection from %s (tracker probe?)",
+                        ip_str);
+            close(client_fd);
+            return;
+        }
+    }
+
     /* Set socket timeouts to prevent a slow client from blocking the event loop.
      * These are removed after login completes (client moves to non-blocking kqueue). */
     struct timeval tv;
-    tv.tv_sec = 10;
+    tv.tv_sec = 3;
     tv.tv_usec = 0;
     setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
     /* Handshake */
     if (hl_perform_handshake_server(client_fd) < 0) {
-        hl_log_error(srv->logger, "Handshake failed: %s", ip_str);
+        hl_log_info(srv->logger, "Handshake failed from %s (possible tracker probe)",
+                    ip_str);
         close(client_fd);
         return;
     }
@@ -752,9 +777,12 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
 
     /* Notify others immediately for 1.2.3-style login flows where the
      * nickname was already provided in TranLogin. Newer clients are
-     * announced on TranAgreed after sending user info/options. */
+     * announced on TranAgreed after sending user info/options.
+     * Skip notification for users without ShowInList permission. */
     if (f_name && f_name->data_len > 0) {
-        broadcast_notify_change_user(srv, cc);
+        if (!cc->account ||
+            hl_access_is_set(cc->account->access, ACCESS_SHOW_IN_LIST))
+            broadcast_notify_change_user(srv, cc);
     }
 
     hl_transaction_free(&login_tran);
@@ -1441,8 +1469,11 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                         if (cc->idle_time > HL_USER_IDLE_SECONDS &&
                             !hl_user_flags_is_set(cc->flags, HL_USER_FLAG_AWAY)) {
                             hl_user_flags_set(cc->flags, HL_USER_FLAG_AWAY, 1);
-                            /* Notify others that user is now away. */
-                            broadcast_notify_change_user(srv, cc);
+                            /* Notify others that user is now away (skip hidden) */
+                            if (!cc->account ||
+                                hl_access_is_set(cc->account->access,
+                                                 ACCESS_SHOW_IN_LIST))
+                                broadcast_notify_change_user(srv, cc);
                         }
                         pthread_rwlock_unlock(&cc->mu);
                     }

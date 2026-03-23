@@ -71,7 +71,7 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 - [x] **TranDownloadFldr** (210) - Interactive multi-file protocol with recursive walk, FileHeaders, and per-file FILP
 - [x] **TranUploadFldr** (213) - Interactive multi-file receive with path parsing, mkdir, and per-file FILP receive
 - [x] **TranDownloadBanner** (212) - Banner image download
-- [x] **File transfer resume** - Parses RFLT from FieldFileResumeData, seeks past offset in DATA fork
+- [x] **File transfer resume** - Parses RFLT from FieldFileResumeData, seeks past offset in DATA fork. Advertises resume support via FIELD_FILE_TRANSFER_OPTS in download reply.
 
 ---
 
@@ -185,9 +185,9 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 
 ### Low Priority (polish)
 
-10. **ACCESS_SHOW_IN_LIST** - Hide users from user list
-11. **ACCESS_VIEW_DROP_BOXES** - Drop box folder visibility
-12. **ACCESS_CHANGE_OWN_PASS** - Self-service password change
+10. ~~**ACCESS_SHOW_IN_LIST** - Hide users from user list~~ DONE
+11. ~~**ACCESS_VIEW_DROP_BOXES** - Drop box folder visibility~~ Already implemented
+12. **ACCESS_CHANGE_OWN_PASS** - Self-service password change (no protocol transaction exists)
 13. **TLS/SSL support** - Encrypted connections
 14. **Encoding support** - Mobius has UTF-8/MacRoman config; we assume MacRoman
 15. ~~**malloc error on banner download**~~ FIXED — transfer manager uses internal array, not heap; callers were incorrectly free()ing the pointer
