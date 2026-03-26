@@ -34,6 +34,12 @@ typedef struct {
     int  ignore_file_count;
     int  enable_bonjour;                         /* Go: EnableBonjour bool                */
     char encoding[16];                           /* Go: Encoding string ("macintosh"|"utf8") */
+    int  enable_hope;                            /* EnableHOPE: HOPE secure login support */
+    int  hope_legacy_mode;                       /* HOPELegacyMode: allow INVERSE + bare MD5/SHA1 */
+    char hope_required_prefix[32];               /* HOPERequiredPrefix: name prefix for E2E-only content */
+    char tls_cert_path[HL_CONFIG_PATH_MAX];      /* TLSCertFile: path to PEM certificate  */
+    char tls_key_path[HL_CONFIG_PATH_MAX];       /* TLSKeyFile: path to PEM private key   */
+    int  tls_port;                                /* TLSPort: TLS base port (0 = disabled) */
 } hl_config_t;
 
 /* Initialize config with defaults */

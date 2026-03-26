@@ -18,6 +18,8 @@
 #include "hotline/file_wrapper.h"
 #include "hotline/time_conv.h"
 #include "hotline/password.h"
+#include "hotline/hope.h"
+#include "hotline/file_name_with_info.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -836,12 +838,17 @@ static int handle_new_user(hl_client_conn_t *cc, const hl_transaction_t *req,
         memcpy(acct.access, f_access->data, 8);
     }
 
-    /* Password — hash with salted SHA-1 */
+    /* Password — store plaintext when HOPE is enabled, otherwise hash */
     const hl_field_t *f_pass = hl_transaction_get_field(req, FIELD_USER_PASSWORD);
     if (f_pass && f_pass->data_len > 0) {
         char plaintext[128];
         hl_field_decode_obfuscated_string(f_pass, plaintext, sizeof(plaintext));
-        hl_password_hash(plaintext, acct.password, sizeof(acct.password));
+        if (cc->server->config.enable_hope) {
+            /* HOPE requires plaintext passwords for MAC verification */
+            strncpy(acct.password, plaintext, sizeof(acct.password) - 1);
+        } else {
+            hl_password_hash(plaintext, acct.password, sizeof(acct.password));
+        }
         memset(plaintext, 0, sizeof(plaintext));
     }
 
@@ -1003,11 +1010,19 @@ static int handle_update_user(hl_client_conn_t *cc, const hl_transaction_t *req,
                 if (!(sf_pass->data_len == 1 && sf_pass->data[0] == 0)) {
                     char pw[128];
                     hl_field_decode_obfuscated_string(sf_pass, pw, sizeof(pw));
-                    hl_password_hash(pw, existing->password, sizeof(existing->password));
+                    if (cc->server->config.enable_hope) {
+                        strncpy(existing->password, pw, sizeof(existing->password) - 1);
+                    } else {
+                        hl_password_hash(pw, existing->password, sizeof(existing->password));
+                    }
                     memset(pw, 0, sizeof(pw));
                 }
             } else {
-                hl_password_hash("", existing->password, sizeof(existing->password));
+                if (cc->server->config.enable_hope) {
+                    existing->password[0] = '\0';
+                } else {
+                    hl_password_hash("", existing->password, sizeof(existing->password));
+                }
             }
 
             if (is_rename) {
@@ -1036,7 +1051,11 @@ static int handle_update_user(hl_client_conn_t *cc, const hl_transaction_t *req,
             if (sf_pass && sf_pass->data_len > 0) {
                 char pw[128];
                 hl_field_decode_obfuscated_string(sf_pass, pw, sizeof(pw));
-                hl_password_hash(pw, acct.password, sizeof(acct.password));
+                if (cc->server->config.enable_hope) {
+                    strncpy(acct.password, pw, sizeof(acct.password) - 1);
+                } else {
+                    hl_password_hash(pw, acct.password, sizeof(acct.password));
+                }
                 memset(pw, 0, sizeof(pw));
             }
             srv->account_mgr->vt->create(srv->account_mgr, &acct);
@@ -1300,6 +1319,9 @@ static int handle_get_news_cat_name_list(hl_client_conn_t *cc, const hl_transact
      * We need to split the serialized data into individual fields. */
     /* For simplicity, send the entire blob as one field per category.
      * Re-parse the buffer to split into individual entries. */
+    const char *e2e_prefix = cc->server->config.hope_required_prefix;
+    int is_encrypted = hl_client_is_encrypted(cc);
+
     hl_field_t *fields = (hl_field_t *)calloc((size_t)cat_count, sizeof(hl_field_t));
     size_t off = 0;
     int fi = 0;
@@ -1312,6 +1334,14 @@ static int handle_get_news_cat_name_list(hl_client_conn_t *cc, const hl_transact
         if (off + hdr_size >= cat_len) break;
         uint8_t name_len = cat_data[off + hdr_size];
         size_t entry_len = hdr_size + 1 + name_len;
+
+        /* Filter E2E categories for non-encrypted clients */
+        const char *cat_name_ptr = (const char *)(cat_data + off + hdr_size + 1);
+        if (!is_encrypted && e2e_prefix[0] != '\0' &&
+            hl_hope_name_requires_encryption(cat_name_ptr, name_len, e2e_prefix)) {
+            off += entry_len;
+            continue;
+        }
 
         hl_field_new(&fields[fi], FIELD_NEWS_CAT_LIST_DATA15,
                      cat_data + off, (uint16_t)entry_len);
@@ -1346,6 +1376,16 @@ static int handle_get_news_art_name_list(hl_client_conn_t *cc, const hl_transact
 
     char cat_name[TN_MAX_NAME_LEN];
     decode_news_path_cat(req, cat_name, sizeof(cat_name));
+
+    /* Check E2E encryption gating on the category */
+    {
+        const char *e2e_prefix = srv->config.hope_required_prefix;
+        if (e2e_prefix[0] != '\0' &&
+            hl_hope_name_requires_encryption(cat_name, strlen(cat_name), e2e_prefix) &&
+            !hl_client_is_encrypted(cc))
+            return reply_err(cc, req,
+                "This news category requires an encrypted connection.", out, out_count);
+    }
 
     uint8_t *art_data = NULL;
     size_t art_len = 0;
@@ -1384,6 +1424,16 @@ static int handle_get_news_art_data(hl_client_conn_t *cc, const hl_transaction_t
 
     char cat_name[TN_MAX_NAME_LEN];
     decode_news_path_cat(req, cat_name, sizeof(cat_name));
+
+    /* Check E2E encryption gating */
+    {
+        const char *e2e_prefix = srv->config.hope_required_prefix;
+        if (e2e_prefix[0] != '\0' &&
+            hl_hope_name_requires_encryption(cat_name, strlen(cat_name), e2e_prefix) &&
+            !hl_client_is_encrypted(cc))
+            return reply_err(cc, req,
+                "This news category requires an encrypted connection.", out, out_count);
+    }
 
     /* Decode article ID — can be 2 or 4 bytes */
     const hl_field_t *id_field = hl_transaction_get_field(req, FIELD_NEWS_ART_ID);
@@ -1494,6 +1544,16 @@ static int handle_post_news_art(hl_client_conn_t *cc, const hl_transaction_t *re
 
     char cat_name[TN_MAX_NAME_LEN];
     decode_news_path_cat(req, cat_name, sizeof(cat_name));
+
+    /* Check E2E encryption gating */
+    {
+        const char *e2e_prefix = srv->config.hope_required_prefix;
+        if (e2e_prefix[0] != '\0' &&
+            hl_hope_name_requires_encryption(cat_name, strlen(cat_name), e2e_prefix) &&
+            !hl_client_is_encrypted(cc))
+            return reply_err(cc, req,
+                "This news category requires an encrypted connection.", out, out_count);
+    }
 
     /* Get parent article ID (can be 2 or 4 bytes) */
     uint32_t parent_id = 0;
@@ -1645,17 +1705,108 @@ static int handle_get_file_name_list(hl_client_conn_t *cc, const hl_transaction_
         !hl_client_conn_authorize(cc, ACCESS_VIEW_DROP_BOXES))
         return reply_err(cc, req, "You are not allowed to view drop boxes.", out, out_count);
 
+    /* Check E2E encryption gating on the directory itself */
+    const char *e2e_prefix = cc->server->config.hope_required_prefix;
+    if (e2e_prefix[0] != '\0') {
+        const char *root = cc->server->config.file_root;
+        if (cc->account && cc->account->file_root[0] != '\0')
+            root = cc->account->file_root;
+        if (hl_hope_path_requires_encryption(dir_path, root, e2e_prefix) &&
+            !hl_client_is_encrypted(cc))
+            return reply_err(cc, req,
+                "This folder requires an encrypted connection.", out, out_count);
+    }
+
     int field_count = 0;
     hl_field_t *fields = hl_get_file_name_list(dir_path, &field_count);
 
+    /* Filter out E2E entries for non-encrypted clients */
+    int filtered_count = field_count;
+    if (fields && e2e_prefix[0] != '\0' && !hl_client_is_encrypted(cc)) {
+        int dst = 0;
+        int i;
+        for (i = 0; i < field_count; i++) {
+            /* Extract name from FNWI field: header(20 bytes) + name */
+            int hide = 0;
+            if (fields[i].data_len > HL_FNWI_HEADER_SIZE) {
+                const char *entry_name = (const char *)(fields[i].data + HL_FNWI_HEADER_SIZE);
+                size_t entry_name_len = fields[i].data_len - HL_FNWI_HEADER_SIZE;
+                hide = hl_hope_name_requires_encryption(entry_name, entry_name_len,
+                                                        e2e_prefix);
+            }
+            if (hide) {
+                hl_field_free(&fields[i]);
+            } else {
+                if (dst != i) fields[dst] = fields[i];
+                dst++;
+            }
+        }
+        filtered_count = dst;
+    }
+
+    /* Large file mode: interleave DATA_FILESIZE64 after each FNWI entry */
+    hl_field_t *reply_fields = fields;
+    int reply_count = filtered_count;
+
+    if (cc->large_file_mode && filtered_count > 0 && fields) {
+        reply_count = filtered_count * 2;
+        reply_fields = (hl_field_t *)calloc((size_t)reply_count, sizeof(hl_field_t));
+        if (reply_fields) {
+            int ri = 0;
+            int i;
+            for (i = 0; i < filtered_count; i++) {
+                /* Copy FNWI field */
+                reply_fields[ri++] = fields[i];
+
+                /* Extract name and stat for 64-bit size */
+                uint64_t fsize64 = 0;
+                if (fields[i].data_len > HL_FNWI_HEADER_SIZE) {
+                    size_t name_len = fields[i].data_len - HL_FNWI_HEADER_SIZE;
+                    char entry_name[256];
+                    if (name_len > 255) name_len = 255;
+                    memcpy(entry_name, fields[i].data + HL_FNWI_HEADER_SIZE, name_len);
+                    entry_name[name_len] = '\0';
+
+                    char entry_path[2048];
+                    snprintf(entry_path, sizeof(entry_path), "%s/%s", dir_path, entry_name);
+                    struct stat est;
+                    if (stat(entry_path, &est) == 0) {
+                        if (S_ISDIR(est.st_mode)) {
+                            /* For dirs, size field holds item count */
+                            fsize64 = (uint64_t)hl_read_u32(fields[i].data + 8);
+                        } else {
+                            fsize64 = (uint64_t)est.st_size;
+                        }
+                    }
+                }
+
+                uint8_t size64_buf[8];
+                hl_write_u64(size64_buf, fsize64);
+                hl_field_new(&reply_fields[ri++], FIELD_FILE_SIZE_64, size64_buf, 8);
+            }
+            reply_count = ri;
+            /* Don't free individual fields — they were moved to reply_fields */
+            free(fields);
+            fields = NULL;
+        } else {
+            /* Allocation failed, fall back to non-64-bit */
+            reply_fields = fields;
+            reply_count = filtered_count;
+        }
+    }
+
     *out = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
     if (!*out) return -1;
-    hl_client_conn_new_reply(cc, req, *out, fields, (uint16_t)field_count);
+    hl_client_conn_new_reply(cc, req, *out, reply_fields, (uint16_t)reply_count);
     *out_count = 1;
 
-    if (fields) {
+    if (reply_fields) {
         int i;
-        for (i = 0; i < field_count; i++) hl_field_free(&fields[i]);
+        for (i = 0; i < reply_count; i++) hl_field_free(&reply_fields[i]);
+        free(reply_fields);
+    } else if (fields) {
+        int i;
+        for (i = 0; i < filtered_count; i++) hl_field_free(&fields[i]);
         free(fields);
     }
     return 0;
@@ -1695,7 +1846,7 @@ static int handle_get_file_info(hl_client_conn_t *cc, const hl_transaction_t *re
         ft = hl_file_type_from_filename(filename);
     }
 
-    hl_field_t fields[8];
+    hl_field_t fields[9]; /* +1 for 64-bit size */
     int fc = 0;
     memset(fields, 0, sizeof(fields));
 
@@ -1719,9 +1870,17 @@ static int handle_get_file_info(hl_client_conn_t *cc, const hl_transaction_t *re
     hl_field_new(&fields[fc++], FIELD_FILE_MODIFY_DATE, mt, 8);
 
     if (!S_ISDIR(st.st_mode)) {
+        uint64_t fsize64 = (uint64_t)st.st_size;
+        uint32_t fsize32 = (fsize64 > 0xFFFFFFFF) ? 0xFFFFFFFF : (uint32_t)fsize64;
         uint8_t size_buf[4];
-        hl_write_u32(size_buf, (uint32_t)st.st_size);
+        hl_write_u32(size_buf, fsize32);
         hl_field_new(&fields[fc++], FIELD_FILE_SIZE, size_buf, 4);
+
+        if (cc->large_file_mode) {
+            uint8_t size64_buf[8];
+            hl_write_u64(size64_buf, fsize64);
+            hl_field_new(&fields[fc++], FIELD_FILE_SIZE_64, size64_buf, 8);
+        }
     }
 
     *out = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
@@ -1988,12 +2147,27 @@ static int handle_download_file(hl_client_conn_t *cc, const hl_transaction_t *re
     char full_path[2048];
     snprintf(full_path, sizeof(full_path), "%s/%s", file_path, filename);
 
+    /* Check E2E encryption gating */
+    {
+        const char *e2e_prefix = srv->config.hope_required_prefix;
+        if (e2e_prefix[0] != '\0') {
+            const char *root = srv->config.file_root;
+            if (cc->account && cc->account->file_root[0] != '\0')
+                root = cc->account->file_root;
+            if (hl_hope_path_requires_encryption(full_path, root, e2e_prefix) &&
+                !hl_client_is_encrypted(cc))
+                return reply_err(cc, req,
+                    "This file requires an encrypted connection.", out, out_count);
+        }
+    }
+
     /* Get file size */
     struct stat st;
     if (stat(full_path, &st) != 0 || S_ISDIR(st.st_mode))
         return reply_err(cc, req, "File not found.", out, out_count);
 
-    uint32_t file_size = (uint32_t)st.st_size;
+    uint64_t file_size_64 = (uint64_t)st.st_size;
+    uint32_t file_size = (file_size_64 > 0xFFFFFFFF) ? 0xFFFFFFFF : (uint32_t)file_size_64;
 
     /* Parse optional resume data (RFLT format) */
     uint32_t data_offset = 0;
@@ -2035,25 +2209,38 @@ static int handle_download_file(hl_client_conn_t *cc, const hl_transaction_t *re
     if (srv->file_transfer_mgr)
         srv->file_transfer_mgr->vt->add(srv->file_transfer_mgr, ft);
 
-    /* Reply with ref_num, transfer_size, file_size, waiting_count */
+    /* Reply with ref_num, transfer_size, file_size, waiting_count
+     * + 64-bit companions in large file mode */
     uint8_t wait_count[2] = {0, 0};
 
-    hl_field_t fields[4];
-    hl_field_new(&fields[0], FIELD_REF_NUM, ft->ref_num, 4);
-    hl_field_new(&fields[1], FIELD_TRANSFER_SIZE, ft->transfer_size, 4);
+    hl_field_t fields[7]; /* max: 4 legacy + 2 x 64-bit + waiting */
+    int fc = 0;
+    hl_field_new(&fields[fc++], FIELD_REF_NUM, ft->ref_num, 4);
+    hl_field_new(&fields[fc++], FIELD_TRANSFER_SIZE, ft->transfer_size, 4);
 
     uint8_t fsize_bytes[4];
     hl_write_u32(fsize_bytes, file_size);
-    hl_field_new(&fields[2], FIELD_FILE_SIZE, fsize_bytes, 4);
-    hl_field_new(&fields[3], FIELD_WAITING_COUNT, wait_count, 2);
+    hl_field_new(&fields[fc++], FIELD_FILE_SIZE, fsize_bytes, 4);
+
+    if (cc->large_file_mode) {
+        uint64_t xfer_size_64 = (uint64_t)(24 + 16 + info_size + 16) +
+                                (file_size_64 - (uint64_t)data_offset);
+        uint8_t xfer64[8], fsize64[8];
+        hl_write_u64(xfer64, xfer_size_64);
+        hl_write_u64(fsize64, file_size_64);
+        hl_field_new(&fields[fc++], FIELD_TRANSFER_SIZE_64, xfer64, 8);
+        hl_field_new(&fields[fc++], FIELD_FILE_SIZE_64, fsize64, 8);
+    }
+
+    hl_field_new(&fields[fc++], FIELD_WAITING_COUNT, wait_count, 2);
 
     hl_transaction_t *reply = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
-    hl_transaction_new(reply, req->type, cc->id, fields, 4);
+    hl_transaction_new(reply, req->type, cc->id, fields, (uint16_t)fc);
     reply->is_reply = 1;
     memcpy(reply->id, req->id, 4);
 
     int k;
-    for (k = 0; k < 4; k++) hl_field_free(&fields[k]);
+    for (k = 0; k < fc; k++) hl_field_free(&fields[k]);
     free(ft); /* add() copied it into the manager's internal array */
 
     *out = reply;
@@ -2073,6 +2260,20 @@ static int handle_upload_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
+
+    /* Check E2E encryption gating on upload destination */
+    {
+        const char *e2e_prefix = srv->config.hope_required_prefix;
+        if (e2e_prefix[0] != '\0') {
+            const char *root = srv->config.file_root;
+            if (cc->account && cc->account->file_root[0] != '\0')
+                root = cc->account->file_root;
+            if (hl_hope_path_requires_encryption(dir_path, root, e2e_prefix) &&
+                !hl_client_is_encrypted(cc))
+                return reply_err(cc, req,
+                    "This folder requires an encrypted connection.", out, out_count);
+        }
+    }
 
     /* Check upload location restriction */
     if (!hl_client_conn_authorize(cc, ACCESS_UPLOAD_ANYWHERE)) {
@@ -2189,21 +2390,34 @@ static int handle_download_folder(hl_client_conn_t *cc, const hl_transaction_t *
     if (srv->file_transfer_mgr)
         srv->file_transfer_mgr->vt->add(srv->file_transfer_mgr, ft);
 
-    /* Reply with ref_num, transfer_size, folder_item_count, waiting_count */
+    /* Reply with ref_num, transfer_size, folder_item_count, waiting_count
+     * + 64-bit companions in large file mode */
     uint8_t wait_count[2] = {0, 0};
-    hl_field_t fields[4];
-    hl_field_new(&fields[0], FIELD_REF_NUM, ft->ref_num, 4);
-    hl_field_new(&fields[1], FIELD_TRANSFER_SIZE, ft->transfer_size, 4);
-    hl_field_new(&fields[2], FIELD_FOLDER_ITEM_COUNT, ft->folder_item_count, 2);
-    hl_field_new(&fields[3], FIELD_WAITING_COUNT, wait_count, 2);
+    hl_field_t fields[7]; /* 4 legacy + up to 2 x 64-bit + waiting */
+    int fcount = 0;
+    hl_field_new(&fields[fcount++], FIELD_REF_NUM, ft->ref_num, 4);
+    hl_field_new(&fields[fcount++], FIELD_TRANSFER_SIZE, ft->transfer_size, 4);
+    hl_field_new(&fields[fcount++], FIELD_FOLDER_ITEM_COUNT, ft->folder_item_count, 2);
+
+    if (cc->large_file_mode) {
+        uint64_t total_64 = (uint64_t)hl_read_u32(total_size);
+        uint64_t count_64 = (uint64_t)hl_read_u16(item_count);
+        uint8_t xfer64[8], count64[8];
+        hl_write_u64(xfer64, total_64);
+        hl_write_u64(count64, count_64);
+        hl_field_new(&fields[fcount++], FIELD_TRANSFER_SIZE_64, xfer64, 8);
+        hl_field_new(&fields[fcount++], FIELD_FOLDER_ITEM_COUNT_64, count64, 8);
+    }
+
+    hl_field_new(&fields[fcount++], FIELD_WAITING_COUNT, wait_count, 2);
 
     hl_transaction_t *reply = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
-    hl_transaction_new(reply, req->type, cc->id, fields, 4);
+    hl_transaction_new(reply, req->type, cc->id, fields, (uint16_t)fcount);
     reply->is_reply = 1;
     memcpy(reply->id, req->id, 4);
 
     int k;
-    for (k = 0; k < 4; k++) hl_field_free(&fields[k]);
+    for (k = 0; k < fcount; k++) hl_field_free(&fields[k]);
     free(ft);
 
     *out = reply;

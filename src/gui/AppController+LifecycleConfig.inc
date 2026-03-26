@@ -291,6 +291,21 @@
     if (boolVal && _preserveForkCheckbox)
         [_preserveForkCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
 
+    boolVal = [dict objectForKey:@"EnableHOPE"];
+    if (boolVal && _hopeCheckbox)
+        [_hopeCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
+    boolVal = [dict objectForKey:@"HOPELegacyMode"];
+    if (boolVal && _hopeLegacyCheckbox)
+        [_hopeLegacyCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
+    val = [dict objectForKey:@"HOPERequiredPrefix"];
+    if (val && _hopePrefixField) [_hopePrefixField setStringValue:val];
+
+    /* TLS (string fields loaded here; port loaded below after numVal decl) */
+    val = [dict objectForKey:@"TLSCertFile"];
+    if (val && _tlsCertField) [_tlsCertField setStringValue:val];
+    val = [dict objectForKey:@"TLSKeyFile"];
+    if (val && _tlsKeyField) [_tlsKeyField setStringValue:val];
+
     NSArray *trackers = [dict objectForKey:@"Trackers"];
     if (trackers) {
         unsigned i;
@@ -320,6 +335,9 @@
     if (numVal && _maxDLPerClientField) [_maxDLPerClientField setIntValue:[numVal intValue]];
     numVal = [dict objectForKey:@"MaxConnectionsPerIP"];
     if (numVal && _maxConnPerIPField) [_maxConnPerIPField setIntValue:[numVal intValue]];
+    numVal = [dict objectForKey:@"TLSPort"];
+    if (numVal && _tlsPortField)
+        [_tlsPortField setStringValue:[NSString stringWithFormat:@"%d", [numVal intValue]]];
 
     if (_filesTableView) [self refreshFilesList:nil];
     if (_accountsTableView) [self refreshAccountsList:nil];
@@ -354,6 +372,12 @@
     if (!newsDelimiter || [newsDelimiter length] == 0)
         newsDelimiter = @"__________________________________________________________";
     BOOL preserveForks = _preserveForkCheckbox ? ([_preserveForkCheckbox state] == NSControlStateValueOn) : NO;
+    BOOL enableHOPE = _hopeCheckbox ? ([_hopeCheckbox state] == NSControlStateValueOn) : NO;
+    BOOL hopeLegacy = _hopeLegacyCheckbox ? ([_hopeLegacyCheckbox state] == NSControlStateValueOn) : NO;
+    NSString *hopePrefix = _hopePrefixField ? [_hopePrefixField stringValue] : @"[E2E]";
+    NSString *tlsCert = _tlsCertField ? [_tlsCertField stringValue] : @"";
+    NSString *tlsKey = _tlsKeyField ? [_tlsKeyField stringValue] : @"";
+    int tlsPort = _tlsPortField ? [_tlsPortField intValue] : 0;
     int maxDownloads = _maxDownloadsField ? [_maxDownloadsField intValue] : 0;
     int maxDLPerClient = _maxDLPerClientField ? [_maxDLPerClientField intValue] : 0;
     int maxConnPerIP = _maxConnPerIPField ? [_maxConnPerIPField intValue] : 0;
@@ -383,6 +407,12 @@
     [dict setObject:newsDateFormat forKey:@"NewsDateFormat"];
     [dict setObject:newsDelimiter forKey:@"NewsDelimiter"];
     [dict setObject:@"macintosh" forKey:@"Encoding"];
+    [dict setObject:[NSNumber numberWithBool:enableHOPE] forKey:@"EnableHOPE"];
+    [dict setObject:[NSNumber numberWithBool:hopeLegacy] forKey:@"HOPELegacyMode"];
+    [dict setObject:(hopePrefix ? hopePrefix : @"[E2E]") forKey:@"HOPERequiredPrefix"];
+    [dict setObject:(tlsCert ? tlsCert : @"") forKey:@"TLSCertFile"];
+    [dict setObject:(tlsKey ? tlsKey : @"") forKey:@"TLSKeyFile"];
+    [dict setObject:[NSNumber numberWithInt:tlsPort] forKey:@"TLSPort"];
 
     /* Write to ~/Library/Preferences/com.lemoniscate.server.plist */
     NSString *plistPath = [NSHomeDirectory()

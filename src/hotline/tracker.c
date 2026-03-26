@@ -20,6 +20,7 @@
 int hl_tracker_register(const char *tracker_addr,
                         uint16_t server_port,
                         uint16_t user_count,
+                        uint16_t tls_port,
                         const uint8_t pass_id[4],
                         const char *name,
                         const char *description,
@@ -75,8 +76,8 @@ int hl_tracker_register(const char *tracker_addr,
     pos += 2;
 
     /* TLS Port (BE uint16) — 0 for no TLS */
-    buf[pos++] = 0x00;
-    buf[pos++] = 0x00;
+    hl_write_u16(buf + pos, tls_port);
+    pos += 2;
 
     /* PassID (4 bytes) */
     memcpy(buf + pos, pass_id, 4);
@@ -126,6 +127,7 @@ int hl_tracker_register(const char *tracker_addr,
 int hl_tracker_register_all(const char trackers[][256], int tracker_count,
                             uint16_t server_port,
                             uint16_t user_count,
+                            uint16_t tls_port,
                             const uint8_t pass_id[4],
                             const char *name,
                             const char *description)
@@ -150,7 +152,8 @@ int hl_tracker_register_all(const char trackers[][256], int tracker_count,
         }
 
         if (hl_tracker_register(entry, server_port, user_count,
-                               pass_id, name, description, password) == 0) {
+                               tls_port, pass_id, name, description,
+                               password) == 0) {
             success_count++;
         }
     }

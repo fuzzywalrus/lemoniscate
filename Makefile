@@ -36,6 +36,7 @@ OBJCFLAGS = -Wall -Wextra -O2 \
 
 LDFLAGS = -framework CoreFoundation \
           -framework Foundation \
+          -framework Security \
           -lpthread
 
 # CoreServices needed for Bonjour (dns_sd.h)
@@ -70,7 +71,9 @@ HOTLINE_C_SRCS = \
 	src/hotline/file_transfer.c \
 	src/hotline/bonjour.c \
 	src/hotline/tracker.c \
-	src/hotline/password.c
+	src/hotline/password.c \
+	src/hotline/hope.c \
+	src/hotline/tls.c
 
 HOTLINE_C_OBJS = $(HOTLINE_C_SRCS:.c=.o)
 

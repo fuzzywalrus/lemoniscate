@@ -139,6 +139,42 @@ void hl_calc_total_size(const char *dir_path, uint8_t out[4])
     hl_write_u32(out, calc_total_size_r(dir_path, 0));
 }
 
+/* 64-bit variant for large file support */
+static uint64_t calc_total_size_r64(const char *dir_path, int depth)
+{
+    if (depth > HL_MAX_RECURSE_DEPTH) return 0;
+
+    DIR *dir = opendir(dir_path);
+    if (!dir) return 0;
+
+    uint64_t total = 0;
+    struct dirent *entry;
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+
+        char full_path[2048];
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
+
+        struct stat st;
+        if (stat(full_path, &st) != 0) continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            total += calc_total_size_r64(full_path, depth + 1);
+        } else {
+            total += (uint64_t)st.st_size;
+        }
+    }
+
+    closedir(dir);
+    return total;
+}
+
+void hl_calc_total_size_64(const char *dir_path, uint8_t out[8])
+{
+    hl_write_u64(out, calc_total_size_r64(dir_path, 0));
+}
+
 static uint16_t calc_item_count_r(const char *dir_path, int depth)
 {
     if (depth > HL_MAX_RECURSE_DEPTH) return 0;
@@ -172,4 +208,39 @@ void hl_calc_item_count(const char *dir_path, uint8_t out[2])
     uint16_t count = calc_item_count_r(dir_path, 0);
     if (count > 0) count--; /* Subtract root */
     hl_write_u16(out, count);
+}
+
+/* 64-bit variant for large file support */
+static uint64_t calc_item_count_r64(const char *dir_path, int depth)
+{
+    if (depth > HL_MAX_RECURSE_DEPTH) return 0;
+
+    DIR *dir = opendir(dir_path);
+    if (!dir) return 0;
+
+    uint64_t count = 0;
+    struct dirent *entry;
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+        count++;
+
+        char full_path[2048];
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
+
+        struct stat st;
+        if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+            count += calc_item_count_r64(full_path, depth + 1);
+        }
+    }
+
+    closedir(dir);
+    return count;
+}
+
+void hl_calc_item_count_64(const char *dir_path, uint8_t out[8])
+{
+    uint64_t count = calc_item_count_r64(dir_path, 0);
+    if (count > 0) count--;
+    hl_write_u64(out, count);
 }

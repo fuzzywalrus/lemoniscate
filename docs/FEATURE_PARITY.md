@@ -1,6 +1,6 @@
 # Feature Parity Audit: Lemoniscate vs Mobius Go Reference
 
-Audit date: 2026-03-20
+Audit date: 2026-03-26
 
 Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 
@@ -82,9 +82,9 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 - [x] Rate limiting (per-IP token bucket)
 - [x] Idle/away detection (300s timeout, 10s check interval)
 - [x] Ban list (IP + username banning)
-- [x] kqueue event loop (Tiger 10.4+ native)
+- [x] kqueue event loop (BSD native)
 - [x] Dual-port system (5500 main + 5501 transfers)
-- [ ] TLS/SSL support (Mobius has configurable TLS ports)
+- [x] TLS/SSL support (SecureTransport with deprecation pragma, dual-port: plain + TLS, PEM cert/key loading)
 - [ ] Redis integration (Mobius uses for bans, online tracking)
 
 ### Discovery & Registration
@@ -103,7 +103,7 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 - [x] Server banner support (via transfer port)
 - [x] User join/leave notifications (TranNotifyChangeUser / TranNotifyDeleteUser)
 - [x] Admin flag detection (ACCESS_DISCON_USER)
-- [x] Password hashing (salted SHA-1 via OpenSSL 0.9.7 on Tiger; bcrypt unavailable without bundling. Format: `sha1:<salt>:<hash>`. Falls back to plaintext comparison for migrating old accounts)
+- [x] Password hashing (salted SHA-1 via CommonCrypto. Format: `sha1:<salt>:<hash>`. Falls back to plaintext comparison for migrating old accounts)
 
 ### User Notifications
 
@@ -116,7 +116,7 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 
 ## Access Control (41 permission bits)
 
-### Actively Checked (39 of 41)
+### Actively Checked (36 of 41)
 
 - [x] ACCESS_DELETE_FILE (0)
 - [x] ACCESS_UPLOAD_FILE (1)
@@ -150,16 +150,17 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 - [x] ACCESS_DOWNLOAD_FOLDER (39)
 - [x] ACCESS_SEND_PRIV_MSG (40)
 
-### Not Implemented (2 of 41) — unused in Mobius too
+### Not Implemented (5 of 41)
 
+- [ ] ACCESS_MOVE_FOLDER (8) - move handler checks ACCESS_MOVE_FILE only; no separate folder-move check
 - [ ] ACCESS_CLOSE_CHAT (12) - protocol artifact, not implemented in any known server
+- [ ] ACCESS_SHOW_IN_LIST (13) - user list handler returns all users without filtering on this bit
 - [ ] ACCESS_CHANGE_OWN_PASS (18) - no dedicated transaction exists in protocol
 
 ### Recently Added
 
 - [x] ACCESS_DELETE_FOLDER (6) - delete handler checks file vs folder
 - [x] ACCESS_RENAME_FOLDER (7) - set_file_info checks file vs folder for rename
-- [x] ACCESS_SHOW_IN_LIST (13) - users without this bit are hidden from user list
 - [x] ACCESS_UPLOAD_ANYWHERE (25) - uploads restricted to "Uploads" or "Drop Box" folders
 - [x] ACCESS_SET_FOLDER_COMMENT (29) - set_file_info checks folder comment permission
 - [x] ACCESS_VIEW_DROP_BOXES (30) - file listing blocks drop box access without permission
@@ -173,7 +174,7 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 1. ~~**File upload receive** - TranUploadFile is a stub; need to accept incoming file data on transfer port~~ DONE
 2. ~~**File transfer resume** - Clients expect RFLT resume support for interrupted transfers~~ DONE
 3. ~~**Tracker registration** - Required for public server visibility~~ DONE (code works, trackers not listing — investigate later)
-4. ~~**Password hashing** - Plaintext passwords are a security risk; integrate bcrypt~~ DONE (salted SHA-1 via Tiger's OpenSSL)
+4. ~~**Password hashing** - Plaintext passwords are a security risk; integrate bcrypt~~ DONE (salted SHA-1 via CommonCrypto; bcrypt available but not yet adopted)
 
 ### Medium Priority (completeness)
 
@@ -186,8 +187,8 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 ### Low Priority (polish)
 
 10. **ACCESS_SHOW_IN_LIST** - Hide users from user list
-11. **ACCESS_VIEW_DROP_BOXES** - Drop box folder visibility
+11. ~~**ACCESS_VIEW_DROP_BOXES** - Drop box folder visibility~~ DONE
 12. **ACCESS_CHANGE_OWN_PASS** - Self-service password change
-13. **TLS/SSL support** - Encrypted connections
-14. **Encoding support** - Mobius has UTF-8/MacRoman config; we assume MacRoman
+13. ~~**TLS/SSL support** - Encrypted connections~~ DONE (SecureTransport, dual-port, GUI settings)
+14. ~~**Encoding support** - Mobius has UTF-8/MacRoman config~~ DONE (CoreFoundation MacRoman ↔ UTF-8 conversion, config-driven)
 15. ~~**malloc error on banner download**~~ FIXED — transfer manager uses internal array, not heap; callers were incorrectly free()ing the pointer

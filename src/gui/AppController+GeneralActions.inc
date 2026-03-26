@@ -224,7 +224,8 @@
         _serverNameField ? [_serverNameField stringValue] : (_serverName ? _serverName : @"")];
     [_wizardDescriptionField setStringValue:
         _descriptionField ? [_descriptionField stringValue] : (_serverDescription ? _serverDescription : @"")];
-    [_wizardPortField setIntValue:_portField ? [_portField intValue] : _serverPort];
+    [_wizardPortField setStringValue:[NSString stringWithFormat:@"%d",
+        _portField ? [_portField intValue] : _serverPort]];
     [_wizardFileRootField setStringValue:
         _fileRootField ? [_fileRootField stringValue] : @"Files"];
     [_wizardBannerField setStringValue:
@@ -527,7 +528,7 @@
 
     if (_serverNameField) [_serverNameField setStringValue:name];
     if (_descriptionField) [_descriptionField setStringValue:desc];
-    if (_portField) [_portField setIntValue:port];
+    if (_portField) [_portField setStringValue:[NSString stringWithFormat:@"%d", port]];
     if (_fileRootField) [_fileRootField setStringValue:fileRoot];
     if (_bannerFileField) [_bannerFileField setStringValue:banner];
     if (_bonjourCheckbox) [_bonjourCheckbox setState:[_wizardBonjourCheckbox state]];
@@ -829,5 +830,33 @@ static int pollingIntervalCount = 8;
                                                              selector:@selector(refreshNewsTimer:)
                                                              userInfo:nil
                                                               repeats:YES] retain];
+    }
+}
+
+- (void)chooseTLSCert:(id)sender
+{
+    (void)sender;
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    [panel setCanChooseFiles:YES];
+    [panel setCanChooseDirectories:NO];
+    [panel setAllowsMultipleSelection:NO];
+    [panel setTitle:@"Select TLS certificate (PEM)"];
+    if ([panel runModal] == NSModalResponseOK) {
+        [_tlsCertField setStringValue:
+            [[[panel URLs] objectAtIndex:0] path]];
+    }
+}
+
+- (void)chooseTLSKey:(id)sender
+{
+    (void)sender;
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    [panel setCanChooseFiles:YES];
+    [panel setCanChooseDirectories:NO];
+    [panel setAllowsMultipleSelection:NO];
+    [panel setTitle:@"Select TLS private key (PEM)"];
+    if ([panel runModal] == NSModalResponseOK) {
+        [_tlsKeyField setStringValue:
+            [[[panel URLs] objectAtIndex:0] path]];
     }
 }

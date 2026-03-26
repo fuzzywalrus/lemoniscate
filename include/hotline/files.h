@@ -35,4 +35,8 @@ void hl_calc_total_size(const char *dir_path, uint8_t out[4]);
  */
 void hl_calc_item_count(const char *dir_path, uint8_t out[2]);
 
+/* 64-bit variants for large file extension */
+void hl_calc_total_size_64(const char *dir_path, uint8_t out[8]);
+void hl_calc_item_count_64(const char *dir_path, uint8_t out[8]);
+
 #endif /* HOTLINE_FILES_H */

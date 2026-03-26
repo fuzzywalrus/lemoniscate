@@ -50,6 +50,9 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
         } else if ([cid isEqualToString:@"online_id"]) {
             return [NSString stringWithFormat:@"%d",
                 [[item objectForKey:@"id"] intValue]];
+        } else if ([cid isEqualToString:@"online_encrypted"]) {
+            NSNumber *enc = [item objectForKey:@"encrypted"];
+            return (enc && [enc boolValue]) ? @"Yes" : @"No";
         } else if ([cid isEqualToString:@"online_seen"]) {
             NSDate *d = [item objectForKey:@"lastSeen"];
             NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
@@ -156,6 +159,54 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
     NSString *login = [_accountsItems objectAtIndex:(unsigned)row];
     NSDictionary *acct = [self loadAccountDataForLogin:login];
     [self populateAccountEditorFromData:acct];
+}
+
+/* ===== Cell display — E2E visual indicators ===== */
+
+- (void)tableView:(NSTableView *)tableView
+   willDisplayCell:(id)cell
+    forTableColumn:(NSTableColumn *)tableColumn
+               row:(int)row
+{
+    /* Bold E2E-prefixed entries in the files table */
+    if (tableView == _filesTableView &&
+        [[tableColumn identifier] isEqualToString:@"name"]) {
+        if (row >= 0 && row < (int)[_filesItems count]) {
+            NSDictionary *item = [_filesItems objectAtIndex:(unsigned)row];
+            NSString *name = [item objectForKey:@"name"];
+            if (name && [name hasPrefix:@"[E2E]"]) {
+                [cell setFont:[NSFont boldSystemFontOfSize:12.0]];
+            } else {
+                [cell setFont:[NSFont systemFontOfSize:12.0]];
+            }
+        }
+    }
+
+    /* Bold E2E-prefixed entries in the news categories table */
+    if (tableView == _newsCategoriesTableView) {
+        if (row >= 0 && row < (int)[_newsCategoryItems count]) {
+            NSString *name = [_newsCategoryItems objectAtIndex:(unsigned)row];
+            if (name && [name hasPrefix:@"[E2E]"]) {
+                [cell setFont:[NSFont boldSystemFontOfSize:12.0]];
+            } else {
+                [cell setFont:[NSFont systemFontOfSize:12.0]];
+            }
+        }
+    }
+
+    /* Bold "Yes" in the encrypted column of online users */
+    if (tableView == _onlineTableView &&
+        [[tableColumn identifier] isEqualToString:@"online_encrypted"]) {
+        if (row >= 0 && row < (int)[_onlineUsersItems count]) {
+            NSDictionary *item = [_onlineUsersItems objectAtIndex:(unsigned)row];
+            NSNumber *enc = [item objectForKey:@"encrypted"];
+            if (enc && [enc boolValue]) {
+                [cell setFont:[NSFont boldSystemFontOfSize:11.0]];
+            } else {
+                [cell setFont:[NSFont systemFontOfSize:11.0]];
+            }
+        }
+    }
 }
 
 /* ===== Tab view delegate ===== */

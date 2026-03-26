@@ -16,4 +16,5 @@ void hl_config_init(hl_config_t *cfg)
     cfg->max_downloads = 0;           /* 0 = unlimited */
     cfg->max_downloads_per_client = 0;
     cfg->max_connections_per_ip = 0;
+    strncpy(cfg->hope_required_prefix, "[E2E]", sizeof(cfg->hope_required_prefix) - 1);
 }

@@ -118,6 +118,19 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
                     cfg->enable_bonjour = yaml_parse_bool(val);
                 else if (strcmp(current_key, "Encoding") == 0)
                     strncpy(cfg->encoding, val, sizeof(cfg->encoding) - 1);
+                else if (strcmp(current_key, "EnableHOPE") == 0)
+                    cfg->enable_hope = yaml_parse_bool(val);
+                else if (strcmp(current_key, "HOPELegacyMode") == 0)
+                    cfg->hope_legacy_mode = yaml_parse_bool(val);
+                else if (strcmp(current_key, "HOPERequiredPrefix") == 0)
+                    strncpy(cfg->hope_required_prefix, val,
+                            sizeof(cfg->hope_required_prefix) - 1);
+                else if (strcmp(current_key, "TLSCertFile") == 0)
+                    strncpy(cfg->tls_cert_path, val, HL_CONFIG_PATH_MAX - 1);
+                else if (strcmp(current_key, "TLSKeyFile") == 0)
+                    strncpy(cfg->tls_key_path, val, HL_CONFIG_PATH_MAX - 1);
+                else if (strcmp(current_key, "TLSPort") == 0)
+                    cfg->tls_port = atoi(val);
 
                 current_key[0] = '\0';
             }
