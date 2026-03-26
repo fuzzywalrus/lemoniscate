@@ -70,6 +70,19 @@
     NSTextField *_maxDLPerClientField;
     NSTextField *_maxConnPerIPField;
 
+    /* Security / HOPE section */
+    NSButton *_hopeCheckbox;
+    NSButton *_hopeLegacyCheckbox;
+    NSTextField *_hopePrefixField;
+
+    /* TLS Encryption section */
+    NSTextField *_tlsCertField;
+    NSButton *_chooseTLSCertButton;
+    NSTextField *_tlsKeyField;
+    NSButton *_chooseTLSKeyButton;
+    NSTextField *_tlsPortField;
+    NSTextField *_tlsStatusLabel;
+
     /* Monitoring section */
     NSPopUpButton *_pollingRatePopup;
     NSTimeInterval _pollingInterval;
@@ -303,6 +316,8 @@
 - (void)saveNewsArticleEditor:(id)sender;
 - (void)cancelNewsArticleEditor:(id)sender;
 - (void)pollingRateChanged:(id)sender;
+- (void)chooseTLSCert:(id)sender;
+- (void)chooseTLSKey:(id)sender;
 
 @end
 

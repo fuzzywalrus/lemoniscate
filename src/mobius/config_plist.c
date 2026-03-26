@@ -139,6 +139,10 @@ int mobius_load_config_plist(hl_config_t *cfg, const char *plist_path)
 
     plist_get_bool(dict, "EnableTrackerRegistration", &cfg->enable_tracker_registration);
     plist_get_bool(dict, "EnableBonjour", &cfg->enable_bonjour);
+    plist_get_bool(dict, "EnableHOPE", &cfg->enable_hope);
+    plist_get_bool(dict, "HOPELegacyMode", &cfg->hope_legacy_mode);
+    plist_get_string(dict, "HOPERequiredPrefix", cfg->hope_required_prefix,
+                     sizeof(cfg->hope_required_prefix));
     plist_get_bool(dict, "PreserveResourceForks", &cfg->preserve_resource_forks);
 
     plist_get_int(dict, "MaxDownloads", &cfg->max_downloads);
@@ -148,6 +152,12 @@ int mobius_load_config_plist(hl_config_t *cfg, const char *plist_path)
     plist_get_string_array(dict, "Trackers",
                             cfg->trackers, HL_CONFIG_MAX_TRACKERS,
                             &cfg->tracker_count);
+
+    plist_get_string(dict, "TLSCertFile", cfg->tls_cert_path,
+                     sizeof(cfg->tls_cert_path));
+    plist_get_string(dict, "TLSKeyFile", cfg->tls_key_path,
+                     sizeof(cfg->tls_key_path));
+    plist_get_int(dict, "TLSPort", &cfg->tls_port);
 
     CFRelease(plist);
     return 0;

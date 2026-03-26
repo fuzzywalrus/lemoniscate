@@ -67,6 +67,19 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 - [x] News date format selector
 - [x] News delimiter editor
 
+### Security (HOPE)
+
+- [x] Enable HOPE toggle
+- [x] Legacy mode toggle
+- [x] E2E prefix field
+
+### TLS Encryption
+
+- [x] Certificate file picker
+- [x] Private key file picker
+- [x] TLS port field
+- [x] Status hint label
+
 ### Limits
 
 - [x] Max downloads

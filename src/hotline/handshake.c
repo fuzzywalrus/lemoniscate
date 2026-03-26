@@ -5,6 +5,7 @@
  */
 
 #include "hotline/handshake.h"
+#include "hotline/tls.h"
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
@@ -76,6 +77,27 @@ int hl_perform_handshake_server(int fd)
         return -1;
 
     if (write_full(fd, HL_SERVER_HANDSHAKE_RESPONSE, 8) < 0)
+        return -1;
+
+    return 0;
+}
+
+int hl_perform_handshake_server_conn(hl_tls_conn_t *conn)
+{
+    /* TLS-aware server handshake — same protocol, uses conn wrapper I/O */
+    uint8_t buf[HL_HANDSHAKE_SIZE];
+
+    if (hl_conn_read_full(conn, buf, HL_HANDSHAKE_SIZE) < 0)
+        return -1;
+
+    hl_handshake_t h;
+    if (hl_handshake_parse(&h, buf, HL_HANDSHAKE_SIZE) < 0)
+        return -1;
+
+    if (!hl_handshake_valid(&h))
+        return -1;
+
+    if (hl_conn_write_all(conn, HL_SERVER_HANDSHAKE_RESPONSE, 8) < 0)
         return -1;
 
     return 0;

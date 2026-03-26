@@ -5,6 +5,8 @@
  */
 
 #include "hotline/client_conn.h"
+#include "hotline/tls.h"
+#include "hotline/hope.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,6 +17,8 @@ hl_client_conn_t *hl_client_conn_new(int fd, const char *remote_addr,
     if (!cc) return NULL;
 
     cc->fd = fd;
+    cc->conn = NULL;  /* Caller sets this after creation */
+    cc->is_tls = 0;
     strncpy(cc->remote_addr, remote_addr, sizeof(cc->remote_addr) - 1);
     cc->server = server;
     cc->idle_time = 0;
@@ -28,6 +32,15 @@ hl_client_conn_t *hl_client_conn_new(int fd, const char *remote_addr,
 void hl_client_conn_free(hl_client_conn_t *cc)
 {
     if (!cc) return;
+    if (cc->hope) {
+        hl_hope_state_free(cc->hope);
+        free(cc->hope);
+        cc->hope = NULL;
+    }
+    if (cc->conn) {
+        hl_conn_free(cc->conn);  /* Free wrapper without closing fd */
+        cc->conn = NULL;
+    }
     pthread_mutex_destroy(&cc->flags_mu);
     pthread_rwlock_destroy(&cc->mu);
     free(cc);

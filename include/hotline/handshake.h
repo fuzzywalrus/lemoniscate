@@ -11,6 +11,7 @@
 #define HOTLINE_HANDSHAKE_H
 
 #include "hotline/types.h"
+#include "hotline/tls.h"
 
 #define HL_HANDSHAKE_SIZE 12
 
@@ -60,6 +61,13 @@ int hl_handshake_valid(const hl_handshake_t *h);
  * fd is the connected socket. Returns 0 on success, -1 on error.
  */
 int hl_perform_handshake_server(int fd);
+
+/*
+ * hl_perform_handshake_server_conn - Server-side handshake using TLS-aware connection.
+ * Maps to: Go performHandshake()
+ * Returns 0 on success, -1 on error.
+ */
+int hl_perform_handshake_server_conn(hl_tls_conn_t *conn);
 
 /*
  * hl_perform_handshake_client - Client-side handshake: send client handshake, read server response.

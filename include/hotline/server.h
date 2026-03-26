@@ -18,6 +18,7 @@
 #include "hotline/client_conn.h"
 #include "hotline/file_transfer.h"
 #include "hotline/tracker.h"
+#include "hotline/tls.h"
 #include "mobius/flat_news.h"
 #include "mobius/threaded_news_yaml.h"
 #include <pthread.h>
@@ -76,6 +77,12 @@ typedef struct hl_server {
 
     int                 listen_fd;           /* Main protocol listener */
     int                 transfer_fd;         /* File transfer listener */
+
+    /* TLS state — maps to Go TLSConfig/TLSPort in server.go */
+    hl_tls_server_ctx_t tls_ctx;             /* Loaded cert/key context */
+    int                 tls_listen_fd;       /* TLS protocol listener (-1 = disabled) */
+    int                 tls_transfer_fd;     /* TLS file transfer listener (-1 = disabled) */
+    int                 tls_port;            /* TLS base port (0 = disabled) */
 } hl_server_t;
 
 /* --- Lifecycle --- */

@@ -144,6 +144,16 @@ static const hl_field_type_t FIELD_QUOTING_MSG          = {0x00, 0xD6}; /* 214 *
 static const hl_field_type_t FIELD_AUTOMATIC_RESPONSE   = {0x00, 0xD7}; /* 215 */
 static const hl_field_type_t FIELD_FOLDER_ITEM_COUNT    = {0x00, 0xDC}; /* 220 */
 static const hl_field_type_t FIELD_USERNAME_WITH_INFO   = {0x01, 0x2C}; /* 300 */
+
+/* Large file extension fields (64-bit companions) */
+static const hl_field_type_t FIELD_CAPABILITIES         = {0x01, 0xF0}; /* 496 - DATA_CAPABILITIES */
+static const hl_field_type_t FIELD_FILE_SIZE_64         = {0x01, 0xF1}; /* 497 - DATA_FILESIZE64 */
+static const hl_field_type_t FIELD_OFFSET_64            = {0x01, 0xF2}; /* 498 - DATA_OFFSET64 */
+static const hl_field_type_t FIELD_TRANSFER_SIZE_64     = {0x01, 0xF3}; /* 499 - DATA_XFERSIZE64 */
+static const hl_field_type_t FIELD_FOLDER_ITEM_COUNT_64 = {0x01, 0xF4}; /* 500 - DATA_FOLDER_ITEM_COUNT64 */
+
+/* Capability bitmask values */
+#define HL_CAPABILITY_LARGE_FILES  0x0001
 static const hl_field_type_t FIELD_NEWS_ART_LIST_DATA   = {0x01, 0x41}; /* 321 */
 static const hl_field_type_t FIELD_NEWS_CAT_NAME        = {0x01, 0x42}; /* 322 */
 static const hl_field_type_t FIELD_NEWS_CAT_LIST_DATA15 = {0x01, 0x43}; /* 323 */
@@ -203,6 +213,28 @@ static inline void hl_write_u32(uint8_t b[4], uint32_t val)
     b[1] = (uint8_t)(val >> 16);
     b[2] = (uint8_t)(val >> 8);
     b[3] = (uint8_t)(val & 0xFF);
+}
+
+/* Read a uint64 from a big-endian byte array. */
+static inline uint64_t hl_read_u64(const uint8_t b[8])
+{
+    return ((uint64_t)b[0] << 56) | ((uint64_t)b[1] << 48) |
+           ((uint64_t)b[2] << 40) | ((uint64_t)b[3] << 32) |
+           ((uint64_t)b[4] << 24) | ((uint64_t)b[5] << 16) |
+           ((uint64_t)b[6] << 8)  |  (uint64_t)b[7];
+}
+
+/* Write a uint64 to a big-endian byte array. */
+static inline void hl_write_u64(uint8_t b[8], uint64_t val)
+{
+    b[0] = (uint8_t)(val >> 56);
+    b[1] = (uint8_t)(val >> 48);
+    b[2] = (uint8_t)(val >> 40);
+    b[3] = (uint8_t)(val >> 32);
+    b[4] = (uint8_t)(val >> 24);
+    b[5] = (uint8_t)(val >> 16);
+    b[6] = (uint8_t)(val >> 8);
+    b[7] = (uint8_t)(val & 0xFF);
 }
 
 /* Compare two 2-byte type identifiers. */
