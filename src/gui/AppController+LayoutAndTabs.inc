@@ -740,6 +740,29 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_tlsPortField setToolTip:@"TLS listener port (default 5600)"];
         iy = addRow(c, @"TLS Port:", _tlsPortField, iy, 70);
 
+        /* Generate self-signed certificate button */
+        _generateTLSCertButton = makeButton(@"Generate Self-Signed\u2026", self,
+                                             @selector(generateSelfSignedCert:));
+        [_generateTLSCertButton setToolTip:@"Generate a self-signed TLS certificate and private key"];
+        {
+            NSRect bf = [_generateTLSCertButton frame];
+            [_generateTLSCertButton setFrame:NSMakeRect(LABEL_WIDTH - 4, iy, bf.size.width, 24)];
+        }
+        [c addSubview:_generateTLSCertButton];
+        {
+            NSButton *hb = [[NSButton alloc]
+                initWithFrame:NSMakeRect([c frame].size.width - 21 - ROW_RIGHT_PAD, iy, 21, 21)];
+            [hb setBezelStyle:NSBezelStyleHelpButton];
+            [hb setTitle:@""];
+            [hb setToolTip:@"Creates a self-signed RSA 2048-bit certificate valid for 10 years and saves it to your config directory. Suitable for encrypting connections but will show a certificate warning to clients that verify certificates."];
+            [hb setTarget:self];
+            [hb setAction:@selector(showHelpPopover:)];
+            [hb setAccessibilityLabel:[hb toolTip]];
+            [c addSubview:hb];
+            [hb release];
+        }
+        iy += ROW_HEIGHT;
+
         _tlsStatusLabel = [[NSTextField alloc] initWithFrame:
                             NSMakeRect(LABEL_WIDTH - 4, iy, fieldWidth, 18)];
         [_tlsStatusLabel setStringValue:@"Provide both a certificate and key to enable TLS"];
