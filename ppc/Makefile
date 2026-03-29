@@ -10,7 +10,7 @@ CFLAGS = -std=c99 -Wall -Wextra -pedantic -O2 \
          -I/opt/homebrew/include \
          -DTARGET_OS_MAC=1
 
-YAML_LDFLAGS = -L/opt/homebrew/lib -lyaml
+YAML_LDFLAGS = /opt/homebrew/lib/libyaml.a
 
 # Obj-C flags (no -std=c99 - Obj-C uses its own standard)
 OBJCFLAGS = -Wall -Wextra -O2 \
@@ -22,7 +22,7 @@ OBJCFLAGS = -Wall -Wextra -O2 \
 # CC = gcc-4.0
 # CFLAGS += -mmacosx-version-min=10.4 -I/usr/local/include
 # OBJCFLAGS += -mmacosx-version-min=10.4 -I/usr/local/include
-# YAML_LDFLAGS = -L/usr/local/lib -lyaml
+# YAML_LDFLAGS = /usr/local/lib/libyaml.a
 
 LDFLAGS = -framework CoreFoundation \
           -framework Foundation \
