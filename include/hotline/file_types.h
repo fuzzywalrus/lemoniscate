@@ -1,7 +1,5 @@
 /*
  * file_types.h - File type/creator code mappings
- *
- * Maps to: hotline/file_types.go
  */
 
 #ifndef HOTLINE_FILE_TYPES_H

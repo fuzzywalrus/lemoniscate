@@ -1,8 +1,6 @@
 /*
  * threaded_news_yaml.h - Threaded news manager
  *
- * Maps to: internal/mobius/threaded_news.go + hotline/news.go
- *
  * In-memory threaded news with a single default "General" category.
  * Articles are stored as a flat list per category.
  */

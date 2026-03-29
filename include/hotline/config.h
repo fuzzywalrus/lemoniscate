@@ -1,7 +1,5 @@
 /*
  * config.h - Hotline server configuration
- *
- * Maps to: hotline/config.go
  */
 
 #ifndef HOTLINE_CONFIG_H

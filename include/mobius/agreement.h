@@ -1,8 +1,6 @@
 /*
  * agreement.h - Server agreement loader
  *
- * Maps to: internal/mobius/agreement.go
- *
  * Loads Agreement.txt from the config directory.
  * Plain text file, no YAML.
  */
@@ -22,12 +20,11 @@ typedef struct {
 
 /*
  * mobius_agreement_new - Load agreement from file.
- * Maps to: Go NewAgreement()
  * Returns NULL on failure.
  */
 mobius_agreement_t *mobius_agreement_new(const char *path);
 
-/* Reload agreement from disk. Maps to: Go Agreement.Reload() */
+/* Reload agreement from disk. */
 int mobius_agreement_reload(mobius_agreement_t *a);
 
 /* Get agreement data (read-locked). Caller must NOT free the returned pointer. */

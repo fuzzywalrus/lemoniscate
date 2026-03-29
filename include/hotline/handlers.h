@@ -1,7 +1,5 @@
 /*
  * handlers.h - Transaction handler function type
- *
- * Maps to: hotline/transaction_handlers.go (HandlerFunc type)
  */
 
 #ifndef HOTLINE_HANDLERS_H
@@ -17,7 +15,6 @@ typedef struct hl_client_conn hl_client_conn_t;
 
 /*
  * Handler function signature.
- * Maps to: Go HandlerFunc func(*ClientConn, *Transaction) []Transaction
  *
  * Returns a malloc'd array of response transactions via *out_transactions.
  * *out_count is set to the number of responses.

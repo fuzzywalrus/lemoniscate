@@ -1,8 +1,6 @@
 /*
  * file_store.h - File system abstraction (vtable)
  *
- * Maps to: hotline/file_store.go (FileStore interface)
- *
  * Allows swapping real filesystem for testing mocks.
  */
 
@@ -14,7 +12,7 @@
 
 typedef struct hl_file_store hl_file_store_t;
 
-/* FileStore vtable — maps to Go FileStore interface */
+/* FileStore vtable */
 typedef struct {
     int  (*mkdir)(hl_file_store_t *self, const char *path, mode_t mode);
     int  (*stat)(hl_file_store_t *self, const char *path, struct stat *buf);
@@ -32,7 +30,6 @@ struct hl_file_store {
 
 /*
  * hl_os_file_store_new - Create an OSFileStore (real filesystem).
- * Maps to: Go OSFileStore{}
  */
 hl_file_store_t *hl_os_file_store_new(void);
 
