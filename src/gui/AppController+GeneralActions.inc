@@ -187,9 +187,9 @@
         [_wizardFinishButton setFrame:NSMakeRect(504, 20, 70, 28)];
         [content addSubview:_wizardFinishButton];
 
-        _wizardFinishStartButton = makeButton(@"Finish & Start", self,
+        _wizardFinishStartButton = makeButton(@"Finish and Start", self,
                                               @selector(wizardFinishAndStart:));
-        [_wizardFinishStartButton setFrame:NSMakeRect(580, 20, 74, 28)];
+        [_wizardFinishStartButton setFrame:NSMakeRect(580, 20, 110, 28)];
         [content addSubview:_wizardFinishStartButton];
 
         _wizardNameField = makeEditField(430);
@@ -454,7 +454,7 @@
             @"Max DL/Client: %d\n"
             @"Max Conn/IP: %d\n\n"
             @"Click Finish to save and close the wizard,\n"
-            @"or Finish & Start to save and launch the server.",
+            @"or Finish and Start to save and launch the server.",
             [_wizardNameField stringValue],
             [_wizardDescriptionField stringValue],
             [_wizardPortField intValue],

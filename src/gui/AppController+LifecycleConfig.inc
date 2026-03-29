@@ -81,6 +81,7 @@
         _aboutWindow = nil;
         _aboutVersionLabel = nil;
         _aboutUpdateLabel = nil;
+        _disclosureSections = [[NSMutableArray alloc] init];
 
         /* Load polling interval preference (default 10s) */
         {
@@ -299,6 +300,9 @@
         [_hopeLegacyCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
     val = [dict objectForKey:@"HOPERequiredPrefix"];
     if (val && _hopePrefixField) [_hopePrefixField setStringValue:val];
+    boolVal = [dict objectForKey:@"E2ERequireTLS"];
+    if (boolVal && _hopeRequireTLSCheckbox)
+        [_hopeRequireTLSCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
 
     /* TLS (string fields loaded here; port loaded below after numVal decl) */
     val = [dict objectForKey:@"TLSCertFile"];
@@ -375,6 +379,7 @@
     BOOL enableHOPE = _hopeCheckbox ? ([_hopeCheckbox state] == NSControlStateValueOn) : NO;
     BOOL hopeLegacy = _hopeLegacyCheckbox ? ([_hopeLegacyCheckbox state] == NSControlStateValueOn) : NO;
     NSString *hopePrefix = _hopePrefixField ? [_hopePrefixField stringValue] : @"[E2E]";
+    BOOL e2eRequireTLS = _hopeRequireTLSCheckbox ? ([_hopeRequireTLSCheckbox state] == NSControlStateValueOn) : NO;
     NSString *tlsCert = _tlsCertField ? [_tlsCertField stringValue] : @"";
     NSString *tlsKey = _tlsKeyField ? [_tlsKeyField stringValue] : @"";
     int tlsPort = _tlsPortField ? [_tlsPortField intValue] : 0;
@@ -410,6 +415,7 @@
     [dict setObject:[NSNumber numberWithBool:enableHOPE] forKey:@"EnableHOPE"];
     [dict setObject:[NSNumber numberWithBool:hopeLegacy] forKey:@"HOPELegacyMode"];
     [dict setObject:(hopePrefix ? hopePrefix : @"[E2E]") forKey:@"HOPERequiredPrefix"];
+    [dict setObject:[NSNumber numberWithBool:e2eRequireTLS] forKey:@"E2ERequireTLS"];
     [dict setObject:(tlsCert ? tlsCert : @"") forKey:@"TLSCertFile"];
     [dict setObject:(tlsKey ? tlsKey : @"") forKey:@"TLSKeyFile"];
     [dict setObject:[NSNumber numberWithInt:tlsPort] forKey:@"TLSPort"];
