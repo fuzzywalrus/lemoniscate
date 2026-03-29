@@ -90,6 +90,7 @@
     NSButton *_chooseTLSKeyButton;
     NSTextField *_tlsPortField;
     NSTextField *_tlsStatusLabel;
+    NSButton *_generateTLSCertButton;
 
     /* Monitoring section */
     NSPopUpButton *_pollingRatePopup;
@@ -326,6 +327,7 @@
 - (void)pollingRateChanged:(id)sender;
 - (void)chooseTLSCert:(id)sender;
 - (void)chooseTLSKey:(id)sender;
+- (void)generateSelfSignedCert:(id)sender;
 - (void)toggleDisclosure:(id)sender;
 - (void)relayoutSettings;
 - (void)showHelpPopover:(id)sender;
