@@ -125,6 +125,8 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
                 else if (strcmp(current_key, "HOPERequiredPrefix") == 0)
                     strncpy(cfg->hope_required_prefix, val,
                             sizeof(cfg->hope_required_prefix) - 1);
+                else if (strcmp(current_key, "E2ERequireTLS") == 0)
+                    cfg->e2e_require_tls = yaml_parse_bool(val);
                 else if (strcmp(current_key, "TLSCertFile") == 0)
                     strncpy(cfg->tls_cert_path, val, HL_CONFIG_PATH_MAX - 1);
                 else if (strcmp(current_key, "TLSKeyFile") == 0)

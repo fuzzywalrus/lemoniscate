@@ -143,6 +143,7 @@ int mobius_load_config_plist(hl_config_t *cfg, const char *plist_path)
     plist_get_bool(dict, "HOPELegacyMode", &cfg->hope_legacy_mode);
     plist_get_string(dict, "HOPERequiredPrefix", cfg->hope_required_prefix,
                      sizeof(cfg->hope_required_prefix));
+    plist_get_bool(dict, "E2ERequireTLS", &cfg->e2e_require_tls);
     plist_get_bool(dict, "PreserveResourceForks", &cfg->preserve_resource_forks);
 
     plist_get_int(dict, "MaxDownloads", &cfg->max_downloads);

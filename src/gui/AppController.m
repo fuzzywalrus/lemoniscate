@@ -171,25 +171,57 @@ static float addRowWithButton(NSView *parent, NSString *labelText,
     return y + ROW_HEIGHT;
 }
 
-/* Add a checkbox row. Returns next y. */
-static float addCheckbox(NSView *parent, NSButton *checkbox,
-                          float y)
+/* ===== Disclosure section helpers ===== */
+
+#define DISC_INDENT       21
+#define DISC_HEADER_H     22
+#define DISC_CONTENT_PAD   8
+#define HINT_HEIGHT       14
+#define HINT_GAP           2
+
+/* Add a checkbox with an inline (?) help button on the same row.
+ * The help button shows a popover with explanatory text when clicked. */
+static float addCheckboxWithHelp(NSView *parent, NSButton *checkbox,
+                                  float y, NSString *helpText, id target)
 {
-    [checkbox setFrame:NSMakeRect(LABEL_WIDTH - 4, y, 200, 18)];
     [checkbox setFont:[NSFont systemFontOfSize:11.0]];
+    [checkbox sizeToFit];
+    NSRect cbf = [checkbox frame];
+    float cbW = cbf.size.width + 4;
+    if (cbW < 180) cbW = 180;
+    [checkbox setFrame:NSMakeRect(LABEL_WIDTH - 4, y, cbW, 18)];
     [parent addSubview:checkbox];
+
+    float rightX = [parent frame].size.width - 21 - ROW_RIGHT_PAD;
+    NSButton *btn = [[NSButton alloc]
+        initWithFrame:NSMakeRect(rightX, y - 2, 21, 21)];
+    [btn setBezelStyle:NSBezelStyleHelpButton];
+    [btn setTitle:@""];
+    [btn setToolTip:helpText];
+    [btn setTarget:target];
+    [btn setAction:@selector(showHelpPopover:)];
+    [btn setAccessibilityLabel:helpText];
+    [parent addSubview:btn];
+    [btn release];
+
     return y + 24;
 }
 
-/* Create a section box. */
-static NSBox *makeSection(NSString *title, float x, float y,
-                           float w, float h)
+
+/* Create a disclosure header button with triangle + bold title.
+ * tag is used to identify the section index. */
+static NSButton *makeDisclosureHeader(NSString *title, id target, int tag)
 {
-    NSBox *box = [[NSBox alloc]
-        initWithFrame:NSMakeRect(x, y, w, h)];
-    [box setTitle:title];
-    [box setTitleFont:[NSFont boldSystemFontOfSize:11.0]];
-    return box;
+    NSButton *btn = [[NSButton alloc] initWithFrame:NSMakeRect(0, 0, 400, DISC_HEADER_H)];
+    [btn setButtonType:NSButtonTypeMomentaryChange];
+    [btn setBordered:NO];
+    [btn setTitle:[NSString stringWithFormat:@"\u25BC  %@", title]]; /* ▼ expanded */
+    [btn setAlignment:NSTextAlignmentLeft];
+    [btn setFont:[NSFont boldSystemFontOfSize:12.0]];
+    [btn setTarget:target];
+    [btn setAction:@selector(toggleDisclosure:)];
+    [btn setTag:tag];
+    return btn;
 }
 
 static NSString *trimmedString(NSString *s)

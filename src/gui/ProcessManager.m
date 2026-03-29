@@ -169,6 +169,18 @@ NSString * const PMLogLineReceivedNotification = @"PMLogLineReceived";
         _task = task;
         [self setStatus:ServerStatusRunning];
     NS_HANDLER
+        [[NSNotificationCenter defaultCenter] removeObserver:self
+            name:NSTaskDidTerminateNotification object:task];
+        [[NSNotificationCenter defaultCenter] removeObserver:self
+            name:NSFileHandleReadCompletionNotification
+            object:[_stdoutPipe fileHandleForReading]];
+        [[NSNotificationCenter defaultCenter] removeObserver:self
+            name:NSFileHandleReadCompletionNotification
+            object:[_stderrPipe fileHandleForReading]];
+        [_stdoutPipe release];
+        _stdoutPipe = nil;
+        [_stderrPipe release];
+        _stderrPipe = nil;
         [self setError:[NSString stringWithFormat:@"Failed to launch: %@",
                         [localException reason]]];
         [task release];
