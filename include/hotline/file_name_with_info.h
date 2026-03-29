@@ -1,8 +1,6 @@
 /*
  * file_name_with_info.h - File listing entry with metadata
  *
- * Maps to: hotline/file_name_with_info.go
- *
  * Wire format: Header(20 bytes) + Name(variable)
  */
 

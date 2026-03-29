@@ -1,8 +1,6 @@
 /*
  * flat_news.h - Flat message board (MessageBoard.txt)
  *
- * Maps to: internal/mobius/news.go (FlatNews)
- *
  * Stores news posts as a flat file. New posts are prepended.
  */
 
@@ -21,7 +19,6 @@ typedef struct {
 
 /*
  * mobius_flat_news_new - Load message board from file.
- * Maps to: Go NewFlatNews()
  */
 mobius_flat_news_t *mobius_flat_news_new(const char *path);
 
@@ -31,7 +28,7 @@ int mobius_flat_news_reload(mobius_flat_news_t *fn);
 /* Get current data (caller must NOT free). Thread-safe read. */
 const char *mobius_flat_news_data(mobius_flat_news_t *fn, size_t *out_len);
 
-/* Prepend new data (new post). Maps to: Go FlatNews.Write() */
+/* Prepend new data (new post). */
 int mobius_flat_news_prepend(mobius_flat_news_t *fn, const char *data, size_t len);
 
 void mobius_flat_news_free(mobius_flat_news_t *fn);

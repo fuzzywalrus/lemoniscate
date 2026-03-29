@@ -1,8 +1,6 @@
 /*
  * tracker.h - Tracker server registration
  *
- * Maps to: hotline/tracker.go
- *
  * Registers with Hotline tracker servers via UDP.
  */
 
@@ -13,7 +11,6 @@
 
 /*
  * hl_tracker_register - Send registration to a single tracker.
- * Maps to: Go register() in tracker.go
  *
  * tracker_addr: "host:port" format (default port 5499 if omitted)
  * server_port: this server's Hotline port

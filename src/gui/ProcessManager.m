@@ -1,7 +1,7 @@
 /*
  * ProcessManager.m - Server process lifecycle management
  *
- * Maps to: MobiusAdmin ProcessManager.swift
+ * Lemoniscate server process lifecycle management
  *
  * Tiger Obj-C 1.0. Uses NSTask to launch/stop the lemoniscate binary.
  * Captures stdout/stderr via NSPipe and posts notifications for log lines.

@@ -1,7 +1,5 @@
 /*
  * chat.h - Private chat room manager
- *
- * Maps to: hotline/chat.go
  */
 
 #ifndef HOTLINE_CHAT_H
@@ -18,7 +16,7 @@ typedef struct hl_client_conn hl_client_conn_t;
 
 typedef struct hl_chat_mgr hl_chat_mgr_t;
 
-/* ChatManager vtable — maps to Go ChatManager interface */
+/* ChatManager vtable */
 typedef struct {
     /* Create a new private chat containing cc. Returns chat ID. */
     void (*new_chat)(hl_chat_mgr_t *self, hl_client_conn_t *cc, hl_chat_id_t out_id);
@@ -45,7 +43,6 @@ struct hl_chat_mgr {
 
 /*
  * hl_mem_chat_mgr_new - Create an in-memory chat manager.
- * Maps to: Go NewMemChatManager()
  */
 hl_chat_mgr_t *hl_mem_chat_mgr_new(void);
 

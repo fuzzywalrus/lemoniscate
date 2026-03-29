@@ -1,8 +1,7 @@
 /*
  * AppController.m - Lemoniscate Server Admin GUI
  *
- * Maps to: MobiusAdmin AppState + ContentView + ServerControlView +
- *          SettingsFormView + LogView
+ * Lemoniscate Server Admin — helpers and layout constants
  *
  * Tiger Obj-C 1.0. All UI built programmatically.
  * Layout: HSplitView with scrollable settings left, tab view right.

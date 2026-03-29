@@ -1,7 +1,7 @@
 /*
  * AppController.h - Lemoniscate Server Admin GUI
  *
- * Maps to: MobiusAdmin AppState.swift + ContentView.swift
+ * Lemoniscate Server Admin — programmatic AppKit UI
  *
  * Tiger-compatible Obj-C 1.0:
  * - Programmatic UI (no XIB/NIB)

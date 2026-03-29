@@ -1,8 +1,6 @@
 /*
  * transfer.h - HTXF file transfer header
  *
- * Maps to: hotline/transfer.go
- *
  * Legacy wire format (16 bytes):
  *   Protocol(4 "HTXF") + RefNum(4) + DataSize(4) + Reserved(4)
  *

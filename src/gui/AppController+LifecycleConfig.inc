@@ -91,7 +91,7 @@
             if (_pollingInterval <= 0) _pollingInterval = 10.0;
         }
 
-        /* Find server binary (supports Lemoniscate + MobiusAdmin names). */
+        /* Find server binary in the application bundle. */
         NSBundle *bundle = [NSBundle mainBundle];
         NSFileManager *fm = [NSFileManager defaultManager];
         NSString *binPath = nil;

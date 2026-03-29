@@ -702,13 +702,13 @@
 - (void)openServerRepository:(id)sender
 {
     (void)sender;
-    [self openProjectURL:@"https://github.com/jhalter/mobius"];
+    [self openProjectURL:@"https://github.com/fuzzywalrus/lemoniscate"];
 }
 
 - (void)openGUIRepository:(id)sender
 {
     (void)sender;
-    [self openProjectURL:@"https://github.com/fuzzywalrus/mobius-macOS-GUI"];
+    [self openProjectURL:@"https://github.com/fuzzywalrus/lemoniscate"];
 }
 
 - (void)openProjectHomepage:(id)sender

@@ -1,7 +1,5 @@
 /*
  * files.h - File listing and size calculation operations
- *
- * Maps to: hotline/files.go
  */
 
 #ifndef HOTLINE_FILES_H
@@ -13,7 +11,6 @@
 
 /*
  * hl_get_file_name_list - Read directory and build FileNameWithInfo fields.
- * Maps to: Go GetFileNameList()
  *
  * Reads dir_path, creates a FieldFileNameWithInfo for each entry.
  * Returns a malloc'd array of fields, caller frees (hl_field_free each).
@@ -23,14 +20,12 @@ hl_field_t *hl_get_file_name_list(const char *dir_path, int *out_count);
 
 /*
  * hl_calc_total_size - Sum file sizes in a directory tree.
- * Maps to: Go CalcTotalSize()
  * Returns the total as a BE uint32 in out[4].
  */
 void hl_calc_total_size(const char *dir_path, uint8_t out[4]);
 
 /*
  * hl_calc_item_count - Count non-hidden files in a directory.
- * Maps to: Go CalcItemCount()
  * Returns the count as BE uint16 in out[2].
  */
 void hl_calc_item_count(const char *dir_path, uint8_t out[2]);

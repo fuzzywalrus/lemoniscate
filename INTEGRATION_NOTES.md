@@ -18,6 +18,31 @@ When new commits land on `main`:
 - **main commit:** `ea86c90` (v0.1.3 + Documentation update, 2026-03-21)
 - **Parity merge on modern:** `git merge origin/main -s ours`
 
+## Modern branch exclusive features
+
+These features exist only on the `modern` branch and have no counterpart on `main`:
+
+### HOPE Encryption
+- **HOPE secure login** (`hope.c`, `hope.h`) — Challenge-response MAC authentication replacing plaintext passwords
+- **HOPE transport encryption** — RC4 stream cipher for the transaction channel after authentication
+- **E2E file content gating** — Files/folders with a configurable prefix are hidden from non-encrypted clients
+- **E2E TLS requirement** (`E2ERequireTLS` config) — Optionally requires TLS connection for E2E content visibility, ensuring file transfers are also encrypted
+
+### TLS Enhancements
+- **Self-signed certificate generation** — GUI button generates RSA 2048-bit cert via `/usr/bin/openssl`, auto-fills TLS fields
+- **Traditional RSA key format** — Uses `openssl genrsa` for SecureTransport compatibility
+
+### GUI Overhaul
+- **Collapsible disclosure sections** — Settings panel uses disclosure triangles instead of fixed NSBox sections
+- **Help popovers** — Apple-standard (?) help buttons with NSPopover explanations on every setting
+- **Tooltips** — All controls have descriptive hover tooltips
+- **Consistent spacing** — 21px indented content under disclosure headers, matching modern design patterns
+- **Static libyaml linking** — No runtime Homebrew dependencies for signed distribution
+
+### Build & Signing
+- **Static libyaml** — Switched from dynamic to static linking to avoid Team ID mismatch in signed builds
+- **Developer ID signing** — Full codesign with hardened runtime
+
 ## Integrated from main
 
 ### Security Fixes

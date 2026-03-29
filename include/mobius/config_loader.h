@@ -1,8 +1,6 @@
 /*
  * config_loader.h - YAML configuration loader
  *
- * Maps to: internal/mobius/config.go
- *
  * Loads config.yaml and populates an hl_config_t struct.
  * Requires libyaml.
  */
@@ -12,13 +10,12 @@
 
 #include "hotline/config.h"
 
-/* Config search paths — maps to Go ConfigSearchOrder */
+/* Config search paths */
 #define MOBIUS_CONFIG_SEARCH_COUNT 3
 extern const char *mobius_config_search_paths[MOBIUS_CONFIG_SEARCH_COUNT];
 
 /*
  * mobius_load_config - Load config from a YAML file.
- * Maps to: Go LoadConfig()
  *
  * If config_dir is NULL, searches the default paths.
  * Returns 0 on success, -1 on error.

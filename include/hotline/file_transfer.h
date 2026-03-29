@@ -1,7 +1,5 @@
 /*
  * file_transfer.h - File transfer management
- *
- * Maps to: hotline/file_transfer.go
  */
 
 #ifndef HOTLINE_FILE_TRANSFER_H
@@ -11,7 +9,7 @@
 #include "hotline/file_resume_data.h"
 #include <pthread.h>
 
-/* Transfer types — maps to Go FileTransferType constants */
+/* Transfer types */
 #define HL_XFER_FILE_DOWNLOAD    0
 #define HL_XFER_FILE_UPLOAD      1
 #define HL_XFER_FOLDER_DOWNLOAD  2
@@ -48,7 +46,7 @@ typedef struct {
     int                      active;
 } hl_file_transfer_t;
 
-/* FileTransferMgr — maps to Go FileTransferMgr interface */
+/* FileTransferMgr */
 typedef struct hl_xfer_mgr hl_xfer_mgr_t;
 
 typedef struct {
