@@ -162,6 +162,40 @@ static int load_identity_from_pem(const char *cert_path,
 {
     *out_identity_certs = NULL;
 
+    /* Read keychain password from keychain.pass alongside the cert.
+     * Falls back to a default if the file doesn't exist. */
+    char kc_pass[64] = "lemoniscate-default-kc";
+    size_t kc_pass_len = strlen(kc_pass);
+    {
+        /* Derive pass file path from cert_path directory */
+        char pass_path[2048];
+        const char *slash = strrchr(cert_path, '/');
+        if (slash) {
+            size_t dir_len = (size_t)(slash - cert_path);
+            if (dir_len >= sizeof(pass_path)) dir_len = sizeof(pass_path) - 1;
+            memcpy(pass_path, cert_path, dir_len);
+            pass_path[dir_len] = '\0';
+            strncat(pass_path, "/keychain.pass", sizeof(pass_path) - dir_len - 1);
+        } else {
+            strncpy(pass_path, "keychain.pass", sizeof(pass_path) - 1);
+        }
+        FILE *pf = fopen(pass_path, "r");
+        if (pf) {
+            char buf[64];
+            if (fgets(buf, sizeof(buf), pf)) {
+                /* Trim newline */
+                size_t len = strlen(buf);
+                while (len > 0 && (buf[len-1] == '\n' || buf[len-1] == '\r'))
+                    buf[--len] = '\0';
+                if (len > 0) {
+                    memcpy(kc_pass, buf, len + 1);
+                    kc_pass_len = len;
+                }
+            }
+            fclose(pf);
+        }
+    }
+
     /* Create a temporary keychain for this server process */
     SecKeychainRef temp_keychain = NULL;
     char temp_path[256];
@@ -171,7 +205,7 @@ static int load_identity_from_pem(const char *cert_path,
     /* Remove stale keychain file if it exists */
     unlink(temp_path);
 
-    OSStatus status = SecKeychainCreate(temp_path, 8, "lemonade",
+    OSStatus status = SecKeychainCreate(temp_path, (UInt32)kc_pass_len, kc_pass,
                                          FALSE, NULL, &temp_keychain);
     if (status != noErr) {
         fprintf(stderr, "[TLS] Failed to create temporary keychain: %d\n",
@@ -179,8 +213,36 @@ static int load_identity_from_pem(const char *cert_path,
         return -1;
     }
 
-    /* Unlock the keychain for use */
-    SecKeychainUnlock(temp_keychain, 8, "lemonade", TRUE);
+    /* Unlock the keychain and disable auto-lock so SecureTransport can
+     * access the private key during TLS handshakes without prompting.
+     * Also add it to the keychain search list so the Security framework
+     * can find identities in it. */
+    SecKeychainUnlock(temp_keychain, (UInt32)kc_pass_len, kc_pass, TRUE);
+
+    {
+        SecKeychainSettings settings;
+        settings.version = SEC_KEYCHAIN_SETTINGS_VERS1;
+        settings.lockOnSleep = FALSE;
+        settings.useLockInterval = FALSE;
+        settings.lockInterval = 0;
+        SecKeychainSetSettings(temp_keychain, &settings);
+    }
+
+    /* Add temp keychain to search list so SecIdentitySearch finds it */
+    {
+        CFArrayRef existing = NULL;
+        SecKeychainCopySearchList(&existing);
+        CFMutableArrayRef newList;
+        if (existing) {
+            newList = CFArrayCreateMutableCopy(NULL, 0, existing);
+            CFRelease(existing);
+        } else {
+            newList = CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks);
+        }
+        CFArrayAppendValue(newList, temp_keychain);
+        SecKeychainSetSearchList(newList);
+        CFRelease(newList);
+    }
 
     /* Import private key into the temp keychain */
     CFArrayRef key_items = import_pem_file(key_path, kSecItemTypePrivateKey,
@@ -192,6 +254,8 @@ static int load_identity_from_pem(const char *cert_path,
         CFRelease(temp_keychain);
         return -1;
     }
+    fprintf(stderr, "[TLS] Imported %d key item(s) from %s\n",
+            (int)CFArrayGetCount(key_items), key_path);
     CFRelease(key_items);
 
     /* Import certificate into the temp keychain */
@@ -204,6 +268,8 @@ static int load_identity_from_pem(const char *cert_path,
         CFRelease(temp_keychain);
         return -1;
     }
+    fprintf(stderr, "[TLS] Imported %d cert item(s) from %s\n",
+            (int)CFArrayGetCount(cert_items), cert_path);
 
     /* Find the identity (cert+key pair) in the keychain.
      * SecIdentitySearchCreate + SecIdentitySearchCopyNext — available on Tiger.
@@ -329,12 +395,32 @@ hl_tls_conn_t *hl_tls_accept(hl_tls_server_ctx_t *ctx, int fd)
     status = SSLSetConnection(ssl, &conn->fd);
     if (status != noErr) goto fail;
 
+    /* Enable all supported protocol versions (SSL3 + TLS1 on Tiger).
+     * Without this, SecureTransport may restrict to a subset that
+     * doesn't match what the client offers. */
+    {
+        SSLProtocol proto;
+        /* Allow SSL 3.0 through TLS 1.0 — the full range Tiger supports */
+        status = SSLSetProtocolVersionEnabled(ssl, kSSLProtocolAll, true);
+        if (status != noErr) {
+            fprintf(stderr, "[TLS] SSLSetProtocolVersionEnabled failed: %d\n", (int)status);
+        }
+    }
+
+    /* Allow all available cipher suites */
+    {
+        size_t numCiphers = 0;
+        SSLGetNumberEnabledCiphers(ssl, &numCiphers);
+        fprintf(stderr, "[TLS] %zu cipher suites enabled\n", numCiphers);
+    }
+
     /* Set certificate */
     status = SSLSetCertificate(ssl, ctx->identity_certs);
     if (status != noErr) {
         fprintf(stderr, "[TLS] SSLSetCertificate failed: %d\n", (int)status);
         goto fail;
     }
+    fprintf(stderr, "[TLS] SSLSetCertificate OK, starting handshake...\n");
 
     /* Perform TLS handshake — use select() to avoid busy-spinning
      * when the underlying socket would block. Timeout after 10s. */

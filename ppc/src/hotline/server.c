@@ -559,12 +559,16 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
     setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
     /* Handshake (application-layer, runs over TLS if active) */
+    hl_log_info(srv->logger, "Starting app handshake from %s%s",
+                ip_str, tls_conn ? " (TLS)" : "");
     if (hl_perform_handshake_server_conn(conn) < 0) {
-        hl_log_info(srv->logger, "Handshake failed from %s (possible tracker probe)",
-                    ip_str);
+        hl_log_info(srv->logger, "Handshake failed from %s%s (possible tracker probe)",
+                    ip_str, tls_conn ? " (TLS)" : "");
         hl_conn_close(conn);
         return;
     }
+    hl_log_info(srv->logger, "App handshake OK from %s%s",
+                ip_str, tls_conn ? " (TLS)" : "");
 
     /* Read login transaction — maps to Go handleNewConnection() */
     /* Read enough data for the transaction header first */
@@ -1945,11 +1949,21 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                     int nodelay = 1;
                     setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY,
                                &nodelay, sizeof(nodelay));
+                    hl_log_info(srv->logger, "TLS accept from %s:%d",
+                                inet_ntoa(client_addr.sin_addr),
+                                ntohs(client_addr.sin_port));
                     hl_tls_conn_t *tconn = hl_tls_accept(&srv->tls_ctx,
                                                           client_fd);
                     if (tconn) {
+                        hl_log_info(srv->logger, "TLS handshake OK from %s:%d",
+                                    inet_ntoa(client_addr.sin_addr),
+                                    ntohs(client_addr.sin_port));
                         handle_new_connection(srv, tconn->fd, &client_addr,
                                               kq, tconn);
+                    } else {
+                        hl_log_info(srv->logger, "TLS handshake FAILED from %s:%d",
+                                    inet_ntoa(client_addr.sin_addr),
+                                    ntohs(client_addr.sin_port));
                     }
                     /* hl_tls_accept closes fd on failure */
                 }

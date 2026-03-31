@@ -509,7 +509,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
     /* ===== TLS Encryption ===== */
     {
-        float boxH = 4 * ROW_HEIGHT + 44;
+        float boxH = 6 * ROW_HEIGHT + 52;
         NSBox *box = makeSection(@"TLS Encryption", SECTION_MARGIN, y,
                                   secWidth, boxH);
         NSView *c = [box contentView];
@@ -531,6 +531,11 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_tlsPortField setStringValue:@"5600"];
         iy = addRow(c, @"TLS Port:", _tlsPortField, iy, 70);
 
+        _tlsKeychainPassField = [[NSSecureTextField alloc]
+            initWithFrame:NSMakeRect(0, 0, 160, 22)];
+        [[_tlsKeychainPassField cell] setPlaceholderString:@"Keychain password"];
+        iy = addRow(c, @"Keychain Pass:", _tlsKeychainPassField, iy, 160);
+
         _tlsStatusLabel = [[NSTextField alloc] initWithFrame:
                             NSMakeRect(LABEL_WIDTH, iy, fieldWidth, 18)];
         [_tlsStatusLabel setStringValue:@"Provide both a certificate and key to enable TLS"];
@@ -541,6 +546,12 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_tlsStatusLabel setFont:[NSFont systemFontOfSize:11]];
         [_tlsStatusLabel setTextColor:[NSColor grayColor]];
         [c addSubview:_tlsStatusLabel];
+        iy += 22;
+
+        _generateTLSCertButton = makeButton(@"Generate Self-Signed Certificate", self,
+                                              @selector(generateTLSCert:));
+        [_generateTLSCertButton setFrame:NSMakeRect(LABEL_WIDTH, iy, 220, 24)];
+        [c addSubview:_generateTLSCertButton];
 
         [doc addSubview:box];
         [box release];
