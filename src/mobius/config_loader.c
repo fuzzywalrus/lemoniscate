@@ -116,6 +116,8 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
                     cfg->preserve_resource_forks = yaml_parse_bool(val);
                 else if (strcmp(current_key, "EnableBonjour") == 0)
                     cfg->enable_bonjour = yaml_parse_bool(val);
+                else if (strcmp(current_key, "EnableHOPE") == 0)
+                    cfg->enable_hope = yaml_parse_bool(val);
                 else if (strcmp(current_key, "Encoding") == 0)
                     strncpy(cfg->encoding, val, sizeof(cfg->encoding) - 1);
 

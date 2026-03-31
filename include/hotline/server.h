@@ -76,6 +76,11 @@ typedef struct hl_server {
 
     int                 listen_fd;           /* Main protocol listener */
     int                 transfer_fd;         /* File transfer listener */
+
+    /* HOPE state — loaded on startup if EnableHOPE is true.
+     * Remove this block if HOPE support is dropped. */
+    uint8_t             hope_master_key[32]; /* For encrypting passwords at rest */
+    int                 hope_master_key_loaded;
 } hl_server_t;
 
 /* --- Lifecycle --- */

@@ -66,7 +66,8 @@ HOTLINE_C_SRCS = \
 	src/hotline/file_transfer.c \
 	src/hotline/bonjour.c \
 	src/hotline/tracker.c \
-	src/hotline/password.c
+	src/hotline/password.c \
+	src/hotline/hope.c
 
 HOTLINE_C_OBJS = $(HOTLINE_C_SRCS:.c=.o)
 
@@ -146,7 +147,7 @@ $(SERVER_COMPAT_BIN): lemoniscate
 
 # Phase 1 wire format tests (C only, no Foundation needed)
 test-wire: $(TEST_C_OBJS) $(HOTLINE_C_OBJS)
-	$(CC) $(CFLAGS) -o test_runner $^ -framework CoreFoundation -lpthread
+	$(CC) $(CFLAGS) -o test_runner $^ -framework CoreFoundation -lpthread -lcrypto
 	./test_runner
 
 # Phase 2 client tests (Obj-C, needs Foundation)

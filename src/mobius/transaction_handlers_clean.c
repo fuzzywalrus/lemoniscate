@@ -18,6 +18,7 @@
 #include "hotline/file_wrapper.h"
 #include "hotline/time_conv.h"
 #include "hotline/password.h"
+#include "hotline/hope.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,6 +73,20 @@ void hl_build_notify_change_user_free(hl_transaction_t *notify)
         free(notify->fields);
         notify->fields = NULL;
     }
+}
+
+/* HOPE Secure Zone helper — returns non-zero and sends error reply if the path
+ * is in the Encrypted zone and the client isn't HOPE-encrypted.
+ * Returns 0 if access is allowed. Remove if Secure Zone causes issues. */
+static int check_secure_zone(hl_client_conn_t *cc, const hl_transaction_t *req,
+                              const char *path,
+                              hl_transaction_t **out, int *out_count)
+{
+    if (hl_hope_is_secure_zone(path) && !cc->hope_encrypted) {
+        return reply_err(cc, req, "This content requires an encrypted connection.",
+                         out, out_count);
+    }
+    return 0;
 }
 
 /* ====================================================================
@@ -865,9 +880,6 @@ static int handle_new_user(hl_client_conn_t *cc, const hl_transaction_t *req,
 static int handle_set_user(hl_client_conn_t *cc, const hl_transaction_t *req,
                            hl_transaction_t **out, int *out_count)
 {
-    if (!hl_client_conn_authorize(cc, ACCESS_MODIFY_USER))
-        return reply_err(cc, req, "You are not allowed to modify accounts.", out, out_count);
-
     if (!cc->server->account_mgr)
         return reply_err(cc, req, "No account manager.", out, out_count);
 
@@ -877,20 +889,62 @@ static int handle_set_user(hl_client_conn_t *cc, const hl_transaction_t *req,
     char login[128];
     hl_field_decode_obfuscated_string(f_login, login, sizeof(login));
 
+    /* ACCESS_CHANGE_OWN_PASS: allow users without ACCESS_MODIFY_USER to
+     * change their own password (and only their password). Clients that
+     * support "Change Own Password" send SetUser (353) targeting the
+     * user's own login. If this causes issues, remove the own_pass_only
+     * block and revert to the original ACCESS_MODIFY_USER-only check. */
+    int own_pass_only = 0;
+    if (!hl_client_conn_authorize(cc, ACCESS_MODIFY_USER)) {
+        if (hl_client_conn_authorize(cc, ACCESS_CHANGE_OWN_PASS) &&
+            cc->account && strcmp(cc->account->login, login) == 0) {
+            own_pass_only = 1;
+        } else {
+            return reply_err(cc, req, "You are not allowed to modify accounts.",
+                             out, out_count);
+        }
+    }
+
     hl_account_t *acct = cc->server->account_mgr->vt->get(cc->server->account_mgr, login);
     if (!acct) return reply_err(cc, req, "Account not found.", out, out_count);
 
-    const hl_field_t *f_name = hl_transaction_get_field(req, FIELD_USER_NAME);
-    const hl_field_t *f_access = hl_transaction_get_field(req, FIELD_USER_ACCESS);
+    /* Name and access changes — blocked for own-password-only users */
+    if (!own_pass_only) {
+        const hl_field_t *f_name = hl_transaction_get_field(req, FIELD_USER_NAME);
+        const hl_field_t *f_access = hl_transaction_get_field(req, FIELD_USER_ACCESS);
 
-    if (f_name && f_name->data_len > 0) {
-        size_t nlen = f_name->data_len < sizeof(acct->name) - 1 ? f_name->data_len : sizeof(acct->name) - 1;
-        memset(acct->name, 0, sizeof(acct->name));
-        memcpy(acct->name, f_name->data, nlen);
+        if (f_name && f_name->data_len > 0) {
+            size_t nlen = f_name->data_len < sizeof(acct->name) - 1
+                        ? f_name->data_len : sizeof(acct->name) - 1;
+            memset(acct->name, 0, sizeof(acct->name));
+            memcpy(acct->name, f_name->data, nlen);
+        }
+
+        if (f_access && f_access->data_len >= 8) {
+            memcpy(acct->access, f_access->data, 8);
+        }
     }
 
-    if (f_access && f_access->data_len >= 8) {
-        memcpy(acct->access, f_access->data, 8);
+    /* Password change — allowed for both admins and own-password users.
+     * Per Virtual1's protocol notes, the client sends chr(7) as the
+     * password field when the password was NOT changed. A real password
+     * change sends the new password (obfuscated). Empty field = clear. */
+    const hl_field_t *f_pass = hl_transaction_get_field(req, FIELD_USER_PASSWORD);
+    if (f_pass) {
+        /* chr(7) = "password unchanged" sentinel — skip */
+        if (!(f_pass->data_len == 1 && f_pass->data[0] == (255 - 7))) {
+            if (f_pass->data_len > 0) {
+                char plaintext[128];
+                hl_field_decode_obfuscated_string(f_pass, plaintext,
+                                                  sizeof(plaintext));
+                hl_password_hash(plaintext, acct->password,
+                                 sizeof(acct->password));
+                memset(plaintext, 0, sizeof(plaintext));
+            } else {
+                /* Empty password field = clear password */
+                acct->password[0] = '\0';
+            }
+        }
     }
 
     cc->server->account_mgr->vt->update(cc->server->account_mgr, acct, NULL);
@@ -1325,6 +1379,13 @@ static int handle_get_news_cat_name_list(hl_client_conn_t *cc, const hl_transact
         uint8_t name_len = cat_data[off + hdr_size];
         size_t entry_len = hdr_size + 1 + name_len;
 
+        /* HOPE Secure Zone: skip "Encrypted" category for non-HOPE clients */
+        if (!cc->hope_encrypted && name_len == 9 &&
+            strncasecmp((const char *)cat_data + off + hdr_size + 1, "Encrypted", 9) == 0) {
+            off += entry_len;
+            continue;
+        }
+
         hl_field_new(&fields[fi], FIELD_NEWS_CAT_LIST_DATA15,
                      cat_data + off, (uint16_t)entry_len);
         off += entry_len;
@@ -1649,6 +1710,7 @@ static int handle_get_file_name_list(hl_client_conn_t *cc, const hl_transaction_
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
+    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     /* Check drop box viewing permission */
     const char *dir_leaf = strrchr(dir_path, '/');
@@ -1659,6 +1721,30 @@ static int handle_get_file_name_list(hl_client_conn_t *cc, const hl_transaction_
 
     int field_count = 0;
     hl_field_t *fields = hl_get_file_name_list(dir_path, &field_count);
+
+    /* HOPE Secure Zone: filter "Encrypted" folder from listing for non-HOPE clients.
+     * We scan the returned fields and skip any entry whose name is "Encrypted". */
+    if (!cc->hope_encrypted && fields && field_count > 0) {
+        int i;
+        for (i = 0; i < field_count; i++) {
+            /* Check if this field's data contains "Encrypted" as the name.
+             * File name with info has: type(4)+creator(4)+size(4)+rsvd(4)+namesize(2)+name */
+            if (fields[i].data_len > 18) {
+                uint16_t nlen = hl_read_u16(fields[i].data + 16);
+                if (nlen == 9 && fields[i].data_len >= 18 + 9 &&
+                    strncasecmp((const char *)fields[i].data + 18, "Encrypted", 9) == 0) {
+                    /* Remove this entry by swapping with last and reducing count */
+                    hl_field_free(&fields[i]);
+                    if (i < field_count - 1) {
+                        fields[i] = fields[field_count - 1];
+                    }
+                    memset(&fields[field_count - 1], 0, sizeof(hl_field_t));
+                    field_count--;
+                    i--; /* re-check this index */
+                }
+            }
+        }
+    }
 
     *out = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
     if (!*out) return -1;
@@ -1687,6 +1773,7 @@ static int handle_get_file_info(hl_client_conn_t *cc, const hl_transaction_t *re
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
+    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     char filename[256];
     size_t nlen = f_name->data_len < 255 ? f_name->data_len : 255;
@@ -1757,6 +1844,7 @@ static int handle_set_file_info(hl_client_conn_t *cc, const hl_transaction_t *re
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
+    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     char filename[256];
     size_t nlen = f_name->data_len < 255 ? f_name->data_len : 255;
@@ -1817,6 +1905,7 @@ static int handle_delete_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
+    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     char filename[256];
     size_t nlen = f_name->data_len < 255 ? f_name->data_len : 255;
@@ -1858,6 +1947,7 @@ static int handle_move_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
+    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     char filename[256];
     size_t nlen = f_name->data_len < 255 ? f_name->data_len : 255;
@@ -1908,6 +1998,7 @@ static int handle_new_folder(hl_client_conn_t *cc, const hl_transaction_t *req,
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
+    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     char folder_name[256];
     size_t nlen = f_name->data_len < 255 ? f_name->data_len : 255;
@@ -1935,6 +2026,7 @@ static int handle_make_alias(hl_client_conn_t *cc, const hl_transaction_t *req,
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
+    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     char filename[256];
     size_t nlen = f_name->data_len < 255 ? f_name->data_len : 255;
@@ -2087,6 +2179,7 @@ static int handle_upload_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
+    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     /* Check upload location restriction */
     if (!hl_client_conn_authorize(cc, ACCESS_UPLOAD_ANYWHERE)) {
@@ -2165,6 +2258,7 @@ static int handle_download_folder(hl_client_conn_t *cc, const hl_transaction_t *
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
+    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     const hl_field_t *f_name = hl_transaction_get_field(req, FIELD_FILE_NAME);
     if (!f_name || f_name->data_len == 0)
@@ -2237,6 +2331,7 @@ static int handle_upload_folder(hl_client_conn_t *cc, const hl_transaction_t *re
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
+    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     const hl_field_t *f_name = hl_transaction_get_field(req, FIELD_FILE_NAME);
     if (!f_name || f_name->data_len == 0)

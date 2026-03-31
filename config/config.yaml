@@ -3,6 +3,7 @@ Description: A test Lemoniscate server
 FileRoot: ./files
 Encoding: macintosh
 EnableBonjour: false
+# EnableHOPE: false         # HOPE secure login — challenge-response auth + optional encryption
 EnableTrackerRegistration: false
 MaxDownloads: 10
 Trackers:
