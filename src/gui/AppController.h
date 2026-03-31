@@ -82,6 +82,8 @@
     NSButton *_chooseTLSKeyButton;
     NSTextField *_tlsPortField;
     NSTextField *_tlsStatusLabel;
+    NSButton *_generateTLSCertButton;
+    NSSecureTextField *_tlsKeychainPassField;
 
     /* Monitoring section */
     NSPopUpButton *_pollingRatePopup;
@@ -318,6 +320,7 @@
 - (void)pollingRateChanged:(id)sender;
 - (void)chooseTLSCert:(id)sender;
 - (void)chooseTLSKey:(id)sender;
+- (void)generateTLSCert:(id)sender;
 
 @end
 
