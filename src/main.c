@@ -10,6 +10,7 @@
 #include "hotline/server.h"
 #include "hotline/bonjour.h"
 #include "hotline/tracker.h"
+#include "hotline/tls.h"
 #include "hotline/hope.h"
 #include "mobius/transaction_handlers.h"
 #include "mobius/config_loader.h"
@@ -240,6 +241,9 @@ static void print_usage(const char *prog)
         "  -c, --config DIR       Configuration directory\n"
         "  -f, --log-file PATH    Log file path (enables file logging)\n"
         "  -l, --log-level LEVEL  Log level: debug, info, error (default: info)\n"
+        "      --tls-cert PATH    TLS certificate file (PEM)\n"
+        "      --tls-key PATH     TLS private key file (PEM)\n"
+        "      --tls-port PORT    TLS base port (default: port + 100)\n"
         "      --api-addr ADDR    API listener address (accepted for compatibility)\n"
         "      --api-key KEY      API key (accepted for compatibility)\n"
         "      --init             Initialize a default config directory\n"
@@ -260,6 +264,9 @@ int main(int argc, char **argv)
     const char *log_level = "info";
     const char *api_addr = NULL; /* Compatibility flag used by MobiusAdmin */
     const char *api_key = NULL;  /* Compatibility flag used by MobiusAdmin */
+    const char *tls_cert = NULL;
+    const char *tls_key = NULL;
+    int tls_port_arg = 0;
     int show_version = 0;
     int do_init = 0;
 
@@ -270,6 +277,9 @@ int main(int argc, char **argv)
         {"config",    required_argument, 0, 'c'},
         {"log-file",  required_argument, 0, 'f'},
         {"log-level", required_argument, 0, 'l'},
+        {"tls-cert",  required_argument, 0, 'T'},
+        {"tls-key",   required_argument, 0, 'Y'},
+        {"tls-port",  required_argument, 0, 'S'},
         {"api-addr",  required_argument, 0, 'A'}, /* accepted for compatibility */
         {"api-key",   required_argument, 0, 'K'}, /* accepted for compatibility */
         {"init",      no_argument,       0, 'I'},
@@ -286,6 +296,9 @@ int main(int argc, char **argv)
             case 'c': config_dir = optarg; break;
             case 'f': log_file = optarg; break;
             case 'l': log_level = optarg; break;
+            case 'T': tls_cert = optarg; break;
+            case 'Y': tls_key = optarg; break;
+            case 'S': tls_port_arg = atoi(optarg); break;
             case 'A': api_addr = optarg; break;
             case 'K': api_key = optarg; break;
             case 'I': do_init = 1; break;
@@ -296,7 +309,7 @@ int main(int argc, char **argv)
     }
 
     if (show_version) {
-        printf("lemoniscate 0.1.3\n");
+        printf("lemoniscate 0.1.4\n");
         return 0;
     }
 
@@ -486,6 +499,28 @@ int main(int argc, char **argv)
     /* Register all 43 transaction handlers */
     mobius_register_handlers(srv);
 
+    /* TLS initialization — maps to Go WithTLS() in main.go.
+     * Tiger's SecureTransport supports TLS 1.0, which modern Hotline
+     * clients like Navigator should accept. CLI flags override config. */
+    {
+        const char *cert = tls_cert ? tls_cert : srv->config.tls_cert_path;
+        const char *key  = tls_key  ? tls_key  : srv->config.tls_key_path;
+        int tp = tls_port_arg > 0 ? tls_port_arg
+               : srv->config.tls_port > 0 ? srv->config.tls_port
+               : port + 100; /* default: port + 100 (5600 for 5500) */
+
+        if (cert && cert[0] && key && key[0]) {
+            if (hl_tls_server_ctx_init(&srv->tls_ctx, cert, key) == 0) {
+                srv->tls_port = tp;
+                hl_log_info(srv->logger,
+                    "TLS enabled (port %d, transfers on %d)", tp, tp + 1);
+            } else {
+                hl_log_error(srv->logger,
+                    "TLS initialization failed — running without TLS");
+            }
+        }
+    }
+
     /* Install signal handlers */
     g_server = srv;
     signal(SIGINT, shutdown_handler);
@@ -512,6 +547,7 @@ int main(int argc, char **argv)
             (const char (*)[256])srv->config.trackers,
             srv->config.tracker_count,
             (uint16_t)port, 0,
+            (uint16_t)srv->tls_port,
             srv->tracker_pass_id,
             srv->config.name,
             srv->config.description);

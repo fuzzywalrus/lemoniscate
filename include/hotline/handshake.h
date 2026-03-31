@@ -62,6 +62,15 @@ int hl_handshake_valid(const hl_handshake_t *h);
 int hl_perform_handshake_server(int fd);
 
 /*
+ * hl_perform_handshake_server_conn - Server-side handshake using TLS-aware connection.
+ * Same protocol as hl_perform_handshake_server, but routes I/O through the
+ * hl_tls_conn_t wrapper (handles both plain and TLS connections).
+ * Returns 0 on success, -1 on error.
+ */
+struct hl_tls_conn;
+int hl_perform_handshake_server_conn(struct hl_tls_conn *conn);
+
+/*
  * hl_perform_handshake_client - Client-side handshake: send client handshake, read server response.
  * Maps to: Go Client.Handshake()
  * fd is the connected socket. Returns 0 on success, -1 on error.

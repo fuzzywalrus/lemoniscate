@@ -10,6 +10,7 @@
 
 #include "hotline/hope.h"
 #include "hotline/client_conn.h"
+#include "hotline/tls.h"
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
 #include <openssl/md5.h>
@@ -274,7 +275,15 @@ void hl_hope_init_rc4(struct hl_client_conn *cc,
 
 ssize_t hl_hope_read(struct hl_client_conn *cc, uint8_t *buf, size_t len)
 {
-    ssize_t n = read(cc->fd, buf, len);
+    /* Route through TLS conn wrapper if available, else raw read.
+     * TLS decryption happens inside hl_conn_read; HOPE RC4 decryption
+     * is layered on top (application-layer encryption over TLS). */
+    ssize_t n;
+    if (cc->conn) {
+        n = hl_conn_read(cc->conn, buf, len);
+    } else {
+        n = read(cc->fd, buf, len);
+    }
     if (n > 0 && cc->hope_encrypted) {
         /* Decrypt in-place — RC4 is a stream cipher, same operation
          * for encrypt and decrypt. The key state advances per-byte. */
@@ -283,26 +292,23 @@ ssize_t hl_hope_read(struct hl_client_conn *cc, uint8_t *buf, size_t len)
     return n;
 }
 
-/* write_all - retry short writes until all bytes are sent or error */
-static int hope_write_all(int fd, const uint8_t *buf, size_t n)
-{
-    size_t total = 0;
-    while (total < n) {
-        ssize_t w = write(fd, buf + total, n - total);
-        if (w < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-        if (w == 0) return -1;
-        total += (size_t)w;
-    }
-    return 0;
-}
-
 ssize_t hl_hope_write(struct hl_client_conn *cc, const uint8_t *buf, size_t len)
 {
     if (!cc->hope_encrypted) {
-        return (hope_write_all(cc->fd, buf, len) == 0) ? (ssize_t)len : -1;
+        /* No HOPE encryption — write through conn wrapper (handles TLS) */
+        if (cc->conn) {
+            return (hl_conn_write_all(cc->conn, buf, len) == 0)
+                   ? (ssize_t)len : -1;
+        }
+        /* Fallback to raw write_all for connections without a wrapper */
+        size_t total = 0;
+        while (total < len) {
+            ssize_t w = write(cc->fd, buf + total, len - total);
+            if (w < 0) { if (errno == EINTR) continue; return -1; }
+            if (w == 0) return -1;
+            total += (size_t)w;
+        }
+        return (ssize_t)len;
     }
 
     /* Encrypt into a temporary buffer, then write.
@@ -320,7 +326,20 @@ ssize_t hl_hope_write(struct hl_client_conn *cc, const uint8_t *buf, size_t len)
     }
 
     RC4(&cc->hope_rc4_encode, (unsigned long)len, buf, enc_buf);
-    int rc = hope_write_all(cc->fd, enc_buf, len);
+    int rc;
+    if (cc->conn) {
+        rc = hl_conn_write_all(cc->conn, enc_buf, len);
+    } else {
+        /* Fallback raw write_all */
+        size_t total = 0;
+        rc = 0;
+        while (total < len) {
+            ssize_t w = write(cc->fd, enc_buf + total, len - total);
+            if (w < 0) { if (errno == EINTR) continue; rc = -1; break; }
+            if (w == 0) { rc = -1; break; }
+            total += (size_t)w;
+        }
+    }
 
     if (heap) free(enc_buf);
     return (rc == 0) ? (ssize_t)len : -1;

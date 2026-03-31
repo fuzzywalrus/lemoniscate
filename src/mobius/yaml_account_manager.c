@@ -95,6 +95,10 @@ static int parse_account_file(hl_account_t *acct, const char *filepath)
 
     memset(acct, 0, sizeof(*acct));
 
+    /* Default ShowInList to ON — users should be visible unless explicitly
+     * hidden. Matches Mobius Go behavior where ShowInList defaults to true. */
+    hl_access_set(acct->access, ACCESS_SHOW_IN_LIST);
+
     char current_key[128] = {0};
     int in_access_map = 0;
     int depth = 0;

@@ -5,6 +5,7 @@
  */
 
 #include "hotline/client_conn.h"
+#include "hotline/tls.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -28,6 +29,11 @@ hl_client_conn_t *hl_client_conn_new(int fd, const char *remote_addr,
 void hl_client_conn_free(hl_client_conn_t *cc)
 {
     if (!cc) return;
+    /* Free TLS conn wrapper (does NOT close the fd — caller manages that) */
+    if (cc->conn) {
+        hl_conn_free(cc->conn);
+        cc->conn = NULL;
+    }
     pthread_mutex_destroy(&cc->flags_mu);
     pthread_rwlock_destroy(&cc->mu);
     free(cc);

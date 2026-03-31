@@ -17,6 +17,7 @@
 
 /* Forward declarations */
 struct hl_server;
+struct hl_tls_conn;
 
 /* Ensure hl_client_conn_t typedef exists (may already be forward-declared
  * by client_manager.h or chat.h) */
@@ -71,6 +72,8 @@ struct hl_ban_mgr {
  */
 struct hl_client_conn {
     int                 fd;              /* Go: Connection io.ReadWriteCloser */
+    struct hl_tls_conn *conn;            /* TLS-aware I/O wrapper (plain or SSL) */
+    int                 is_tls;          /* 1 if connected via TLS port */
     char                remote_addr[64]; /* Go: RemoteAddr string */
     hl_client_id_t      id;              /* Go: ID ClientID [2]byte */
     uint8_t             icon[2];         /* Go: Icon []byte (size 2) */
@@ -98,6 +101,8 @@ struct hl_client_conn {
     int                 hope_encrypted;  /* 1 if transport encryption active */
     RC4_KEY             hope_rc4_encode; /* Outbound cipher state */
     RC4_KEY             hope_rc4_decode; /* Inbound cipher state */
+
+    int                 large_file_mode; /* 1 = 64-bit file sizes (default on) */
 
     /* Read buffer for transaction scanning */
     uint8_t             read_buf[65536];

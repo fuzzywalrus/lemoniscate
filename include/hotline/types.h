@@ -160,6 +160,14 @@ static const hl_field_type_t FIELD_NEWS_ART_PARENT_ART  = {0x01, 0x4F}; /* 335 *
 static const hl_field_type_t FIELD_NEWS_ART_1ST_CHILD   = {0x01, 0x50}; /* 336 */
 static const hl_field_type_t FIELD_NEWS_ART_RECURSE_DEL = {0x01, 0x51}; /* 337 */
 
+/* --- Large file / capabilities fields (v1.9+ clients) --- */
+static const hl_field_type_t FIELD_CAPABILITIES         = {0x01, 0xF0}; /* 496 */
+static const hl_field_type_t FIELD_FILE_SIZE_64         = {0x01, 0xF1}; /* 497 */
+static const hl_field_type_t FIELD_TRANSFER_SIZE_64     = {0x01, 0xF3}; /* 499 */
+static const hl_field_type_t FIELD_FOLDER_ITEM_COUNT_64 = {0x01, 0xF4}; /* 500 */
+
+#define HL_CAPABILITY_LARGE_FILES  0x0001
+
 
 /* --- HOPE Secure Login fields (Hotline Open Protocol Extensions) ---
  * Community-developed challenge-response auth + transport encryption.
@@ -221,6 +229,28 @@ static inline void hl_write_u32(uint8_t b[4], uint32_t val)
     b[1] = (uint8_t)(val >> 16);
     b[2] = (uint8_t)(val >> 8);
     b[3] = (uint8_t)(val & 0xFF);
+}
+
+/* Read a uint64 from a big-endian byte array. */
+static inline uint64_t hl_read_u64(const uint8_t b[8])
+{
+    return ((uint64_t)b[0] << 56) | ((uint64_t)b[1] << 48) |
+           ((uint64_t)b[2] << 40) | ((uint64_t)b[3] << 32) |
+           ((uint64_t)b[4] << 24) | ((uint64_t)b[5] << 16) |
+           ((uint64_t)b[6] << 8)  |  (uint64_t)b[7];
+}
+
+/* Write a uint64 to a big-endian byte array. */
+static inline void hl_write_u64(uint8_t b[8], uint64_t val)
+{
+    b[0] = (uint8_t)(val >> 56);
+    b[1] = (uint8_t)(val >> 48);
+    b[2] = (uint8_t)(val >> 40);
+    b[3] = (uint8_t)(val >> 32);
+    b[4] = (uint8_t)(val >> 24);
+    b[5] = (uint8_t)(val >> 16);
+    b[6] = (uint8_t)(val >> 8);
+    b[7] = (uint8_t)(val & 0xFF);
 }
 
 /* Compare two 2-byte type identifiers. */
