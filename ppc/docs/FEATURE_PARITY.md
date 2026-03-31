@@ -150,10 +150,9 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 - [x] ACCESS_DOWNLOAD_FOLDER (39)
 - [x] ACCESS_SEND_PRIV_MSG (40)
 
-### Not Implemented (2 of 41) — unused in Mobius too
+### Not Implemented (1 of 41) — unused in Mobius too
 
 - [ ] ACCESS_CLOSE_CHAT (12) - protocol artifact, not implemented in any known server
-- [ ] ACCESS_CHANGE_OWN_PASS (18) - no dedicated transaction exists in protocol
 
 ### Recently Added
 
@@ -187,7 +186,7 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 
 10. ~~**ACCESS_SHOW_IN_LIST** - Hide users from user list~~ DONE
 11. ~~**ACCESS_VIEW_DROP_BOXES** - Drop box folder visibility~~ Already implemented
-12. **ACCESS_CHANGE_OWN_PASS** - Self-service password change (no protocol transaction exists)
+12. ~~**ACCESS_CHANGE_OWN_PASS** - Self-service password change~~ DONE (piggybacks on SetUser 353)
 13. **TLS/SSL support** - Encrypted connections
 14. **Encoding support** - Mobius has UTF-8/MacRoman config; we assume MacRoman
 15. ~~**malloc error on banner download**~~ FIXED — transfer manager uses internal array, not heap; callers were incorrectly free()ing the pointer

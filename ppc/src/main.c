@@ -10,6 +10,7 @@
 #include "hotline/server.h"
 #include "hotline/bonjour.h"
 #include "hotline/tracker.h"
+#include "hotline/hope.h"
 #include "mobius/transaction_handlers.h"
 #include "mobius/config_loader.h"
 #include "mobius/config_plist.h"
@@ -464,6 +465,22 @@ int main(int argc, char **argv)
                 fclose(bf);
             }
         }
+    }
+
+    /* Load HOPE master key if HOPE is enabled */
+    if (srv->config.enable_hope) {
+        if (hl_hope_master_key_load(config_dir, srv->hope_master_key) == 0) {
+            srv->hope_master_key_loaded = 1;
+            hl_log_info(srv->logger, "HOPE secure login enabled");
+        } else {
+            hl_log_error(srv->logger, "Failed to load HOPE master key — HOPE disabled");
+            srv->config.enable_hope = 0;
+        }
+
+        /* Create Encrypted secure zone folder if it doesn't exist */
+        char enc_path[2048];
+        snprintf(enc_path, sizeof(enc_path), "%s/Encrypted", srv->config.file_root);
+        mkdir(enc_path, 0755);
     }
 
     /* Register all 43 transaction handlers */
