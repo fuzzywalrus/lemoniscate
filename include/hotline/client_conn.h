@@ -13,6 +13,7 @@
 #include "hotline/transaction.h"
 #include "hotline/logger.h"
 #include <pthread.h>
+#include <openssl/rc4.h>
 
 /* Forward declarations */
 struct hl_server;
@@ -87,6 +88,16 @@ struct hl_client_conn {
     uint16_t            auto_reply_len;
 
     hl_logger_t        *logger;          /* Go: Logger *slog.Logger */
+
+    /* HOPE state — set during login if HOPE handshake succeeds.
+     * When hope_active=0, all fields below are unused. Safe to remove
+     * this block if HOPE support is dropped. */
+    int                 hope_active;     /* 1 if HOPE auth was used */
+    int                 hope_mac_algo;   /* Negotiated MAC algorithm ID */
+    uint8_t             hope_session_key[64]; /* 64-byte session key */
+    int                 hope_encrypted;  /* 1 if transport encryption active */
+    RC4_KEY             hope_rc4_encode; /* Outbound cipher state */
+    RC4_KEY             hope_rc4_decode; /* Inbound cipher state */
 
     /* Read buffer for transaction scanning */
     uint8_t             read_buf[65536];

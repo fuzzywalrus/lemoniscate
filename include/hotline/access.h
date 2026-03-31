@@ -31,7 +31,7 @@
 #define ACCESS_DELETE_USER        15   /* Can Delete Accounts */
 #define ACCESS_OPEN_USER          16   /* Can Read Accounts */
 #define ACCESS_MODIFY_USER        17   /* Can Modify Accounts */
-#define ACCESS_CHANGE_OWN_PASS    18   /* (Unused in practice) */
+#define ACCESS_CHANGE_OWN_PASS    18   /* Can change own password via SetUser */
 /* Bit 19 is unused */
 #define ACCESS_NEWS_READ_ART      20   /* Can Read Articles */
 #define ACCESS_NEWS_POST_ART      21   /* Can Post Articles */

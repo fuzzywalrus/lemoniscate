@@ -19,12 +19,15 @@
 #include "hotline/flattened_file_object.h"
 #include "hotline/file_types.h"
 #include "hotline/file_path.h"
+#include "hotline/hope.h"
 #include "mobius/transaction_handlers.h"
+#include <openssl/sha.h> /* SHA_DIGEST_LENGTH for HOPE key derivation */
 
 #include <sys/event.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -99,14 +102,26 @@ void hl_server_broadcast(hl_server_t *srv, hl_client_conn_t *sender,
     hl_client_conn_t **clients = srv->client_mgr->vt->list(srv->client_mgr, &count);
     if (!clients) return;
 
+    /* Serialize once, then send to each client (encrypting per-client if needed) */
+    size_t wire_size = hl_transaction_wire_size(t);
+    uint8_t *buf = (uint8_t *)malloc(wire_size);
+    if (!buf) { free(clients); return; }
+
     int i;
     for (i = 0; i < count; i++) {
         if (!hl_type_eq(clients[i]->id, sender->id)) {
-            /* Set target client ID and send */
             memcpy(t->client_id, clients[i]->id, 2);
-            hl_server_send_transaction(clients[i]->fd, t);
+            int written = hl_transaction_serialize(t, buf, wire_size);
+            if (written > 0) {
+                if (clients[i]->hope_encrypted) {
+                    hl_hope_write(clients[i], buf, (size_t)written);
+                } else {
+                    write_all(clients[i]->fd, buf, (size_t)written);
+                }
+            }
         }
     }
+    free(buf);
     free(clients);
 }
 
@@ -115,7 +130,22 @@ void hl_server_broadcast(hl_server_t *srv, hl_client_conn_t *sender,
 void hl_server_send_to_client(hl_client_conn_t *cc, hl_transaction_t *t)
 {
     memcpy(t->client_id, cc->id, 2);
-    hl_server_send_transaction(cc->fd, t);
+
+    /* HOPE-aware send: encrypts if transport encryption is active.
+     * For non-HOPE clients, falls through to plain write. */
+    size_t wire_size = hl_transaction_wire_size(t);
+    uint8_t *buf = (uint8_t *)malloc(wire_size);
+    if (!buf) return;
+
+    int written = hl_transaction_serialize(t, buf, wire_size);
+    if (written > 0) {
+        if (cc->hope_encrypted) {
+            hl_hope_write(cc, buf, (size_t)written);
+        } else {
+            write_all(cc->fd, buf, (size_t)written);
+        }
+    }
+    free(buf);
 }
 
 /* Notify all other clients that this user's visible profile changed.
@@ -281,6 +311,12 @@ static int create_listener(const char *interface, int port)
     int opt = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
+    /* Disable Nagle's algorithm — Hotline sends many small transactions
+     * (chat, keepalives, user notifications) and Nagle can add up to 200ms
+     * latency per message. Safe to revert by removing this setsockopt call
+     * if TCP_NODELAY causes throughput issues on slow links. */
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -354,7 +390,9 @@ static void process_client_data(hl_server_t *srv, hl_client_conn_t *cc, int kq)
         return;
     }
 
-    ssize_t n = read(cc->fd,
+    /* Use HOPE-aware read — decrypts in-place if transport encryption is active.
+     * Falls through to plain read() if HOPE is not active on this connection. */
+    ssize_t n = hl_hope_read(cc,
                      cc->read_buf + cc->read_buf_len,
                      sizeof(cc->read_buf) - cc->read_buf_len);
     if (n < 0 && errno == EINTR) return;
@@ -541,17 +579,150 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
     }
     free(login_buf);
 
-    /* Extract login fields */
+    /* --- HOPE Secure Login detection ---
+     * If the login field is a single 0x00 byte, this is a HOPE Phase 1 probe.
+     * We negotiate MAC/cipher, send a session key, then read the authenticated
+     * Phase 3 login. If HOPE is disabled or not detected, fall through to
+     * the legacy login flow. Remove this block if HOPE causes issues. */
+    int hope_authenticated = 0;
+    int hope_mac_algo = HL_HOPE_MAC_INVERSE;
+    uint8_t hope_session_key[HL_HOPE_SESSION_KEY_LEN];
+    int hope_cipher = HL_HOPE_CIPHER_NONE;
+    char hope_password_plain[128] = ""; /* needed for key derivation */
+
+    if (srv->config.enable_hope && hl_hope_detect(&login_tran)) {
+        hl_log_info(srv->logger, "HOPE Phase 1 from %s", ip_str);
+
+        /* Parse client's MAC algorithm preferences */
+        const hl_field_t *f_mac = hl_transaction_get_field(&login_tran,
+                                                            FIELD_HOPE_MAC_ALGORITHM);
+        int client_algos[HL_HOPE_MAC_COUNT];
+        int algo_count = 0;
+        if (f_mac && f_mac->data_len > 0) {
+            algo_count = hl_hope_parse_mac_list(f_mac->data, f_mac->data_len,
+                                                 client_algos, HL_HOPE_MAC_COUNT);
+        }
+        hope_mac_algo = hl_hope_select_mac(client_algos, algo_count);
+
+        /* Parse cipher preference */
+        const hl_field_t *f_cipher = hl_transaction_get_field(&login_tran,
+                                                               FIELD_HOPE_SERVER_CIPHER);
+        if (f_cipher && f_cipher->data_len > 0) {
+            char cipher_name[32];
+            size_t clen = f_cipher->data_len < sizeof(cipher_name) - 1
+                        ? f_cipher->data_len : sizeof(cipher_name) - 1;
+            memcpy(cipher_name, f_cipher->data, clen);
+            cipher_name[clen] = '\0';
+            hope_cipher = hl_hope_parse_cipher(cipher_name);
+        }
+
+        /* Generate session key: IP(4) + port(2) + random(58) */
+        uint32_t srv_ip = 0;
+        if (srv->net_interface[0] != '\0') {
+            srv_ip = ntohl(inet_addr(srv->net_interface));
+        } else {
+            srv_ip = ntohl(client_addr->sin_addr.s_addr);
+        }
+        hl_hope_generate_session_key(srv_ip, (uint16_t)ntohs(client_addr->sin_port),
+                                      hope_session_key);
+
+        /* Build HOPE Task reply (transaction type 0x00010000 = 65536) */
+        {
+            const char *mac_name = hl_hope_mac_name(hope_mac_algo);
+            uint8_t login_marker = 0x01; /* non-empty = "use MAC auth" */
+
+            hl_field_t task_fields[4];
+            int tfc = 0;
+            hl_field_new(&task_fields[tfc++], FIELD_HOPE_SESSION_KEY,
+                         hope_session_key, HL_HOPE_SESSION_KEY_LEN);
+            hl_field_new(&task_fields[tfc++], FIELD_HOPE_MAC_ALGORITHM,
+                         (const uint8_t *)mac_name, (uint16_t)strlen(mac_name));
+            hl_field_new(&task_fields[tfc++], FIELD_USER_LOGIN,
+                         &login_marker, 1);
+            if (hope_cipher != HL_HOPE_CIPHER_NONE) {
+                const char *cn = (hope_cipher == HL_HOPE_CIPHER_RC4) ? "RC4" : "BLOWFISH";
+                hl_field_new(&task_fields[tfc++], FIELD_HOPE_SERVER_CIPHER,
+                             (const uint8_t *)cn, (uint16_t)strlen(cn));
+            }
+
+            hl_transaction_t task_reply;
+            memset(&task_reply, 0, sizeof(task_reply));
+            task_reply.is_reply = 1;
+            /* Task type 65536 = 0x00010000 → type bytes {0x00, 0x00} with
+             * the high bytes in the ID. Per HOPE spec, use the login_tran's ID. */
+            memcpy(task_reply.id, login_tran.id, 4);
+            task_reply.fields = task_fields;
+            task_reply.field_count = (uint16_t)tfc;
+            hl_server_send_transaction(client_fd, &task_reply);
+
+            int fi;
+            for (fi = 0; fi < tfc; fi++) hl_field_free(&task_fields[fi]);
+            task_reply.fields = NULL;
+        }
+
+        /* Free Phase 1 login transaction and read Phase 3 */
+        hl_transaction_free(&login_tran);
+        memset(&login_tran, 0, sizeof(login_tran));
+
+        /* Read Phase 3 login transaction */
+        uint8_t p3_header[22];
+        if (read_full(client_fd, p3_header, 22) < 0) {
+            hl_log_error(srv->logger, "HOPE Phase 3 read failed from %s", ip_str);
+            close(client_fd);
+            return;
+        }
+        uint32_t p3_total = hl_read_u32(p3_header + 12);
+        if (p3_total > 65535 || p3_total < 2) { close(client_fd); return; }
+
+        size_t p3_len = 20 + p3_total;
+        uint8_t *p3_buf = (uint8_t *)malloc(p3_len);
+        if (!p3_buf) { close(client_fd); return; }
+        memcpy(p3_buf, p3_header, 22);
+        if (p3_len > 22) {
+            if (read_full(client_fd, p3_buf + 22, p3_len - 22) < 0) {
+                free(p3_buf);
+                close(client_fd);
+                return;
+            }
+        }
+
+        if (hl_transaction_deserialize(&login_tran, p3_buf, p3_len) < 0) {
+            free(p3_buf);
+            close(client_fd);
+            return;
+        }
+        free(p3_buf);
+
+        hope_authenticated = 1;
+        hl_log_info(srv->logger, "HOPE Phase 3 received from %s (MAC: %s, Cipher: %s)",
+                    ip_str, hl_hope_mac_name(hope_mac_algo),
+                    hope_cipher == HL_HOPE_CIPHER_RC4 ? "RC4" :
+                    hope_cipher == HL_HOPE_CIPHER_BLOWFISH ? "Blowfish" : "none");
+    }
+
+    /* Extract login fields — from Phase 3 if HOPE, or from original if legacy */
     const hl_field_t *f_login = hl_transaction_get_field(&login_tran, FIELD_USER_LOGIN);
     const hl_field_t *f_password = hl_transaction_get_field(&login_tran, FIELD_USER_PASSWORD);
     const hl_field_t *f_name = hl_transaction_get_field(&login_tran, FIELD_USER_NAME);
     const hl_field_t *f_icon = hl_transaction_get_field(&login_tran, FIELD_USER_ICON_ID);
     const hl_field_t *f_version = hl_transaction_get_field(&login_tran, FIELD_VERSION);
 
-    /* Decode login (255-rotation obfuscated) */
+    /* Decode login — HOPE uses MAC'd login, legacy uses 255-rotation */
     char login_str[128] = "guest";
-    if (f_login && f_login->data_len > 0) {
-        hl_field_decode_obfuscated_string(f_login, login_str, sizeof(login_str));
+    if (!hope_authenticated) {
+        /* Legacy: 255-rotation obfuscated */
+        if (f_login && f_login->data_len > 0) {
+            hl_field_decode_obfuscated_string(f_login, login_str, sizeof(login_str));
+        }
+    } else {
+        /* HOPE Phase 3: login field is MAC'd or INVERSE'd.
+         * For INVERSE: decode with 255-rotation (same as legacy).
+         * For HMAC: the login is the MAC of the plaintext login — we need
+         * to try all accounts. For simplicity, HOPE clients typically send
+         * the login as inverse(login) per spec. */
+        if (f_login && f_login->data_len > 0) {
+            hl_field_decode_obfuscated_string(f_login, login_str, sizeof(login_str));
+        }
     }
 
     /* Check bans */
@@ -644,12 +815,52 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
 
         /* Verify password if the account has one set */
         if (acct->password[0] != '\0') {
-            char password_str[128] = "";
-            if (f_password && f_password->data_len > 0) {
-                hl_field_decode_obfuscated_string(f_password, password_str,
-                                                   sizeof(password_str));
+            int pw_ok = 0;
+
+            if (hope_authenticated) {
+                /* HOPE: verify MAC'd password against session key.
+                 * Try HOPE-format password first (reversible), fall back
+                 * to INVERSE which doesn't need plaintext. */
+                if (f_password && f_password->data_len > 0) {
+                    char plain_pw[128] = "";
+                    int have_plain = 0;
+
+                    /* Try to decrypt HOPE-stored password */
+                    if (srv->hope_master_key_loaded &&
+                        strncmp(acct->password, "hope:", 5) == 0) {
+                        if (hl_hope_password_decrypt(srv->hope_master_key,
+                                acct->password, plain_pw, sizeof(plain_pw)) == 0)
+                            have_plain = 1;
+                    }
+
+                    if (have_plain) {
+                        /* Full HMAC verification with plaintext password */
+                        pw_ok = hl_hope_verify_password(hope_mac_algo,
+                            plain_pw, hope_session_key,
+                            f_password->data, f_password->data_len);
+                        strncpy(hope_password_plain, plain_pw, sizeof(hope_password_plain) - 1);
+                    } else if (hope_mac_algo == HL_HOPE_MAC_INVERSE) {
+                        /* INVERSE fallback: decode and verify against stored hash */
+                        char pw_str[128] = "";
+                        hl_field_decode_obfuscated_string(f_password, pw_str, sizeof(pw_str));
+                        pw_ok = hl_password_verify(pw_str, acct->password);
+                        strncpy(hope_password_plain, pw_str, sizeof(hope_password_plain) - 1);
+                        memset(pw_str, 0, sizeof(pw_str));
+                    }
+                    memset(plain_pw, 0, sizeof(plain_pw));
+                }
+            } else {
+                /* Legacy: 255-rotation decode + SHA-1 hash verification */
+                char password_str[128] = "";
+                if (f_password && f_password->data_len > 0) {
+                    hl_field_decode_obfuscated_string(f_password, password_str,
+                                                       sizeof(password_str));
+                }
+                pw_ok = hl_password_verify(password_str, acct->password);
+                memset(password_str, 0, sizeof(password_str));
             }
-            if (!hl_password_verify(password_str, acct->password)) {
+
+            if (!pw_ok) {
                 hl_log_info(srv->logger, "Login failed (bad password): %s from %s",
                             login_str, ip_str);
                 hl_transaction_t err_reply;
@@ -671,6 +882,13 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
                 close(client_fd);
                 return;
             }
+        } else if (hope_authenticated && f_password && f_password->data_len > 0) {
+            /* Guest account (empty password) with HOPE — verify MAC of empty string */
+            if (!hl_hope_verify_password(hope_mac_algo, "",
+                    hope_session_key, f_password->data, f_password->data_len)) {
+                /* MAC mismatch on empty password — shouldn't happen but be safe */
+                hl_log_info(srv->logger, "HOPE guest MAC mismatch from %s", ip_str);
+            }
         }
 
         cc->account = acct;
@@ -680,6 +898,44 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
             hl_user_flags_set(cc->flags, HL_USER_FLAG_ADMIN, 1);
             pthread_mutex_unlock(&cc->flags_mu);
         }
+    }
+
+    /* Set HOPE state on the connection if authenticated via HOPE.
+     * Transport encryption is initialized here if a cipher was negotiated. */
+    if (hope_authenticated) {
+        cc->hope_active = 1;
+        cc->hope_mac_algo = hope_mac_algo;
+        memcpy(cc->hope_session_key, hope_session_key, HL_HOPE_SESSION_KEY_LEN);
+
+        /* Set up transport encryption if cipher was negotiated */
+        if (hope_cipher == HL_HOPE_CIPHER_RC4 && hope_password_plain[0] != '\0') {
+            uint8_t encode_key[SHA_DIGEST_LENGTH];
+            uint8_t decode_key[SHA_DIGEST_LENGTH];
+            const uint8_t *pw = (const uint8_t *)hope_password_plain;
+            size_t pw_len = strlen(hope_password_plain);
+
+            /* Compute password MAC for key derivation */
+            uint8_t pw_mac[SHA_DIGEST_LENGTH];
+            int mac_len = hl_hope_compute_mac(hope_mac_algo,
+                pw, pw_len, hope_session_key, HL_HOPE_SESSION_KEY_LEN,
+                pw_mac, sizeof(pw_mac));
+
+            if (mac_len > 0) {
+                int key_len = hl_hope_derive_keys(hope_mac_algo,
+                    pw, pw_len, pw_mac, (size_t)mac_len,
+                    encode_key, decode_key, sizeof(encode_key));
+                if (key_len > 0) {
+                    hl_hope_init_rc4(cc, encode_key, (size_t)key_len,
+                                     decode_key, (size_t)key_len);
+                    hl_log_info(srv->logger, "HOPE RC4 transport encryption active for %s",
+                                ip_str);
+                }
+            }
+            memset(encode_key, 0, sizeof(encode_key));
+            memset(decode_key, 0, sizeof(decode_key));
+            memset(pw_mac, 0, sizeof(pw_mac));
+        }
+        memset(hope_password_plain, 0, sizeof(hope_password_plain));
     }
 
     /* Add to client manager (assigns ID) */
@@ -1513,6 +1769,11 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                                        (struct sockaddr *)&client_addr,
                                        &addr_len);
                 if (client_fd >= 0) {
+                    /* TCP_NODELAY on accepted client socket — see create_listener()
+                     * comment for rationale. Remove if causing throughput issues. */
+                    int nodelay = 1;
+                    setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY,
+                               &nodelay, sizeof(nodelay));
                     handle_new_connection(srv, client_fd, &client_addr, kq);
                 }
             }
@@ -1524,6 +1785,12 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                                        (struct sockaddr *)&client_addr,
                                        &addr_len);
                 if (client_fd >= 0) {
+                    /* TCP_NODELAY on transfer socket — file transfers send
+                     * large chunks so this matters less, but keeps behavior
+                     * consistent. Remove if causing throughput issues. */
+                    int nodelay = 1;
+                    setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY,
+                               &nodelay, sizeof(nodelay));
                     handle_file_transfer_connection(srv, client_fd);
                 }
             }

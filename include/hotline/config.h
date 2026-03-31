@@ -33,6 +33,7 @@ typedef struct {
     char ignore_files[HL_CONFIG_MAX_IGNORE][256];/* Go: IgnoreFiles []string              */
     int  ignore_file_count;
     int  enable_bonjour;                         /* Go: EnableBonjour bool                */
+    int  enable_hope;                            /* HOPE secure login (opt-in)            */
     char encoding[16];                           /* Go: Encoding string ("macintosh"|"utf8") */
 } hl_config_t;
 
