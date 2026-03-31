@@ -84,7 +84,7 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 - [x] Ban list (IP + username banning)
 - [x] kqueue event loop (Tiger 10.4+ native)
 - [x] Dual-port system (5500 main + 5501 transfers)
-- [ ] TLS/SSL support (Mobius has configurable TLS ports)
+- [x] TLS/SSL support (SecureTransport, TLS 1.0 — see implementation notes below)
 - [ ] Redis integration (Mobius uses for bans, online tracking)
 
 ### Discovery & Registration
@@ -187,6 +187,66 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 10. ~~**ACCESS_SHOW_IN_LIST** - Hide users from user list~~ DONE
 11. ~~**ACCESS_VIEW_DROP_BOXES** - Drop box folder visibility~~ Already implemented
 12. ~~**ACCESS_CHANGE_OWN_PASS** - Self-service password change~~ DONE (piggybacks on SetUser 353)
-13. **TLS/SSL support** - Encrypted connections
+13. ~~**TLS/SSL support** - Encrypted connections~~ DONE (SecureTransport, TLS 1.0)
 14. **Encoding support** - Mobius has UTF-8/MacRoman config; we assume MacRoman
 15. ~~**malloc error on banner download**~~ FIXED — transfer manager uses internal array, not heap; callers were incorrectly free()ing the pointer
+
+---
+
+## TLS Implementation Notes
+
+### Overview
+
+TLS support uses Apple's **SecureTransport** framework (not OpenSSL) to provide encrypted
+connections on separate TLS ports. This mirrors the Go reference implementation which uses
+`crypto/tls`.
+
+### Tiger 10.4 Compatibility
+
+Tiger's SecureTransport supports up to **TLS 1.0**. The implementation uses Tiger-era APIs:
+
+| Modern macOS API (10.7+)              | Tiger API used instead               |
+|---------------------------------------|--------------------------------------|
+| `SSLCreateContext`                    | `SSLNewContext` (10.2+)              |
+| `CFRelease(ssl)` for SSL contexts    | `SSLDisposeContext` (10.2+)          |
+| `SecItemImport`                       | `SecKeychainItemImport` (10.0+)      |
+| `SecIdentityCreateWithCertificate`    | `SecIdentitySearchCreate` (10.0+)    |
+
+All I/O callbacks (`SSLSetIOFuncs`, `SSLRead`, `SSLWrite`, `SSLHandshake`, `SSLClose`) are
+unchanged — they've been available since 10.2.
+
+### Architecture
+
+- **Separate TLS ports**: TLS listens on a configurable port (default: base port + 100),
+  e.g., 5600/5601 when the main server runs on 5500/5501.
+- **Connection wrapper** (`hl_tls_conn_t`): Unified I/O abstraction that routes reads/writes
+  through either plain BSD sockets or SecureTransport SSL. Plain connections also use the
+  wrapper for consistent code paths.
+- **Layering**: TLS sits below the application protocol. HOPE encryption (if also active)
+  layers on top — though TLS makes HOPE transport encryption redundant, they can coexist.
+- **PEM loading**: Certificates and private keys are loaded from PEM files into a temporary
+  Keychain, then a `SecIdentityRef` is built from the cert+key pair.
+
+### Configuration
+
+Config file (`config.yaml`):
+```yaml
+TLSCertFile: ./tls/cert.pem
+TLSKeyFile: ./tls/key.pem
+TLSPort: 5600
+```
+
+CLI flags (override config):
+```
+--tls-cert PATH    PEM certificate file
+--tls-key PATH     PEM private key file
+--tls-port PORT    TLS base port
+```
+
+### Client Compatibility
+
+TLS 1.0 is deprecated on modern systems, but Hotline clients control their own TLS
+negotiation. Modern clients like **Hotline Navigator** should accept TLS 1.0 when
+connecting to a retro protocol server. The server always accepts plaintext connections
+on the standard port, so TLS is purely additive — clients that can't negotiate TLS 1.0
+connect normally via port 5500.

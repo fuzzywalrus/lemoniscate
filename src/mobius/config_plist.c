@@ -142,10 +142,15 @@ int mobius_load_config_plist(hl_config_t *cfg, const char *plist_path)
     plist_get_bool(dict, "EnableTrackerRegistration", &cfg->enable_tracker_registration);
     plist_get_bool(dict, "EnableBonjour", &cfg->enable_bonjour);
     plist_get_bool(dict, "PreserveResourceForks", &cfg->preserve_resource_forks);
+    plist_get_bool(dict, "EnableHOPE", &cfg->enable_hope);
 
     plist_get_int(dict, "MaxDownloads", &cfg->max_downloads);
     plist_get_int(dict, "MaxDownloadsPerClient", &cfg->max_downloads_per_client);
     plist_get_int(dict, "MaxConnectionsPerIP", &cfg->max_connections_per_ip);
+
+    plist_get_string(dict, "TLSCertFile", cfg->tls_cert_path, HL_CONFIG_PATH_MAX);
+    plist_get_string(dict, "TLSKeyFile", cfg->tls_key_path, HL_CONFIG_PATH_MAX);
+    plist_get_int(dict, "TLSPort", &cfg->tls_port);
 
     plist_get_string_array(dict, "Trackers",
                             cfg->trackers, HL_CONFIG_MAX_TRACKERS,

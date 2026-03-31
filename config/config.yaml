@@ -4,6 +4,9 @@ FileRoot: ./files
 Encoding: macintosh
 EnableBonjour: false
 # EnableHOPE: false         # HOPE secure login — challenge-response auth + optional encryption
+# TLSCertFile: ./tls/cert.pem  # PEM certificate for TLS (Tiger: TLS 1.0 via SecureTransport)
+# TLSKeyFile: ./tls/key.pem    # PEM private key for TLS
+# TLSPort: 5600                # TLS base port (transfers on TLSPort+1). Default: Port+100
 EnableTrackerRegistration: false
 MaxDownloads: 10
 Trackers:

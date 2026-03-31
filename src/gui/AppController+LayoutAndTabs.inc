@@ -478,6 +478,75 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         y += boxH + 8;
     }
 
+    /* ===== Security / HOPE ===== */
+    {
+        float boxH = 3 * ROW_HEIGHT + 40;
+        NSBox *box = makeSection(@"Security (HOPE)", SECTION_MARGIN, y,
+                                  secWidth, boxH);
+        NSView *c = [box contentView];
+        float iy = 4;
+
+        _hopeCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_hopeCheckbox setButtonType:NSSwitchButton];
+        [_hopeCheckbox setTitle:@"Enable HOPE Encryption"];
+        [_hopeCheckbox setState:NSOffState];
+        iy = addCheckbox(c, _hopeCheckbox, iy);
+
+        _hopeLegacyCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_hopeLegacyCheckbox setButtonType:NSSwitchButton];
+        [_hopeLegacyCheckbox setTitle:@"Legacy Mode (allow weak algorithms)"];
+        [_hopeLegacyCheckbox setState:NSOffState];
+        iy = addCheckbox(c, _hopeLegacyCheckbox, iy);
+
+        _hopePrefixField = makeEditField(120);
+        [_hopePrefixField setStringValue:@"[E2E]"];
+        iy = addRow(c, @"E2E Prefix:", _hopePrefixField, iy, 120);
+
+        [doc addSubview:box];
+        [box release];
+        y += boxH + 8;
+    }
+
+    /* ===== TLS Encryption ===== */
+    {
+        float boxH = 4 * ROW_HEIGHT + 44;
+        NSBox *box = makeSection(@"TLS Encryption", SECTION_MARGIN, y,
+                                  secWidth, boxH);
+        NSView *c = [box contentView];
+        float iy = 4;
+
+        _tlsCertField = makeEditField(fieldWidth - 80);
+        _chooseTLSCertButton = makeButton(@"Choose...", self,
+                                            @selector(chooseTLSCert:));
+        iy = addRowWithButton(c, @"Certificate:", _tlsCertField,
+                              _chooseTLSCertButton, iy, fieldWidth);
+
+        _tlsKeyField = makeEditField(fieldWidth - 80);
+        _chooseTLSKeyButton = makeButton(@"Choose...", self,
+                                          @selector(chooseTLSKey:));
+        iy = addRowWithButton(c, @"Private Key:", _tlsKeyField,
+                              _chooseTLSKeyButton, iy, fieldWidth);
+
+        _tlsPortField = makeEditField(70);
+        [_tlsPortField setStringValue:@"5600"];
+        iy = addRow(c, @"TLS Port:", _tlsPortField, iy, 70);
+
+        _tlsStatusLabel = [[NSTextField alloc] initWithFrame:
+                            NSMakeRect(LABEL_WIDTH, iy, fieldWidth, 18)];
+        [_tlsStatusLabel setStringValue:@"Provide both a certificate and key to enable TLS"];
+        [_tlsStatusLabel setBezeled:NO];
+        [_tlsStatusLabel setDrawsBackground:NO];
+        [_tlsStatusLabel setEditable:NO];
+        [_tlsStatusLabel setSelectable:NO];
+        [_tlsStatusLabel setFont:[NSFont systemFontOfSize:11]];
+        [_tlsStatusLabel setTextColor:[NSColor grayColor]];
+        [c addSubview:_tlsStatusLabel];
+
+        [doc addSubview:box];
+        [box release];
+        y += boxH + 8;
+    }
+
     /* ===== Limits ===== */
     {
         float boxH = 3 * ROW_HEIGHT + 42;
@@ -1192,6 +1261,12 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     col = [[NSTableColumn alloc] initWithIdentifier:@"online_id"];
     [[col headerCell] setStringValue:@"User ID"];
     [col setWidth:90];
+    [_onlineTableView addTableColumn:col];
+    [col release];
+
+    col = [[NSTableColumn alloc] initWithIdentifier:@"online_encrypted"];
+    [[col headerCell] setStringValue:@"Encrypted"];
+    [col setWidth:70];
     [_onlineTableView addTableColumn:col];
     [col release];
 

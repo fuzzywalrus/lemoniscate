@@ -291,6 +291,20 @@
     if (boolVal && _preserveForkCheckbox)
         [_preserveForkCheckbox setState:[boolVal boolValue] ? NSOnState : NSOffState];
 
+    boolVal = [dict objectForKey:@"EnableHOPE"];
+    if (boolVal && _hopeCheckbox)
+        [_hopeCheckbox setState:[boolVal boolValue] ? NSOnState : NSOffState];
+    boolVal = [dict objectForKey:@"HOPELegacyMode"];
+    if (boolVal && _hopeLegacyCheckbox)
+        [_hopeLegacyCheckbox setState:[boolVal boolValue] ? NSOnState : NSOffState];
+    val = [dict objectForKey:@"HOPERequiredPrefix"];
+    if (val && _hopePrefixField) [_hopePrefixField setStringValue:val];
+
+    val = [dict objectForKey:@"TLSCertFile"];
+    if (val && _tlsCertField) [_tlsCertField setStringValue:val];
+    val = [dict objectForKey:@"TLSKeyFile"];
+    if (val && _tlsKeyField) [_tlsKeyField setStringValue:val];
+
     NSArray *trackers = [dict objectForKey:@"Trackers"];
     if (trackers) {
         unsigned i;
@@ -320,6 +334,9 @@
     if (numVal && _maxDLPerClientField) [_maxDLPerClientField setIntValue:[numVal intValue]];
     numVal = [dict objectForKey:@"MaxConnectionsPerIP"];
     if (numVal && _maxConnPerIPField) [_maxConnPerIPField setIntValue:[numVal intValue]];
+    numVal = [dict objectForKey:@"TLSPort"];
+    if (numVal && _tlsPortField)
+        [_tlsPortField setStringValue:[NSString stringWithFormat:@"%d", [numVal intValue]]];
 
     if (_filesTableView) [self refreshFilesList:nil];
     if (_accountsTableView) [self refreshAccountsList:nil];
@@ -354,6 +371,12 @@
     if (!newsDelimiter || [newsDelimiter length] == 0)
         newsDelimiter = @"__________________________________________________________";
     BOOL preserveForks = _preserveForkCheckbox ? ([_preserveForkCheckbox state] == NSOnState) : NO;
+    BOOL enableHOPE = _hopeCheckbox ? ([_hopeCheckbox state] == NSOnState) : NO;
+    BOOL hopeLegacy = _hopeLegacyCheckbox ? ([_hopeLegacyCheckbox state] == NSOnState) : NO;
+    NSString *hopePrefix = _hopePrefixField ? [_hopePrefixField stringValue] : @"[E2E]";
+    NSString *tlsCert = _tlsCertField ? [_tlsCertField stringValue] : @"";
+    NSString *tlsKey = _tlsKeyField ? [_tlsKeyField stringValue] : @"";
+    int tlsPort = _tlsPortField ? [_tlsPortField intValue] : 0;
     int maxDownloads = _maxDownloadsField ? [_maxDownloadsField intValue] : 0;
     int maxDLPerClient = _maxDLPerClientField ? [_maxDLPerClientField intValue] : 0;
     int maxConnPerIP = _maxConnPerIPField ? [_maxConnPerIPField intValue] : 0;
@@ -383,11 +406,64 @@
     [dict setObject:newsDateFormat forKey:@"NewsDateFormat"];
     [dict setObject:newsDelimiter forKey:@"NewsDelimiter"];
     [dict setObject:@"macintosh" forKey:@"Encoding"];
+    [dict setObject:[NSNumber numberWithBool:enableHOPE] forKey:@"EnableHOPE"];
+    [dict setObject:[NSNumber numberWithBool:hopeLegacy] forKey:@"HOPELegacyMode"];
+    [dict setObject:(hopePrefix ? hopePrefix : @"[E2E]") forKey:@"HOPERequiredPrefix"];
+    [dict setObject:(tlsCert ? tlsCert : @"") forKey:@"TLSCertFile"];
+    [dict setObject:(tlsKey ? tlsKey : @"") forKey:@"TLSKeyFile"];
+    [dict setObject:[NSNumber numberWithInt:tlsPort] forKey:@"TLSPort"];
 
     /* Write to ~/Library/Preferences/com.lemoniscate.server.plist */
     NSString *plistPath = [NSHomeDirectory()
         stringByAppendingPathComponent:@"Library/Preferences/com.lemoniscate.server.plist"];
     [dict writeToFile:plistPath atomically:YES];
+
+    /* Also write config.yaml into the config directory so the server binary
+     * can read it. The server reads YAML, not plists. */
+    if (_configDir) {
+        NSMutableString *yaml = [NSMutableString string];
+        [yaml appendFormat:@"Name: %@\n", name];
+        [yaml appendFormat:@"Description: %@\n", desc];
+        [yaml appendFormat:@"FileRoot: %@\n", fileRoot];
+        [yaml appendFormat:@"BannerFile: %@\n", banner];
+        [yaml appendString:@"Encoding: macintosh\n"];
+        [yaml appendFormat:@"EnableBonjour: %@\n", enableBonjour ? @"true" : @"false"];
+        [yaml appendFormat:@"EnableTrackerRegistration: %@\n", enableTracker ? @"true" : @"false"];
+        [yaml appendFormat:@"PreserveResourceForks: %@\n", preserveForks ? @"true" : @"false"];
+        [yaml appendFormat:@"EnableHOPE: %@\n", enableHOPE ? @"true" : @"false"];
+        if (maxDownloads > 0)
+            [yaml appendFormat:@"MaxDownloads: %d\n", maxDownloads];
+        if (maxDLPerClient > 0)
+            [yaml appendFormat:@"MaxDownloadsPerClient: %d\n", maxDLPerClient];
+        if (maxConnPerIP > 0)
+            [yaml appendFormat:@"MaxConnectionsPerIP: %d\n", maxConnPerIP];
+        if (tlsCert && [tlsCert length] > 0)
+            [yaml appendFormat:@"TLSCertFile: %@\n", tlsCert];
+        if (tlsKey && [tlsKey length] > 0)
+            [yaml appendFormat:@"TLSKeyFile: %@\n", tlsKey];
+        if (tlsPort > 0)
+            [yaml appendFormat:@"TLSPort: %d\n", tlsPort];
+        [yaml appendFormat:@"NewsDateFormat: %@\n", newsDateFormat];
+        [yaml appendFormat:@"NewsDelimiter: %@\n", newsDelimiter];
+        if (_trackerItems && [_trackerItems count] > 0) {
+            [yaml appendString:@"Trackers:\n"];
+            unsigned ti;
+            for (ti = 0; ti < [_trackerItems count]; ti++) {
+                [yaml appendFormat:@"  - %@\n", [_trackerItems objectAtIndex:ti]];
+            }
+        }
+        if (_ignoreFileItems && [_ignoreFileItems count] > 0) {
+            [yaml appendString:@"IgnoreFiles:\n"];
+            unsigned ii;
+            for (ii = 0; ii < [_ignoreFileItems count]; ii++) {
+                [yaml appendFormat:@"  - %@\n", [_ignoreFileItems objectAtIndex:ii]];
+            }
+        }
+
+        NSString *yamlPath = [_configDir stringByAppendingPathComponent:@"config.yaml"];
+        [yaml writeToFile:yamlPath atomically:YES
+                 encoding:NSUTF8StringEncoding error:nil];
+    }
 }
 
 /* Create directory and all intermediate parents (Tiger compatible) */
