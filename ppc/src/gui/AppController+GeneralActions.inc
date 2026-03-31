@@ -856,3 +856,31 @@ static int pollingIntervalCount = 8;
                                                               repeats:YES] retain];
     }
 }
+
+- (void)chooseTLSCert:(id)sender
+{
+    (void)sender;
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    [panel setCanChooseFiles:YES];
+    [panel setCanChooseDirectories:NO];
+    [panel setAllowsMultipleSelection:NO];
+    [panel setTitle:@"Select TLS certificate (PEM)"];
+    if ([panel runModal] == NSOKButton) {
+        [_tlsCertField setStringValue:
+            [[panel filenames] objectAtIndex:0]];
+    }
+}
+
+- (void)chooseTLSKey:(id)sender
+{
+    (void)sender;
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    [panel setCanChooseFiles:YES];
+    [panel setCanChooseDirectories:NO];
+    [panel setAllowsMultipleSelection:NO];
+    [panel setTitle:@"Select TLS private key (PEM)"];
+    if ([panel runModal] == NSOKButton) {
+        [_tlsKeyField setStringValue:
+            [[panel filenames] objectAtIndex:0]];
+    }
+}

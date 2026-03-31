@@ -18,6 +18,7 @@
 #include "hotline/client_conn.h"
 #include "hotline/file_transfer.h"
 #include "hotline/tracker.h"
+#include "hotline/tls.h"
 #include "mobius/flat_news.h"
 #include "mobius/threaded_news_yaml.h"
 #include <pthread.h>
@@ -81,6 +82,14 @@ typedef struct hl_server {
      * Remove this block if HOPE support is dropped. */
     uint8_t             hope_master_key[32]; /* For encrypting passwords at rest */
     int                 hope_master_key_loaded;
+
+    /* TLS state — maps to Go TLSConfig/TLSPort in server.go.
+     * Uses SecureTransport on Tiger (TLS 1.0 max).
+     * Remove this block if TLS support is dropped. */
+    hl_tls_server_ctx_t tls_ctx;             /* Loaded cert/key context */
+    int                 tls_listen_fd;       /* TLS protocol listener (-1 = disabled) */
+    int                 tls_transfer_fd;     /* TLS file transfer listener (-1 = disabled) */
+    int                 tls_port;            /* TLS base port (0 = disabled) */
 } hl_server_t;
 
 /* --- Lifecycle --- */

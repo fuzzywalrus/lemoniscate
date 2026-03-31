@@ -84,6 +84,37 @@
         }
     }
 
+    /* HOPE encryption activated — mark user as encrypted */
+    NSRange hopeRange = [text rangeOfString:@"HOPE transport encryption activated for "];
+    if (hopeRange.location != NSNotFound) {
+        unsigned addrStart = hopeRange.location + [@"HOPE transport encryption activated for " length];
+        NSString *remoteAddr = [text substringFromIndex:addrStart];
+        /* Extract IP from IP:port */
+        NSString *hopeIP = remoteAddr;
+        NSRange portSep = [remoteAddr rangeOfString:@":" options:NSBackwardsSearch];
+        if (portSep.location != NSNotFound) {
+            hopeIP = [remoteAddr substringToIndex:portSep.location];
+        }
+        /* Find matching user by IP and mark encrypted */
+        NSEnumerator *en = [_onlineUsersByID objectEnumerator];
+        NSDictionary *usr;
+        while ((usr = [en nextObject]) != nil) {
+            if ([[usr objectForKey:@"ip"] isEqualToString:hopeIP]) {
+                [(NSMutableDictionary *)usr setObject:[NSNumber numberWithBool:YES]
+                                               forKey:@"encrypted"];
+                break;
+            }
+        }
+        [self updateOnlineUI];
+        return;
+    }
+
+    /* TLS connection — mark user as encrypted */
+    NSRange tlsRange = [text rangeOfString:@"TLS enabled"];
+    if (tlsRange.location != NSNotFound) {
+        /* TLS is server-wide, handled at connection level */
+    }
+
     NSRange disRange = [text rangeOfString:@"Client disconnected: "];
     if (disRange.location != NSNotFound) {
         NSUInteger idStart = NSNotFound;

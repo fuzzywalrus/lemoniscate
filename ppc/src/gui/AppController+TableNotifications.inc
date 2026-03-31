@@ -50,6 +50,9 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
         } else if ([cid isEqualToString:@"online_id"]) {
             return [NSString stringWithFormat:@"%d",
                 [[item objectForKey:@"id"] intValue]];
+        } else if ([cid isEqualToString:@"online_encrypted"]) {
+            NSNumber *enc = [item objectForKey:@"encrypted"];
+            return (enc && [enc boolValue]) ? @"Yes" : @"No";
         } else if ([cid isEqualToString:@"online_seen"]) {
             NSDate *d = [item objectForKey:@"lastSeen"];
             NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
@@ -293,6 +296,24 @@ objectValueForTableColumn:(NSTableColumn *)tableColumn row:(int)row
     if (_autoScroll) {
         [_logTextView scrollRangeToVisible:
             NSMakeRange([[_logTextView string] length], 0)];
+    }
+}
+
+/* Bold "Yes" in the encrypted column of online users */
+- (void)tableView:(NSTableView *)tableView willDisplayCell:(id)cell
+   forTableColumn:(NSTableColumn *)tableColumn row:(int)row
+{
+    if (tableView == _onlineTableView &&
+        [[tableColumn identifier] isEqualToString:@"online_encrypted"]) {
+        if (row >= 0 && row < (int)[_onlineUsersItems count]) {
+            NSDictionary *item = [_onlineUsersItems objectAtIndex:(unsigned)row];
+            NSNumber *enc = [item objectForKey:@"encrypted"];
+            if (enc && [enc boolValue]) {
+                [cell setFont:[NSFont boldSystemFontOfSize:11.0]];
+            } else {
+                [cell setFont:[NSFont systemFontOfSize:11.0]];
+            }
+        }
     }
 }
 

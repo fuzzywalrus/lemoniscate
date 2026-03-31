@@ -34,6 +34,9 @@ LDFLAGS += -framework CoreServices
 # OpenSSL for SHA-1 password hashing (available on Tiger 10.4)
 LDFLAGS += -lcrypto
 
+# Security framework for TLS via SecureTransport (available on Tiger 10.4)
+LDFLAGS += -framework Security
+
 # libyaml needed for Phase 4 (persistence)
 # LDFLAGS += -lyaml
 
@@ -67,7 +70,8 @@ HOTLINE_C_SRCS = \
 	src/hotline/bonjour.c \
 	src/hotline/tracker.c \
 	src/hotline/password.c \
-	src/hotline/hope.c
+	src/hotline/hope.c \
+	src/hotline/tls.c
 
 HOTLINE_C_OBJS = $(HOTLINE_C_SRCS:.c=.o)
 
@@ -147,7 +151,7 @@ $(SERVER_COMPAT_BIN): lemoniscate
 
 # Phase 1 wire format tests (C only, no Foundation needed)
 test-wire: $(TEST_C_OBJS) $(HOTLINE_C_OBJS)
-	$(CC) $(CFLAGS) -o test_runner $^ -framework CoreFoundation -lpthread -lcrypto
+	$(CC) $(CFLAGS) -o test_runner $^ -framework CoreFoundation -framework Security -lpthread -lcrypto
 	./test_runner
 
 # Phase 2 client tests (Obj-C, needs Foundation)
