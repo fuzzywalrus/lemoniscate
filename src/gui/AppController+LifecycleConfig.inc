@@ -337,6 +337,8 @@
     numVal = [dict objectForKey:@"TLSPort"];
     if (numVal && _tlsPortField)
         [_tlsPortField setStringValue:[NSString stringWithFormat:@"%d", [numVal intValue]]];
+    val = [dict objectForKey:@"TLSKeychainPass"];
+    if (val && _tlsKeychainPassField) [_tlsKeychainPassField setStringValue:val];
 
     if (_filesTableView) [self refreshFilesList:nil];
     if (_accountsTableView) [self refreshAccountsList:nil];
@@ -377,6 +379,7 @@
     NSString *tlsCert = _tlsCertField ? [_tlsCertField stringValue] : @"";
     NSString *tlsKey = _tlsKeyField ? [_tlsKeyField stringValue] : @"";
     int tlsPort = _tlsPortField ? [_tlsPortField intValue] : 0;
+    NSString *tlsKeychainPass = _tlsKeychainPassField ? [_tlsKeychainPassField stringValue] : @"";
     int maxDownloads = _maxDownloadsField ? [_maxDownloadsField intValue] : 0;
     int maxDLPerClient = _maxDLPerClientField ? [_maxDLPerClientField intValue] : 0;
     int maxConnPerIP = _maxConnPerIPField ? [_maxConnPerIPField intValue] : 0;
@@ -412,6 +415,8 @@
     [dict setObject:(tlsCert ? tlsCert : @"") forKey:@"TLSCertFile"];
     [dict setObject:(tlsKey ? tlsKey : @"") forKey:@"TLSKeyFile"];
     [dict setObject:[NSNumber numberWithInt:tlsPort] forKey:@"TLSPort"];
+    if (tlsKeychainPass && [tlsKeychainPass length] > 0)
+        [dict setObject:tlsKeychainPass forKey:@"TLSKeychainPass"];
 
     /* Write to ~/Library/Preferences/com.lemoniscate.server.plist */
     NSString *plistPath = [NSHomeDirectory()
@@ -463,6 +468,18 @@
         NSString *yamlPath = [_configDir stringByAppendingPathComponent:@"config.yaml"];
         [yaml writeToFile:yamlPath atomically:YES
                  encoding:NSUTF8StringEncoding error:nil];
+
+        /* Write keychain.pass for the server's TLS keychain */
+        if (tlsKeychainPass && [tlsKeychainPass length] > 0 && tlsCert && [tlsCert length] > 0) {
+            NSString *tlsDir = [tlsCert stringByDeletingLastPathComponent];
+            NSString *passFile = [tlsDir stringByAppendingPathComponent:@"keychain.pass"];
+            [tlsKeychainPass writeToFile:passFile atomically:YES
+                                encoding:NSUTF8StringEncoding error:nil];
+            NSFileManager *fmgr = [NSFileManager defaultManager];
+            [fmgr changeFileAttributes:[NSDictionary dictionaryWithObject:
+                [NSNumber numberWithUnsignedLong:0600] forKey:NSFilePosixPermissions]
+                                atPath:passFile];
+        }
     }
 }
 

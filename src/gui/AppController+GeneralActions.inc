@@ -884,3 +884,109 @@ static int pollingIntervalCount = 8;
             [[panel filenames] objectAtIndex:0]];
     }
 }
+
+- (void)generateTLSCert:(id)sender
+{
+    (void)sender;
+
+    if (!_configDir) {
+        NSRunAlertPanel(@"Error",
+            @"No configuration directory set. Start the server first.",
+            @"OK", nil, nil);
+        return;
+    }
+
+    /* Create tls subdirectory in config dir */
+    NSString *tlsDir = [_configDir stringByAppendingPathComponent:@"tls"];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:tlsDir isDirectory:&isDir]) {
+        [fm createDirectoryAtPath:tlsDir attributes:[NSDictionary dictionary]];
+    }
+
+    NSString *certPath = [tlsDir stringByAppendingPathComponent:@"cert.pem"];
+    NSString *keyPath = [tlsDir stringByAppendingPathComponent:@"key.pem"];
+
+    /* Check if certs already exist */
+    if ([fm fileExistsAtPath:certPath] || [fm fileExistsAtPath:keyPath]) {
+        int result = NSRunAlertPanel(@"Overwrite?",
+            @"TLS certificate files already exist. Generate new ones?",
+            @"Generate", @"Cancel", nil);
+        if (result != NSAlertDefaultReturn) return;
+    }
+
+    /* Get server name for the CN field */
+    NSString *cn = @"Lemoniscate";
+    if (_serverNameField && [[_serverNameField stringValue] length] > 0) {
+        cn = [_serverNameField stringValue];
+    }
+
+    /* Use the user's keychain password, or prompt if not set */
+    NSString *keychainPass = _tlsKeychainPassField ? [_tlsKeychainPassField stringValue] : @"";
+    if (!keychainPass || [keychainPass length] == 0) {
+        NSRunAlertPanel(@"Keychain Password Required",
+            @"Please enter a keychain password in the TLS settings before generating a certificate. "
+            @"You will need this password on first server launch.",
+            @"OK", nil, nil);
+        return;
+    }
+
+    /* Save the keychain password to file for the server to read */
+    NSString *passPath = [tlsDir stringByAppendingPathComponent:@"keychain.pass"];
+    [keychainPass writeToFile:passPath atomically:YES
+                     encoding:NSUTF8StringEncoding error:nil];
+    [fm changeFileAttributes:[NSDictionary dictionaryWithObject:
+        [NSNumber numberWithUnsignedLong:0600] forKey:NSFilePosixPermissions]
+                      atPath:passPath];
+
+    /* Generate self-signed cert using openssl (ships with Tiger/Leopard) */
+    NSTask *task = [[NSTask alloc] init];
+    [task setLaunchPath:@"/usr/bin/openssl"];
+    [task setArguments:[NSArray arrayWithObjects:
+        @"req", @"-x509",
+        @"-newkey", @"rsa:1024",
+        @"-keyout", keyPath,
+        @"-out", certPath,
+        @"-days", @"3650",
+        @"-nodes",
+        @"-sha1",
+        @"-subj", [NSString stringWithFormat:@"/CN=%@", cn],
+        nil]];
+
+    /* Suppress stderr output */
+    [task setStandardError:[NSPipe pipe]];
+    [task setStandardOutput:[NSPipe pipe]];
+
+    int ok = 1;
+    @try {
+        [task launch];
+        [task waitUntilExit];
+        if ([task terminationStatus] != 0) ok = 0;
+    } @catch (NSException *e) {
+        ok = 0;
+    }
+    [task release];
+
+    if (ok && [fm fileExistsAtPath:certPath] && [fm fileExistsAtPath:keyPath]) {
+        [_tlsCertField setStringValue:certPath];
+        [_tlsKeyField setStringValue:keyPath];
+        [_tlsStatusLabel setStringValue:@"Self-signed certificate generated"];
+        [_tlsStatusLabel setTextColor:[NSColor colorWithCalibratedRed:0.0
+                                                               green:0.5
+                                                                blue:0.0
+                                                               alpha:1.0]];
+
+        /* Auto-save so the plist + YAML pick up the new cert paths */
+        [self writeConfigToDisk];
+
+        NSRunAlertPanel(@"TLS Certificate Generated",
+            @"A self-signed certificate has been created and settings saved. "
+            @"Restart the server to enable TLS.",
+            @"OK", nil, nil);
+    } else {
+        NSRunAlertPanel(@"Error",
+            @"Failed to generate TLS certificate. "
+            @"Make sure OpenSSL is installed (/usr/bin/openssl).",
+            @"OK", nil, nil);
+    }
+}

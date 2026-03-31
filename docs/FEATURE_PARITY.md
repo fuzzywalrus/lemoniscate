@@ -245,11 +245,29 @@ CLI flags (override config):
 
 ### Client Compatibility
 
-TLS 1.0 is deprecated on modern systems, but Hotline clients control their own TLS
-negotiation. Modern clients like **Hotline Navigator** should accept TLS 1.0 when
-connecting to a retro protocol server. The server always accepts plaintext connections
-on the standard port, so TLS is purely additive — clients that can't negotiate TLS 1.0
-connect normally via port 5500.
+Tiger's SecureTransport supports up to **TLS 1.0 only**. This creates a compatibility
+constraint with modern clients:
+
+- **Hotline Navigator** uses rustls by default, which requires TLS 1.2+. TLS connections
+  from Navigator to a Tiger server will fail with `errSSLProtocol (-9801)` / "tls handshake
+  eof" unless Navigator's `allowLegacyTls` option is enabled, which switches to `native-tls`
+  (the OS's TLS stack, which supports TLS 1.0 on macOS).
+- **Classic Hotline 1.x clients** do not support TLS at all. They connect on the standard
+  plaintext port.
+- **curl, wget, or other tools** with `--tlsv1.0` will work for testing.
+- **HOPE encryption** is the recommended encryption method for Navigator ↔ Lemoniscate
+  connections. It works at the application layer with no TLS version constraints, and
+  provides challenge-response auth + optional RC4 transport encryption.
+
+The server always accepts plaintext + HOPE connections on the standard port (5500), so
+TLS is purely additive. The three encryption options from weakest to strongest:
+
+1. **Plaintext** — no encryption (legacy default)
+2. **HOPE** — application-layer challenge-response auth + optional RC4 stream cipher
+3. **TLS 1.0** — transport-layer encryption (requires TLS 1.0-capable client)
+
+All three can coexist on the same server. HOPE can even layer on top of TLS (redundant
+but harmless).
 
 ---
 
