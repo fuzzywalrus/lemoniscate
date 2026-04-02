@@ -1,7 +1,5 @@
 /*
  * client_conn.h - Per-client connection state
- *
- * Maps to: hotline/client_conn.go
  */
 
 #ifndef HOTLINE_CLIENT_CONN_H
@@ -26,7 +24,7 @@ struct hl_tls_conn;
 typedef struct hl_client_conn hl_client_conn_t;
 #endif
 
-/* Account info — maps to Go Account struct (subset needed for auth) */
+/* Account info (subset needed for auth) */
 typedef struct {
     char               login[128];
     char               name[128];
@@ -35,7 +33,7 @@ typedef struct {
     char               file_root[1024]; /* Optional per-account file root */
 } hl_account_t;
 
-/* AccountManager vtable — maps to Go AccountManager interface */
+/* AccountManager vtable */
 typedef struct hl_account_mgr hl_account_mgr_t;
 typedef struct {
     hl_account_t *(*get)(hl_account_mgr_t *self, const char *login);
@@ -49,7 +47,7 @@ struct hl_account_mgr {
     const hl_account_mgr_vtable_t *vt;
 };
 
-/* BanMgr vtable — maps to Go BanMgr interface */
+/* BanMgr vtable */
 typedef struct hl_ban_mgr hl_ban_mgr_t;
 typedef struct {
     int (*is_banned)(hl_ban_mgr_t *self, const char *ip);
@@ -64,7 +62,6 @@ struct hl_ban_mgr {
 
 /*
  * hl_client_conn_t - Per-connection state
- * Maps to: Go ClientConn struct
  *
  * This struct is referenced by client_manager.h via forward declaration.
  * The 'id' field MUST be the first meaningful field after the fd for
@@ -104,7 +101,6 @@ struct hl_client_conn {
 
 /*
  * hl_client_conn_new - Allocate and initialize a client connection.
- * Maps to: Go code in handleNewConnection that builds ClientConn
  */
 hl_client_conn_t *hl_client_conn_new(int fd, const char *remote_addr,
                                      struct hl_server *server);
@@ -114,13 +110,11 @@ void hl_client_conn_free(hl_client_conn_t *cc);
 
 /*
  * hl_client_conn_authorize - Check if client has a specific permission.
- * Maps to: Go ClientConn.Authorize()
  */
 int hl_client_conn_authorize(const hl_client_conn_t *cc, int access_bit);
 
 /*
  * hl_client_conn_new_reply - Create a reply transaction.
- * Maps to: Go ClientConn.NewReply()
  * Caller must hl_transaction_free() the result.
  */
 int hl_client_conn_new_reply(hl_client_conn_t *cc, const hl_transaction_t *request,
@@ -129,7 +123,6 @@ int hl_client_conn_new_reply(hl_client_conn_t *cc, const hl_transaction_t *reque
 
 /*
  * hl_client_conn_new_err_reply - Create an error reply.
- * Maps to: Go ClientConn.NewErrReply()
  */
 int hl_client_conn_new_err_reply(hl_client_conn_t *cc, const hl_transaction_t *request,
                                  hl_transaction_t *reply, const char *err_msg);

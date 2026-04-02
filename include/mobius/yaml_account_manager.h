@@ -1,8 +1,6 @@
 /*
  * yaml_account_manager.h - YAML-based account manager
  *
- * Maps to: internal/mobius/account_manager.go
- *
  * Stores one YAML file per account in a Users/ directory.
  */
 
@@ -13,7 +11,6 @@
 
 /*
  * mobius_yaml_account_mgr_new - Create a YAML-backed account manager.
- * Maps to: Go NewYAMLAccountManager()
  *
  * account_dir is the path to the Users/ directory.
  * Loads all .yaml files into memory on creation.

@@ -1,7 +1,5 @@
 /*
  * config.h - Hotline server configuration
- *
- * Maps to: hotline/config.go
  */
 
 #ifndef HOTLINE_CONFIG_H
@@ -37,6 +35,7 @@ typedef struct {
     int  enable_hope;                            /* EnableHOPE: HOPE secure login support */
     int  hope_legacy_mode;                       /* HOPELegacyMode: allow INVERSE + bare MD5/SHA1 */
     char hope_required_prefix[32];               /* HOPERequiredPrefix: name prefix for E2E-only content */
+    int  e2e_require_tls;                        /* E2ERequireTLS: require TLS for E2E file transfers */
     char tls_cert_path[HL_CONFIG_PATH_MAX];      /* TLSCertFile: path to PEM certificate  */
     char tls_key_path[HL_CONFIG_PATH_MAX];       /* TLSKeyFile: path to PEM private key   */
     int  tls_port;                                /* TLSPort: TLS base port (0 = disabled) */

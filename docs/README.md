@@ -4,12 +4,14 @@
 
 - New users: use the quickstart in the project [README](../README.md).
 - Server operators: see [SERVER.md](SERVER.md).
+- Security setup: see [SECURITY.md](SECURITY.md).
 - GUI users: see [GUI.md](GUI.md).
 
 ## Guides by role
 
 - Operator
   - [Server reference](SERVER.md): CLI flags, config layout, protocol/transaction coverage, and build notes.
+  - [Security & encryption](SECURITY.md): HOPE, TLS, E2E file gating.
   - [GUI reference](GUI.md): app build, launch behavior, limitations, troubleshooting.
 - Developer
   - [Project README](../README.md): repo layout, build targets, current feature status.

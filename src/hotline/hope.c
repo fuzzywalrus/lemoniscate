@@ -10,6 +10,7 @@
  */
 
 #include "hotline/hope.h"
+#include "hotline/server.h"
 #include <CommonCrypto/CommonDigest.h>
 #include <string.h>
 #include <stdlib.h>
@@ -795,8 +796,16 @@ void hl_hope_state_free(hl_hope_state_t *state)
 
 int hl_client_is_encrypted(const hl_client_conn_t *cc)
 {
-    return (cc->hope && cc->hope->active &&
-            cc->hope->mac_alg != HL_HOPE_MAC_INVERSE);
+    if (!cc->hope || !cc->hope->active ||
+        cc->hope->mac_alg == HL_HOPE_MAC_INVERSE)
+        return 0;
+
+    /* If E2E requires TLS, the client must also be on a TLS connection
+     * so that file transfers (separate TCP connection) are encrypted. */
+    if (cc->server && cc->server->config.e2e_require_tls && !cc->is_tls)
+        return 0;
+
+    return 1;
 }
 
 int hl_hope_name_requires_encryption(const char *name, size_t name_len,

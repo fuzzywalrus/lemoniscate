@@ -1,22 +1,18 @@
-# Lemoniscate - A modern Hotline Server for 10.4/10.5 Macs
+# Lemoniscate - A native Hotline server in C and Objective-C
 
 
-A native C and Objective-C implementation of the Hotline protocol for Mac OS X 10.4 Tiger and 10.5 Leopard on PowerPC. This project is a ground-up port of [Mobius](https://github.com/jhalter/mobius), a modern Hotline server and client written in Go by Jeff Halter.
+A native implementation of the Hotline protocol with a full-featured AppKit admin GUI for macOS.
 
 ![Lemoniscate](docs/images/lemoniscate.png)
 
 
 ## What is this?
 
-This is a from-scratch (well, Agentic) rewrite of the Mobius Hotline server and client in C and Objective-C, targeting the PowerPC Macs that Hotline was originally built for. The goal is a native, lightweight binary that runs on PPC Macs (10.4 and 10.5). 
+Lemoniscate is a Hotline server written from the ground up in C and Objective-C. It was originally inspired by [Mobius](https://github.com/jhalter/mobius), a modern Hotline server written in Go by Jeff Halter, but has significantly diverged into its own project with features that have no upstream counterpart: HOPE challenge-response encryption, TLS support, end-to-end file content gating, a native AppKit admin GUI with disclosure sections and help popovers, and self-signed certificate generation.
+
+The `modern` branch targets macOS 10.11 El Capitan and later. The `main` branch targets Mac OS X 10.4 Tiger on PowerPC.
 
 See the releases for the latest version!
-
-## Why not just fork Mobius?
-
-Mobius is written in Go. Go ironically does have PowerPC support but it never supported Mac OS X 10.4 or 10.5, and it dropped PowerPC support a long time ago. There is no way to compile Go code for Tiger or Leopard on PPC. 
-
-Instead, this project uses Mobius as a reference implementation. The C code is structured to mirror the Go source files one-to-one, so when Mobius adds features or fixes bugs upstream, those changes can be traced directly to the corresponding C files here. It is a spiritual port, not a fork.
 
 ## What is Hotline?
 
@@ -26,10 +22,10 @@ The Hotline protocol is a binary, big-endian, TCP-based protocol. This is actual
 
 ## Project structure
 
-The codebase is split into two layers that mirror the Go package structure:
+The codebase is split into two layers:
 
-- `include/hotline/` and `src/hotline/` -- Core protocol library: wire format parsing, serialization, handshake, user/access types, text encoding, and the Objective-C client. Builds into `libhotline.a`.
-- `include/mobius/` and `src/mobius/` -- Server application: transaction handlers, YAML-based persistence (accounts, bans, threaded news), configuration loading, and runtime server behavior.
+- `include/hotline/` and `src/hotline/` -- Core protocol library: wire format parsing, serialization, handshake, user/access types, text encoding, and the Objective-C client. Includes HOPE encryption (`hope.c`, `hope.h`) and TLS support (`tls.c`, `tls.h`). Builds into `libhotline.a`.
+- `include/mobius/` and `src/mobius/` -- Server application: transaction handlers, YAML-based persistence (accounts, bans, threaded news), configuration loading, and runtime server behavior. The `mobius/` directory name is historical.
 - `src/gui/` -- Native AppKit admin GUI (`lemoniscate-gui`) that launches and supervises `lemoniscate`.
 - `docs/` -- Operator and implementation documentation.
 
@@ -130,10 +126,21 @@ Important caveats:
 - Post, read, and delete articles with threading
 - News data persists across server restarts
 
+### Security
+
+- HOPE challenge-response authentication (replaces plaintext password login)
+- HOPE RC4 transport encryption for the transaction channel
+- E2E file content gating (prefix-based, hidden from non-encrypted clients)
+- Optional TLS requirement for E2E file transfers
+- TLS/SSL with self-signed certificate generation from the GUI
+- Configurable E2E content prefix
+
 ### Server Administration
 
-- GUI admin application (Cocoa, native Tiger look)
+- GUI admin application (Cocoa, native AppKit)
 - Setup wizard for first-time configuration
+- Collapsible disclosure sections with help popovers
+- Self-signed TLS certificate generation
 - macOS plist configuration (native format)
 - YAML fallback for compatibility
 - Server agreement displayed on login
@@ -147,6 +154,8 @@ Important caveats:
 
 - Hotline protocol on port 5500 (configurable)
 - File transfers on port 5501
+- TLS/SSL encryption on separate port (default 5600)
+- HOPE secure authentication protocol
 - Bonjour/mDNS for local network discovery
 - Tracker registration (UDP, periodic with live user count)
 - Idle/away detection (5 minutes, auto-broadcasts status)
@@ -171,12 +180,12 @@ Granular per-account permissions including:
 
 ### Compatibility
 
-- Runs on Mac OS X 10.4 Tiger (PowerPC)
+- Runs on macOS 10.11+ (modern branch) and Mac OS X 10.4 Tiger (main branch)
 - Works with Hotline Navigator, the mierau Swift client, and classic Hotline clients
 - FILP file transfer format with INFO and DATA forks
 - Hotline 1.8+ protocol (version 190)
 - CLI server binary for headless operation
-- Mobius-compatible account and news file formats
+- Compatible account and news file formats (YAML-based)
 
 
 ## Building
@@ -204,18 +213,18 @@ Dependencies:
 - Foundation (ships with Tiger)
 - AppKit (for GUI)
 - pthreads (ships with Tiger)
-- libyaml (via Tigerbrew or source build)
+- libyaml (statically linked for distribution -- no runtime Homebrew dependencies in signed builds)
 
 ## Documentation
 
 - [Server reference](docs/SERVER.md)
 - [GUI reference](docs/GUI.md)
+- [Security](docs/SECURITY.md)
 - [Docs index](docs/README.md)
 
 ## Related projects
 
-- [Mobius](https://github.com/jhalter/mobius) -- The Go implementation this project is based on
-- [mobius-macOS-GUI](https://github.com/fuzzywalrus/mobius-macOS-GUI) -- A SwiftUI wrapper around Mobius for modern macOS
+- [Mobius](https://github.com/jhalter/mobius) -- The Go Hotline server that originally inspired this project
 
 ## Why "Lemoniscate"?
 
@@ -224,4 +233,4 @@ A lemniscate is the mathematical name for the infinity symbol -- the figure-eigh
 
 ## License
 
-This project is a clean-room implementation referencing the Mobius source code. See the Mobius repository for its licensing terms.
+See LICENSE file.

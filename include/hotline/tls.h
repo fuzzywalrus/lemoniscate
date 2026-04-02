@@ -4,8 +4,6 @@
  * Provides a connection wrapper that routes I/O through either
  * plain BSD sockets or SecureTransport SSL, and a server-side
  * TLS context for accepting TLS connections.
- *
- * Maps to: Go crypto/tls usage in hotline/server.go
  */
 
 #ifndef HOTLINE_TLS_H
@@ -43,7 +41,6 @@ typedef struct {
 
 /*
  * hl_tls_server_ctx_init - Load certificate and private key from PEM files.
- * Maps to: Go tls.LoadX509KeyPair() in main.go
  *
  * Returns 0 on success, -1 on error.
  * On success, ctx->enabled is set to 1.

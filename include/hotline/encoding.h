@@ -1,9 +1,6 @@
 /*
  * encoding.h - MacRoman <-> UTF-8 text encoding
  *
- * Maps to: golang.org/x/text/encoding/charmap (Macintosh)
- *          Used in hotline/server.go, hotline/file_path.go, hotline/files.go
- *
  * On Tiger, uses CoreFoundation's CFStringConvertEncoding which has
  * the definitive MacRoman tables (PPC Macs are the native platform).
  */

@@ -1,8 +1,6 @@
 /*
  * file_resume_data.h - File transfer resume data (RFLT format)
  *
- * Maps to: hotline/file_resume_data.go
- *
  * IMPORTANT: This is the ONE protocol structure that uses little-endian
  * encoding for BinaryMarshal. On PPC, byte-swapping is needed here.
  * UnmarshalBinary uses big-endian for ForkInfoList (yes, it's inconsistent
@@ -36,15 +34,13 @@ typedef struct {
 
 /*
  * hl_file_resume_data_new - Create a new FileResumeData with given fork info list.
- * Maps to: Go NewFileResumeData()
  */
 void hl_file_resume_data_new(hl_file_resume_data_t *frd,
                              const hl_fork_info_t *forks, int count);
 
 /*
  * hl_file_resume_data_marshal - Serialize to wire format.
- * Maps to: Go FileResumeData.BinaryMarshal()
- * NOTE: Uses little-endian for fixed fields (matching Go behavior).
+ * NOTE: Uses little-endian for fixed fields.
  * Returns bytes written, or -1 on error.
  */
 int hl_file_resume_data_marshal(const hl_file_resume_data_t *frd,
@@ -52,8 +48,7 @@ int hl_file_resume_data_marshal(const hl_file_resume_data_t *frd,
 
 /*
  * hl_file_resume_data_unmarshal - Parse from wire bytes.
- * Maps to: Go FileResumeData.UnmarshalBinary()
- * NOTE: Uses big-endian for ForkInfoList (matching Go behavior).
+ * NOTE: Uses big-endian for ForkInfoList.
  * Returns 0 on success, -1 on error.
  */
 int hl_file_resume_data_unmarshal(hl_file_resume_data_t *frd,

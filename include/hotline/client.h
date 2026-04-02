@@ -1,8 +1,6 @@
 /*
  * client.h - Hotline client library (Objective-C)
  *
- * Maps to: hotline/client.go
- *
  * Objective-C 1.0 compatible (Tiger/PPC):
  * - No @property/@synthesize (use explicit accessors)
  * - No ARC (manual retain/release)
@@ -25,7 +23,6 @@
 @class HLClient;
 
 /* --- HLClientPrefs --- */
-/* Maps to: Go ClientPrefs struct */
 
 @interface HLClientPrefs : NSObject
 {
@@ -48,7 +45,7 @@
 - (BOOL)enableBell;
 - (void)setEnableBell:(BOOL)flag;
 
-/* Maps to: Go ClientPrefs.IconBytes() */
+/* Get icon as 2-byte big-endian representation */
 - (void)iconBytes:(uint8_t[2])outBytes;
 
 @end
@@ -61,13 +58,11 @@
 @protocol HLClientDelegate
 
 /* Called when a transaction is received from the server.
- * Maps to: Go Client.Handlers dispatch in HandleTransaction()
  * Return an array of HLTransaction* to send back, or nil. */
 - (NSArray *)client:(HLClient *)client
     didReceiveTransaction:(hl_transaction_t *)transaction;
 
-/* Called when the connection is lost or an error occurs.
- * Maps to: Go HandleTransactions() returning an error */
+/* Called when the connection is lost or an error occurs. */
 - (void)client:(HLClient *)client didDisconnectWithError:(NSError *)error;
 
 @end
@@ -83,7 +78,6 @@
 
 
 /* --- HLClient --- */
-/* Maps to: Go Client struct */
 
 @interface HLClient : NSObject
 {
@@ -106,15 +100,14 @@
 
 /* --- Init / Dealloc --- */
 
-/* Maps to: Go NewClient() */
+/* Create a new client with a username and delegate. */
 - (id)initWithUsername:(NSString *)username
               delegate:(id<HLClientDelegate>)delegate;
 - (void)dealloc;
 
 /* --- Connection lifecycle --- */
 
-/* Maps to: Go Client.Connect()
- * Connects to server, performs handshake, sends login, starts
+/* Connects to server, performs handshake, sends login, starts
  * keepalive and receive threads.
  * address is "host:port" format.
  * Returns nil on success, or an NSError on failure. */
@@ -122,12 +115,10 @@
                         login:(NSString *)login
                      password:(NSString *)password;
 
-/* Maps to: Go Client.Disconnect()
- * Stops threads and closes the socket. */
+/* Stops threads and closes the socket. */
 - (void)disconnect;
 
-/* Maps to: Go Client.Send()
- * Thread-safe. Serializes and sends a transaction.
+/* Thread-safe. Serializes and sends a transaction.
  * Returns nil on success, or an NSError. */
 - (NSError *)sendTransaction:(hl_transaction_t *)t;
 

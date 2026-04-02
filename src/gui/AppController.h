@@ -1,7 +1,7 @@
 /*
  * AppController.h - Lemoniscate Server Admin GUI
  *
- * Maps to: MobiusAdmin AppState.swift + ContentView.swift
+ * Lemoniscate Server Admin — programmatic AppKit UI
  *
  * Tiger-compatible Obj-C 1.0:
  * - Programmatic UI (no XIB/NIB)
@@ -34,6 +34,13 @@
 
     /* Left panel: settings */
     NSScrollView *_settingsScrollView;
+    NSView *_settingsDocView;
+    float _settingsDocWidth;
+    float _settingsSecWidth;
+    float _settingsFieldWidth;
+
+    /* Disclosure section state (collapsed = content hidden) */
+    NSMutableArray *_disclosureSections;  /* array of NSMutableDictionary */
 
     /* General section */
     NSTextField *_serverNameField;
@@ -74,6 +81,7 @@
     NSButton *_hopeCheckbox;
     NSButton *_hopeLegacyCheckbox;
     NSTextField *_hopePrefixField;
+    NSButton *_hopeRequireTLSCheckbox;
 
     /* TLS Encryption section */
     NSTextField *_tlsCertField;
@@ -82,6 +90,7 @@
     NSButton *_chooseTLSKeyButton;
     NSTextField *_tlsPortField;
     NSTextField *_tlsStatusLabel;
+    NSButton *_generateTLSCertButton;
 
     /* Monitoring section */
     NSPopUpButton *_pollingRatePopup;
@@ -318,6 +327,10 @@
 - (void)pollingRateChanged:(id)sender;
 - (void)chooseTLSCert:(id)sender;
 - (void)chooseTLSKey:(id)sender;
+- (void)generateSelfSignedCert:(id)sender;
+- (void)toggleDisclosure:(id)sender;
+- (void)relayoutSettings;
+- (void)showHelpPopover:(id)sender;
 
 @end
 

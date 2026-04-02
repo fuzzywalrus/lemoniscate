@@ -1,8 +1,6 @@
 /*
  * access.h - Hotline access permission bitmap
  *
- * Maps to: hotline/access.go
- *
  * The access bitmap is 8 bytes (64 bits) where each bit represents
  * a specific permission. Bit 0 of byte 0 is the highest bit.
  */
@@ -57,7 +55,6 @@
 
 /*
  * hl_access_set - Set a permission bit in the access bitmap.
- * Maps to: Go AccessBitmap.Set()
  */
 static inline void hl_access_set(hl_access_bitmap_t bits, int i)
 {
@@ -66,7 +63,6 @@ static inline void hl_access_set(hl_access_bitmap_t bits, int i)
 
 /*
  * hl_access_is_set - Check if a permission bit is set.
- * Maps to: Go AccessBitmap.IsSet()
  */
 static inline int hl_access_is_set(const hl_access_bitmap_t bits, int i)
 {
