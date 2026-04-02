@@ -1,6 +1,6 @@
 # Lemoniscate Server Features
 
-**Version 0.1.1** — A Hotline server for Mac OS X Tiger (PowerPC)
+**Version 0.1.4** — A native Hotline server in C and Objective-C
 
 ---
 
@@ -57,6 +57,8 @@
 - Start, stop, and restart from the GUI
 - Live server logs in the admin interface
 - Log file saved to Application Support
+- Collapsible disclosure settings with help popovers
+- Self-signed TLS certificate generation
 
 ## Networking
 
@@ -67,6 +69,18 @@
 - Idle/away detection (5 minutes, auto-broadcasts status)
 - Per-IP rate limiting
 - Ban list (IP addresses and usernames)
+- TLS/SSL encryption on a dedicated port (default 5600)
+- TLS file transfer port (default 5601)
+
+## Security
+
+- HOPE challenge-response authentication (no plaintext passwords on the wire)
+- HOPE RC4 transport encryption for chat, commands, and file listings
+- TLS/SSL encryption on a dedicated port (default 5600)
+- E2E content gating — files with a configurable prefix hidden from non-encrypted clients
+- Optional TLS requirement for E2E file transfers
+- Self-signed TLS certificate generation from the GUI
+- Legacy mode for backwards compatibility with older HOPE clients
 
 ## Access Control
 
@@ -91,4 +105,4 @@ Granular per-account permissions including:
 - FILP file transfer format with INFO and DATA forks
 - Hotline 1.8+ protocol (version 190)
 - CLI server binary for headless operation
-- Mobius-compatible account and news file formats
+- Compatible account and news file formats

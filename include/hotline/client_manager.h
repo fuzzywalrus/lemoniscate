@@ -1,7 +1,5 @@
 /*
  * client_manager.h - Client connection manager
- *
- * Maps to: hotline/client_manager.go
  */
 
 #ifndef HOTLINE_CLIENT_MANAGER_H
@@ -16,25 +14,21 @@
 typedef struct hl_client_conn hl_client_conn_t;
 #endif
 
-/* ClientManager vtable — maps to Go ClientManager interface */
+/* ClientManager vtable */
 typedef struct hl_client_mgr hl_client_mgr_t;
 
 typedef struct {
     /* Returns a malloc'd array of pointers (caller frees the array, not the conns).
-     * *out_count is set to the number of entries. Sorted by ID.
-     * Maps to: Go ClientManager.List() */
+     * *out_count is set to the number of entries. Sorted by ID. */
     hl_client_conn_t **(*list)(hl_client_mgr_t *self, int *out_count);
 
-    /* Get client by ID. Returns NULL if not found.
-     * Maps to: Go ClientManager.Get() */
+    /* Get client by ID. Returns NULL if not found. */
     hl_client_conn_t *(*get)(hl_client_mgr_t *self, hl_client_id_t id);
 
-    /* Add client and assign an ID.
-     * Maps to: Go ClientManager.Add() */
+    /* Add client and assign an ID. */
     void (*add)(hl_client_mgr_t *self, hl_client_conn_t *cc);
 
-    /* Remove client by ID.
-     * Maps to: Go ClientManager.Delete() */
+    /* Remove client by ID. */
     void (*del)(hl_client_mgr_t *self, hl_client_id_t id);
 } hl_client_mgr_vtable_t;
 
@@ -44,7 +38,6 @@ struct hl_client_mgr {
 
 /*
  * hl_mem_client_mgr_new - Create an in-memory client manager.
- * Maps to: Go NewMemClientMgr()
  */
 hl_client_mgr_t *hl_mem_client_mgr_new(void);
 

@@ -1,8 +1,6 @@
 /*
  * file_wrapper.h - Fork-aware file abstraction
  *
- * Maps to: hotline/file_wrapper.go
- *
  * Wraps a file with its associated data fork, resource fork (.rsrc_),
  * info fork (.info_), and incomplete marker (.incomplete).
  */

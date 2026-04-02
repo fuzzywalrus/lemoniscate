@@ -1,8 +1,6 @@
 /*
  * logger_impl.h - Production logger with file rotation
  *
- * Maps to: internal/mobius/logger.go
- *
  * Multiplexes output to stderr + rotating log file.
  * Rotation: 100MB max per file, 3 backups, 365 day retention.
  */
@@ -18,7 +16,6 @@
 
 /*
  * mobius_file_logger_new - Create a logger that writes to stderr + rotating file.
- * Maps to: Go NewLogger()
  *
  * log_file: path to log file (NULL for stderr-only)
  * log_level: "debug", "info", or "error"

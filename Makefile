@@ -19,7 +19,7 @@ CFLAGS = -std=c11 -Wall -Wextra -pedantic -O2 \
          -I$(HOMEBREW_PREFIX)/include \
          -DTARGET_OS_MAC=1
 
-YAML_LDFLAGS = -L$(HOMEBREW_PREFIX)/lib -lyaml
+YAML_LDFLAGS = $(HOMEBREW_PREFIX)/lib/libyaml.a
 
 # Obj-C flags (no -std= flag - Obj-C uses its own standard)
 OBJCFLAGS = -Wall -Wextra -O2 \

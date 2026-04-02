@@ -81,6 +81,13 @@ MaxDownloads: 0                # 0 = unlimited
 MaxDownloadsPerClient: 0       # 0 = unlimited
 MaxConnectionsPerIP: 0         # 0 = unlimited
 PreserveResourceForks: false   # Preserve Mac resource forks in file transfers
+EnableHOPE: false             # HOPE secure authentication
+HOPELegacyMode: false         # Allow weak MAC algorithms
+HOPERequiredPrefix: "[E2E]"   # Prefix for E2E-gated content
+E2ERequireTLS: false          # Require TLS for E2E file access
+TLSCertFile: ""               # Path to PEM certificate
+TLSKeyFile: ""                # Path to PEM private key
+TLSPort: 5600                 # TLS listener port
 ```
 
 ### User Account Files (Users/*.yaml)
@@ -132,6 +139,8 @@ The flat message board (news). Posts are prepended to the top. Uses `\r` (carria
 |------|---------|
 | BASE (default 5500) | Hotline protocol (transactions, chat, user management) |
 | BASE+1 (default 5501) | File transfers (HTXF protocol) |
+| BASE+100 (default 5600) | TLS Hotline protocol |
+| BASE+101 (default 5601) | TLS file transfers |
 
 ### Connection Flow
 
@@ -145,6 +154,8 @@ The flat message board (news). Posts are prepended to the top. Uses `\r` (carria
 8. Server sends user access bitmap
 9. Server broadcasts `TranNotifyChangeUser` (301) to all clients
 10. Client is now connected and can send/receive transactions
+
+For TLS connections, clients connect to the TLS port instead. The handshake and login proceed identically but over an encrypted channel.
 
 ### Rate Limiting
 
@@ -243,7 +254,7 @@ The flat message board (news). Posts are prepended to the top. Uses `\r` (carria
 2. Config file editing + restart (or future SIGHUP integration)
 3. The Lemoniscate.app GUI (which manages the server process via NSTask)
 
-A REST API (matching the Mobius Go server's `/api/v1/` endpoints) is planned for a future version.
+A REST API is planned for a future version.
 
 See also: [GUI reference](GUI.md)
 
@@ -290,6 +301,6 @@ make test   # builds and runs all tests
 
 ## Version
 
-Current: `0.1.1`
+Current: `0.1.4`
 
-Based on [Mobius](https://github.com/jhalter/mobius) by Jeff Halter.
+Originally inspired by [Mobius](https://github.com/jhalter/mobius) by Jeff Halter.

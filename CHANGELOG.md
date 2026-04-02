@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.1.4 — 2026-03-29
+
+### Added
+
+- **HOPE E2E TLS requirement**: New `E2ERequireTLS` config option. Clients must connect via TLS to see E2E-prefixed content, ensuring file transfers are also encrypted on the wire.
+- **Self-signed TLS certificate generation**: "Generate Self-Signed..." button in the TLS settings creates RSA 2048-bit cert/key in the config directory and auto-fills the TLS fields.
+- **Collapsible disclosure sections**: Settings panel redesigned with collapsible disclosure triangles, matching modern macOS design patterns.
+- **Help popovers**: Apple-standard (?) help buttons on all settings with full explanatory text in NSPopover.
+- **Tooltips**: All settings controls now have descriptive hover tooltips.
+
+### Fixed
+
+- **TLS code signing crash**: Switched libyaml from dynamic to static linking. Signed builds no longer fail at runtime due to Team ID mismatch on the Homebrew dylib.
+- **Self-signed key format**: Certificate generation now uses `openssl genrsa` (traditional RSA format) instead of `openssl req -newkey` (PKCS#8), fixing SecureTransport import failure.
+- **Wizard button clipped**: "Finish & Start" renamed to "Finish and Start" and widened to prevent text truncation.
+
+### Changed
+
+- **Removed Mobius references**: Cleaned comments, URLs, and "Maps to: Go..." annotations across all source and header files. Lemoniscate is now positioned as its own project.
+- **Documentation overhaul**: Updated README, all docs, created SECURITY.md with plain-speak and technical HOPE/TLS breakdown.
+
 ## 0.1.3 — 2026-03-22
 
 ### Fixed

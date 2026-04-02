@@ -187,9 +187,9 @@
         [_wizardFinishButton setFrame:NSMakeRect(504, 20, 70, 28)];
         [content addSubview:_wizardFinishButton];
 
-        _wizardFinishStartButton = makeButton(@"Finish & Start", self,
+        _wizardFinishStartButton = makeButton(@"Finish and Start", self,
                                               @selector(wizardFinishAndStart:));
-        [_wizardFinishStartButton setFrame:NSMakeRect(580, 20, 74, 28)];
+        [_wizardFinishStartButton setFrame:NSMakeRect(580, 20, 110, 28)];
         [content addSubview:_wizardFinishStartButton];
 
         _wizardNameField = makeEditField(430);
@@ -454,7 +454,7 @@
             @"Max DL/Client: %d\n"
             @"Max Conn/IP: %d\n\n"
             @"Click Finish to save and close the wizard,\n"
-            @"or Finish & Start to save and launch the server.",
+            @"or Finish and Start to save and launch the server.",
             [_wizardNameField stringValue],
             [_wizardDescriptionField stringValue],
             [_wizardPortField intValue],
@@ -702,13 +702,13 @@
 - (void)openServerRepository:(id)sender
 {
     (void)sender;
-    [self openProjectURL:@"https://github.com/jhalter/mobius"];
+    [self openProjectURL:@"https://github.com/fuzzywalrus/lemoniscate"];
 }
 
 - (void)openGUIRepository:(id)sender
 {
     (void)sender;
-    [self openProjectURL:@"https://github.com/fuzzywalrus/mobius-macOS-GUI"];
+    [self openProjectURL:@"https://github.com/fuzzywalrus/lemoniscate"];
 }
 
 - (void)openProjectHomepage:(id)sender
@@ -859,4 +859,182 @@ static int pollingIntervalCount = 8;
         [_tlsKeyField setStringValue:
             [[[panel URLs] objectAtIndex:0] path]];
     }
+}
+
+- (void)generateSelfSignedCert:(id)sender
+{
+    (void)sender;
+
+    /* Ask the user for a Common Name */
+    NSAlert *prompt = [[NSAlert alloc] init];
+    [prompt setMessageText:@"Generate Self-Signed Certificate"];
+    [prompt setInformativeText:@"Enter the server hostname or IP address for the certificate Common Name (CN).\n\nThis will create cert.pem and key.pem in your config directory."];
+    [prompt addButtonWithTitle:@"Generate"];
+    [prompt addButtonWithTitle:@"Cancel"];
+
+    NSTextField *cnField = [[NSTextField alloc]
+        initWithFrame:NSMakeRect(0, 0, 260, 24)];
+    [cnField setStringValue:_serverName ? _serverName : @"Lemoniscate Server"];
+    [cnField setFont:[NSFont systemFontOfSize:13.0]];
+    [prompt setAccessoryView:cnField];
+
+    /* Make the text field first responder */
+    [[prompt window] setInitialFirstResponder:cnField];
+
+    NSModalResponse resp = [prompt runModal];
+    if (resp != NSAlertFirstButtonReturn) {
+        [cnField release];
+        [prompt release];
+        return;
+    }
+
+    NSString *cn = [[cnField stringValue]
+        stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    [cnField release];
+    [prompt release];
+
+    if (!cn || [cn length] == 0)
+        cn = @"Lemoniscate Server";
+
+    /* Ensure config directory exists */
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (![fm fileExistsAtPath:_configDir]) {
+        [fm createDirectoryAtPath:_configDir
+      withIntermediateDirectories:YES
+                       attributes:nil
+                            error:nil];
+    }
+
+    NSString *certPath = [_configDir stringByAppendingPathComponent:@"cert.pem"];
+    NSString *keyPath = [_configDir stringByAppendingPathComponent:@"key.pem"];
+
+    /* Check for existing files */
+    if ([fm fileExistsAtPath:certPath] || [fm fileExistsAtPath:keyPath]) {
+        NSAlert *overwrite = [[NSAlert alloc] init];
+        [overwrite setMessageText:@"Certificate files already exist"];
+        [overwrite setInformativeText:
+            [NSString stringWithFormat:
+                @"Files already exist in:\n%@\n\nOverwrite them?", _configDir]];
+        [overwrite addButtonWithTitle:@"Overwrite"];
+        [overwrite addButtonWithTitle:@"Cancel"];
+        [overwrite setAlertStyle:NSAlertStyleWarning];
+        NSModalResponse oresp = [overwrite runModal];
+        [overwrite release];
+        if (oresp != NSAlertFirstButtonReturn) return;
+    }
+
+    /* Generate key and certificate in two steps so the private key
+     * uses traditional RSA format (BEGIN RSA PRIVATE KEY) which
+     * SecItemImport on macOS handles reliably. */
+    NSString *subj = [NSString stringWithFormat:@"/CN=%@", cn];
+    NSString *opensslPath = @"/usr/bin/openssl";
+
+    /* Step 1: openssl genrsa -out key.pem 2048 */
+    {
+        NSTask *genrsa = [[NSTask alloc] init];
+        [genrsa setLaunchPath:opensslPath];
+        [genrsa setArguments:[NSArray arrayWithObjects:
+            @"genrsa", @"-out", keyPath, @"2048", nil]];
+        NSPipe *ep = [NSPipe pipe];
+        [genrsa setStandardError:ep];
+        [genrsa setStandardOutput:[NSPipe pipe]];
+
+        @try {
+            [genrsa launch];
+            [genrsa waitUntilExit];
+        } @catch (NSException *e) {
+            NSAlert *err = [[NSAlert alloc] init];
+            [err setMessageText:@"Failed to run openssl genrsa"];
+            [err setInformativeText:[e reason]];
+            [err setAlertStyle:NSAlertStyleCritical];
+            [err runModal];
+            [err release];
+            [genrsa release];
+            return;
+        }
+
+        int s = [genrsa terminationStatus];
+        [genrsa release];
+        if (s != 0) {
+            NSData *ed = [[ep fileHandleForReading] readDataToEndOfFile];
+            NSString *es = [[[NSString alloc] initWithData:ed
+                                                  encoding:NSUTF8StringEncoding] autorelease];
+            NSAlert *err = [[NSAlert alloc] init];
+            [err setMessageText:@"Key generation failed"];
+            [err setInformativeText:es ? es : @"Unknown error"];
+            [err setAlertStyle:NSAlertStyleCritical];
+            [err runModal];
+            [err release];
+            return;
+        }
+    }
+
+    /* Step 2: openssl req -x509 -key key.pem -out cert.pem ... */
+    {
+        NSTask *req = [[NSTask alloc] init];
+        [req setLaunchPath:opensslPath];
+        [req setArguments:[NSArray arrayWithObjects:
+            @"req", @"-new", @"-x509",
+            @"-key", keyPath,
+            @"-out", certPath,
+            @"-days", @"3650",
+            @"-subj", subj,
+            nil]];
+        NSPipe *ep = [NSPipe pipe];
+        [req setStandardError:ep];
+        [req setStandardOutput:[NSPipe pipe]];
+
+        @try {
+            [req launch];
+            [req waitUntilExit];
+        } @catch (NSException *e) {
+            NSAlert *err = [[NSAlert alloc] init];
+            [err setMessageText:@"Failed to run openssl req"];
+            [err setInformativeText:[e reason]];
+            [err setAlertStyle:NSAlertStyleCritical];
+            [err runModal];
+            [err release];
+            [req release];
+            return;
+        }
+
+        int s = [req terminationStatus];
+        [req release];
+        if (s != 0) {
+            NSData *ed = [[ep fileHandleForReading] readDataToEndOfFile];
+            NSString *es = [[[NSString alloc] initWithData:ed
+                                                  encoding:NSUTF8StringEncoding] autorelease];
+            NSAlert *err = [[NSAlert alloc] init];
+            [err setMessageText:@"Certificate generation failed"];
+            [err setInformativeText:es ? es : @"Unknown error"];
+            [err setAlertStyle:NSAlertStyleCritical];
+            [err runModal];
+            [err release];
+            return;
+        }
+    }
+
+    /* Auto-fill the TLS fields */
+    [_tlsCertField setStringValue:certPath];
+    [_tlsKeyField setStringValue:keyPath];
+
+    /* Update status label */
+    [_tlsStatusLabel setStringValue:@"\u2705 Self-signed certificate generated"];
+    [_tlsStatusLabel setTextColor:[NSColor colorWithCalibratedRed:0.2
+                                                            green:0.7
+                                                             blue:0.2
+                                                            alpha:1.0]];
+
+    NSAlert *done = [[NSAlert alloc] init];
+    [done setMessageText:@"Certificate Generated"];
+    [done setInformativeText:
+        [NSString stringWithFormat:
+            @"Self-signed certificate created:\n\n"
+            @"Certificate: %@\n"
+            @"Private Key: %@\n\n"
+            @"Valid for 10 years. Save settings and restart the server to enable TLS.",
+            certPath, keyPath]];
+    [done addButtonWithTitle:@"OK"];
+    [done runModal];
+    [done release];
 }

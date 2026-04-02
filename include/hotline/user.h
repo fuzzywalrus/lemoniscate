@@ -1,8 +1,6 @@
 /*
  * user.h - Hotline protocol user types
  *
- * Maps to: hotline/user.go
- *
  * User wire format: ID(2) + Icon(2) + Flags(2) + NameLen(2) + Name(variable)
  */
 
@@ -34,7 +32,6 @@ typedef struct {
 
 /*
  * hl_user_flags_is_set - Check if a flag bit is set.
- * Maps to: Go UserFlags.IsSet()
  */
 static inline int hl_user_flags_is_set(const hl_user_flags_t flags, int bit)
 {
@@ -44,7 +41,6 @@ static inline int hl_user_flags_is_set(const hl_user_flags_t flags, int bit)
 
 /*
  * hl_user_flags_set - Set or clear a flag bit.
- * Maps to: Go UserFlags.Set()
  */
 static inline void hl_user_flags_set(hl_user_flags_t flags, int bit, int val)
 {
@@ -59,21 +55,18 @@ static inline void hl_user_flags_set(hl_user_flags_t flags, int bit, int val)
 
 /*
  * hl_user_serialize - Write user to wire format.
- * Maps to: Go User.Read()
  * Returns bytes written, or -1 if buf too small.
  */
 int hl_user_serialize(const hl_user_t *u, uint8_t *buf, size_t buf_len);
 
 /*
  * hl_user_deserialize - Parse user from wire bytes.
- * Maps to: Go User.Write()
  * Returns bytes consumed, or -1 on error.
  */
 int hl_user_deserialize(hl_user_t *u, const uint8_t *buf, size_t buf_len);
 
 /*
  * hl_encode_string - 255-rotation obfuscation for passwords.
- * Maps to: Go EncodeString()
  * Writes to out (must be at least len bytes). Works in-place (out == in is ok).
  */
 void hl_encode_string(const uint8_t *in, uint8_t *out, size_t len);

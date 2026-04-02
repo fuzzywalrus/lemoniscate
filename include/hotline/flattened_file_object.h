@@ -1,8 +1,6 @@
 /*
  * flattened_file_object.h - FILP format for file transfers
  *
- * Maps to: hotline/flattened_file_object.go
- *
  * Layout: FlatFileHeader(24) + InfoForkHeader(16) + InfoFork(72+) +
  *         DataForkHeader(16) + [optional RsrcForkHeader(16)]
  */
@@ -16,7 +14,7 @@
 #define HL_FORK_HEADER_SIZE      16
 #define HL_INFO_FORK_FIXED_SIZE  72
 
-/* FlatFileHeader — maps to Go FlatFileHeader */
+/* FlatFileHeader */
 typedef struct {
     uint8_t format[4];      /* "FILP" */
     uint8_t version[2];     /* {0x00, 0x01} */
@@ -24,7 +22,7 @@ typedef struct {
     uint8_t fork_count[2];  /* 2 or 3 (with resource fork) */
 } hl_flat_file_header_t;
 
-/* FlatFileForkHeader — maps to Go FlatFileForkHeader */
+/* FlatFileForkHeader */
 typedef struct {
     uint8_t fork_type[4];        /* "INFO", "DATA", or "MACR" */
     uint8_t compression_type[4]; /* zeros */
@@ -32,7 +30,7 @@ typedef struct {
     uint8_t data_size[4];       /* BE uint32 */
 } hl_flat_fork_header_t;
 
-/* FlatFileInformationFork — maps to Go FlatFileInformationFork */
+/* FlatFileInformationFork */
 typedef struct {
     uint8_t  platform[4];          /* "AMAC" or "MWIN" */
     uint8_t  type_signature[4];    /* File type code */

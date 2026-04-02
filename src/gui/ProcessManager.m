@@ -1,7 +1,7 @@
 /*
  * ProcessManager.m - Server process lifecycle management
  *
- * Maps to: MobiusAdmin ProcessManager.swift
+ * Lemoniscate server process lifecycle management
  *
  * Tiger Obj-C 1.0. Uses NSTask to launch/stop the lemoniscate binary.
  * Captures stdout/stderr via NSPipe and posts notifications for log lines.
@@ -169,6 +169,18 @@ NSString * const PMLogLineReceivedNotification = @"PMLogLineReceived";
         _task = task;
         [self setStatus:ServerStatusRunning];
     NS_HANDLER
+        [[NSNotificationCenter defaultCenter] removeObserver:self
+            name:NSTaskDidTerminateNotification object:task];
+        [[NSNotificationCenter defaultCenter] removeObserver:self
+            name:NSFileHandleReadCompletionNotification
+            object:[_stdoutPipe fileHandleForReading]];
+        [[NSNotificationCenter defaultCenter] removeObserver:self
+            name:NSFileHandleReadCompletionNotification
+            object:[_stderrPipe fileHandleForReading]];
+        [_stdoutPipe release];
+        _stdoutPipe = nil;
+        [_stderrPipe release];
+        _stderrPipe = nil;
         [self setError:[NSString stringWithFormat:@"Failed to launch: %@",
                         [localException reason]]];
         [task release];

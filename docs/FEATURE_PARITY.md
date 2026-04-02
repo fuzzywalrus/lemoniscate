@@ -1,4 +1,4 @@
-# Feature Parity Audit: Lemoniscate vs Mobius Go Reference
+# Feature Audit: Lemoniscate Server
 
 Audit date: 2026-03-26
 
@@ -85,7 +85,9 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 - [x] kqueue event loop (BSD native)
 - [x] Dual-port system (5500 main + 5501 transfers)
 - [x] TLS/SSL support (SecureTransport with deprecation pragma, dual-port: plain + TLS, PEM cert/key loading)
-- [ ] Redis integration (Mobius uses for bans, online tracking)
+- [x] Self-signed TLS certificate generation (GUI)
+- [x] Static libyaml linking (zero runtime dependencies)
+- [ ] Redis integration (for bans, online tracking)
 
 ### Discovery & Registration
 
@@ -93,7 +95,7 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
   > **Note:** Packets send correctly but tested trackers (preterhuman, mainecyber, badmoon) don't list us. Trackers do a TCP connect-back probe with zero data — our 10s handshake timeout may be too slow. Needs further investigation with other trackers or tracker software.
 - [x] Bonjour/mDNS (dns_sd.h integration, registers on local network)
 
-> Note: Mobius has tracker registration but NO Bonjour. We have both, though tracker listing isn't working yet with public trackers.
+> Note: We have both tracker registration and Bonjour, though tracker listing isn't working yet with public trackers.
 
 ### Login & Session
 
@@ -104,6 +106,9 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 - [x] User join/leave notifications (TranNotifyChangeUser / TranNotifyDeleteUser)
 - [x] Admin flag detection (ACCESS_DISCON_USER)
 - [x] Password hashing (salted SHA-1 via CommonCrypto. Format: `sha1:<salt>:<hash>`. Falls back to plaintext comparison for migrating old accounts)
+- [x] HOPE secure authentication (challenge-response MAC, RC4 transport encryption)
+- [x] E2E content gating (prefix-based file visibility for encrypted clients)
+- [x] E2E TLS requirement option
 
 ### User Notifications
 
@@ -190,5 +195,5 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 11. ~~**ACCESS_VIEW_DROP_BOXES** - Drop box folder visibility~~ DONE
 12. **ACCESS_CHANGE_OWN_PASS** - Self-service password change
 13. ~~**TLS/SSL support** - Encrypted connections~~ DONE (SecureTransport, dual-port, GUI settings)
-14. ~~**Encoding support** - Mobius has UTF-8/MacRoman config~~ DONE (CoreFoundation MacRoman ↔ UTF-8 conversion, config-driven)
+14. ~~**Encoding support** - UTF-8/MacRoman config~~ DONE (CoreFoundation MacRoman ↔ UTF-8 conversion, config-driven)
 15. ~~**malloc error on banner download**~~ FIXED — transfer manager uses internal array, not heap; callers were incorrectly free()ing the pointer

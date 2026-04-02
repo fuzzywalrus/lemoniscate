@@ -1,8 +1,6 @@
 /*
  * logger.h - Logging interface (vtable)
  *
- * Maps to: hotline/logger.go (Logger interface)
- *
  * Simple variadic-style logging. Implementations can write to
  * stderr, a file with rotation, syslog, etc.
  */
@@ -12,7 +10,7 @@
 
 typedef struct hl_logger hl_logger_t;
 
-/* Logger vtable — maps to Go Logger interface */
+/* Logger vtable */
 typedef struct {
     void (*debug)(hl_logger_t *self, const char *fmt, ...);
     void (*info)(hl_logger_t *self, const char *fmt, ...);

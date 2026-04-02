@@ -1,8 +1,6 @@
 /*
  * file_path.h - Hotline protocol file path encoding/decoding
  *
- * Maps to: hotline/file_path.go
- *
  * Wire format for a path:
  *   ItemCount(2) + { Reserved(2) + Len(1) + Name(variable) }...
  */
@@ -28,14 +26,12 @@ typedef struct {
 
 /*
  * hl_file_path_deserialize - Parse a file path from wire bytes.
- * Maps to: Go FilePath.Write()
  * Returns 0 on success, -1 on error.
  */
 int hl_file_path_deserialize(hl_file_path_t *fp, const uint8_t *buf, size_t buf_len);
 
 /*
  * hl_file_path_serialize - Encode a file path to wire bytes.
- * Maps to: Go EncodeFilePath() in files.go
  * Returns bytes written, or -1 on error.
  */
 int hl_file_path_serialize(const hl_file_path_t *fp, uint8_t *buf, size_t buf_len);
@@ -51,7 +47,6 @@ int hl_file_path_to_platform(const hl_file_path_t *fp, const char *root,
 
 /*
  * hl_file_path_from_string - Build a file path from a "/" separated string.
- * Maps to: Go EncodeFilePath() logic
  */
 int hl_file_path_from_string(hl_file_path_t *fp, const char *path);
 

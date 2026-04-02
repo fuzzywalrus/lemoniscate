@@ -216,7 +216,146 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [self updateFooterStats];
 }
 
+/* Show an NSPopover with help text from the clicked (?) button. */
+- (void)showHelpPopover:(id)sender
+{
+    NSButton *btn = (NSButton *)sender;
+    NSString *text = [btn accessibilityLabel];
+    if (!text || [text length] == 0) return;
+
+    /* Build a text field to display in the popover */
+    NSTextField *label = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 240, 20)];
+    [label setStringValue:text];
+    [label setBezeled:NO];
+    [label setDrawsBackground:NO];
+    [label setEditable:NO];
+    [label setSelectable:YES];
+    [label setFont:[NSFont systemFontOfSize:12.0]];
+    [label setPreferredMaxLayoutWidth:240];
+    [label setLineBreakMode:NSLineBreakByWordWrapping];
+    /* Use auto-layout to get the right height for wrapped text */
+    [label setTranslatesAutoresizingMaskIntoConstraints:NO];
+
+    NSViewController *vc = [[NSViewController alloc] init];
+    NSView *container = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 100)];
+    [container addSubview:label];
+
+    /* Constrain the label inside the container with padding */
+    [NSLayoutConstraint activateConstraints:@[
+        [[label leadingAnchor] constraintEqualToAnchor:[container leadingAnchor] constant:10],
+        [[label trailingAnchor] constraintEqualToAnchor:[container trailingAnchor] constant:-10],
+        [[label topAnchor] constraintEqualToAnchor:[container topAnchor] constant:8],
+        [[label bottomAnchor] constraintEqualToAnchor:[container bottomAnchor] constant:-8]
+    ]];
+    [container setTranslatesAutoresizingMaskIntoConstraints:NO];
+
+    /* Wrap in a fixed-width outer view so the popover sizes correctly */
+    NSView *outer = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 100)];
+    [outer addSubview:container];
+    [NSLayoutConstraint activateConstraints:@[
+        [[container leadingAnchor] constraintEqualToAnchor:[outer leadingAnchor]],
+        [[container trailingAnchor] constraintEqualToAnchor:[outer trailingAnchor]],
+        [[container topAnchor] constraintEqualToAnchor:[outer topAnchor]],
+        [[container bottomAnchor] constraintEqualToAnchor:[outer bottomAnchor]],
+        [[outer widthAnchor] constraintEqualToConstant:260]
+    ]];
+    [outer setTranslatesAutoresizingMaskIntoConstraints:NO];
+
+    [vc setView:outer];
+
+    NSPopover *popover = [[NSPopover alloc] init];
+    [popover setBehavior:NSPopoverBehaviorTransient];
+    [popover setContentViewController:vc];
+    [popover showRelativeToRect:[btn bounds] ofView:btn
+                  preferredEdge:NSMaxXEdge];
+
+    [label release];
+    [container release];
+    [outer release];
+    [vc release];
+    [popover release];
+}
+
 /* ===== Left panel: Settings ===== */
+
+/* Register a disclosure section: header button + content view.
+ * The content view is initially visible (expanded). */
+- (void)registerDisclosureSection:(NSButton *)header
+                          content:(NSView *)content
+                       contentHeight:(float)contentHeight
+{
+    NSMutableDictionary *info = [NSMutableDictionary dictionary];
+    [info setObject:header forKey:@"header"];
+    [info setObject:content forKey:@"content"];
+    [info setObject:[NSNumber numberWithFloat:contentHeight] forKey:@"contentHeight"];
+    [info setObject:[NSNumber numberWithBool:YES] forKey:@"expanded"];
+    [_disclosureSections addObject:info];
+}
+
+- (void)toggleDisclosure:(id)sender
+{
+    int tag = (int)[sender tag];
+    if (tag < 0 || tag >= (int)[_disclosureSections count]) return;
+
+    NSMutableDictionary *info = [_disclosureSections objectAtIndex:(unsigned)tag];
+    BOOL expanded = [[info objectForKey:@"expanded"] boolValue];
+    expanded = !expanded;
+    [info setObject:[NSNumber numberWithBool:expanded] forKey:@"expanded"];
+
+    NSView *content = [info objectForKey:@"content"];
+    [content setHidden:!expanded];
+
+    /* Update triangle character */
+    NSButton *header = [info objectForKey:@"header"];
+    NSString *title = [header title];
+    /* Strip old prefix (triangle + spaces) and re-add */
+    NSRange space = [title rangeOfString:@"  "];
+    if (space.location != NSNotFound) {
+        NSString *name = [title substringFromIndex:space.location + space.length];
+        if (expanded)
+            [header setTitle:[NSString stringWithFormat:@"\u25BC  %@", name]];
+        else
+            [header setTitle:[NSString stringWithFormat:@"\u25B6  %@", name]];
+    }
+
+    [self relayoutSettings];
+}
+
+- (void)relayoutSettings
+{
+    float y = SECTION_MARGIN;
+    unsigned i;
+    for (i = 0; i < [_disclosureSections count]; i++) {
+        NSDictionary *info = [_disclosureSections objectAtIndex:i];
+        NSButton *header = [info objectForKey:@"header"];
+        NSView *content = [info objectForKey:@"content"];
+        BOOL expanded = [[info objectForKey:@"expanded"] boolValue];
+        float contentHeight = [[info objectForKey:@"contentHeight"] floatValue];
+
+        /* Position header */
+        NSRect hf = [header frame];
+        hf.origin.y = y;
+        hf.origin.x = SECTION_MARGIN;
+        [header setFrame:hf];
+        y += DISC_HEADER_H;
+
+        /* Separator line below header */
+        y += 1;
+
+        if (expanded) {
+            NSRect cf = [content frame];
+            cf.origin.y = y;
+            cf.origin.x = SECTION_MARGIN + DISC_INDENT;
+            cf.size.height = contentHeight;
+            [content setFrame:cf];
+            y += contentHeight + DISC_CONTENT_PAD;
+        }
+
+        y += 6; /* gap between sections */
+    }
+
+    [_settingsDocView setFrame:NSMakeRect(0, 0, _settingsDocWidth, y + SECTION_MARGIN)];
+}
 
 - (NSView *)createSettingsPanel
 {
@@ -234,41 +373,52 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_settingsScrollView setBorderType:NSNoBorder];
     [_settingsScrollView setDrawsBackground:NO];
 
-    float docWidth = LEFT_PANEL_WIDTH - 20; /* account for scroller */
-    float secWidth = docWidth - 2 * SECTION_MARGIN;
-    float fieldWidth = secWidth - LABEL_WIDTH + 2;
+    _settingsDocWidth = LEFT_PANEL_WIDTH - 20;
+    _settingsSecWidth = _settingsDocWidth - 2 * SECTION_MARGIN;
+    _settingsFieldWidth = _settingsSecWidth - LABEL_WIDTH - DISC_INDENT + 2;
 
-    FlippedView *doc = [[FlippedView alloc]
-        initWithFrame:NSMakeRect(0, 0, docWidth, 800)];
-    [doc setAutoresizingMask:NSViewWidthSizable];
+    float secWidth = _settingsSecWidth;
+    float fieldWidth = _settingsFieldWidth;
+    float contentWidth = secWidth - DISC_INDENT;
 
-    float y = SECTION_MARGIN;
+    _settingsDocView = [[FlippedView alloc]
+        initWithFrame:NSMakeRect(0, 0, _settingsDocWidth, 2000)];
+    [_settingsDocView setAutoresizingMask:NSViewWidthSizable];
+
+    FlippedView *doc = (FlippedView *)_settingsDocView;
+    int sectionIdx = 0;
 
     /* ===== General ===== */
     {
-        float boxH = 7 * ROW_HEIGHT + 34;
-        NSBox *box = makeSection(@"General", SECTION_MARGIN, y,
-                                  secWidth, boxH);
-        NSView *c = [box contentView];
-        float iy = 4;
+        NSButton *hdr = makeDisclosureHeader(@"General", self, sectionIdx++);
+        [hdr setFrame:NSMakeRect(SECTION_MARGIN, 0, secWidth, DISC_HEADER_H)];
+        [doc addSubview:hdr];
+
+        FlippedView *c = [[FlippedView alloc]
+            initWithFrame:NSMakeRect(0, 0, contentWidth, 250)];
+        float iy = 0;
 
         _serverNameField = makeEditField(fieldWidth);
         [_serverNameField setStringValue:_serverName];
+        [_serverNameField setToolTip:@"The name displayed to clients and on trackers"];
         iy = addRow(c, @"Server Name:", _serverNameField, iy, fieldWidth);
 
         _descriptionField = makeEditField(fieldWidth);
         [_descriptionField setStringValue:_serverDescription];
+        [_descriptionField setToolTip:@"A short description shown on trackers"];
         iy = addRow(c, @"Description:", _descriptionField, iy, fieldWidth);
 
         _bannerFileField = makeEditField(fieldWidth);
-        _chooseBannerButton = makeButton(@"Browse...", self,
+        [_bannerFileField setToolTip:@"Path to a JPEG banner image (468x60 recommended)"];
+        _chooseBannerButton = makeButton(@"Browse\u2026", self,
                                           @selector(chooseBannerFile:));
         iy = addRowWithButton(c, @"Banner File:", _bannerFileField,
                                _chooseBannerButton, iy, fieldWidth);
 
         _fileRootField = makeEditField(fieldWidth);
         [_fileRootField setStringValue:@"Files"];
-        _chooseFileRootButton = makeButton(@"Browse...", self,
+        [_fileRootField setToolTip:@"Root directory for shared files"];
+        _chooseFileRootButton = makeButton(@"Browse\u2026", self,
                                             @selector(chooseFileRoot:));
         iy = addRowWithButton(c, @"File Root:", _fileRootField,
                                _chooseFileRootButton, iy, fieldWidth);
@@ -277,7 +427,8 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_configDirField setStringValue:_configDir];
         [_configDirField setEditable:NO];
         [_configDirField setFont:[NSFont systemFontOfSize:10.0]];
-        _chooseConfigDirButton = makeButton(@"Change...", self,
+        [_configDirField setToolTip:@"Directory for server configuration files"];
+        _chooseConfigDirButton = makeButton(@"Change\u2026", self,
                                              @selector(chooseConfigDir:));
         iy = addRowWithButton(c, @"Config Dir:", _configDirField,
                                _chooseConfigDirButton, iy, fieldWidth);
@@ -286,7 +437,8 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [agreementField setStringValue:@"Agreement.txt"];
         [agreementField setEditable:NO];
         [agreementField setFont:[NSFont systemFontOfSize:10.0]];
-        NSButton *agreementButton = makeButton(@"Edit...", self,
+        [agreementField setToolTip:@"Text shown to users on first connect"];
+        NSButton *agreementButton = makeButton(@"Edit\u2026", self,
                                                @selector(editAgreementFile:));
         iy = addRowWithButton(c, @"Agreement:", agreementField,
                               agreementButton, iy, fieldWidth);
@@ -297,60 +449,70 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [boardField setStringValue:@"MessageBoard.txt"];
         [boardField setEditable:NO];
         [boardField setFont:[NSFont systemFontOfSize:10.0]];
-        NSButton *boardButton = makeButton(@"Edit...", self,
+        [boardField setToolTip:@"Flat-file message board content"];
+        NSButton *boardButton = makeButton(@"Edit\u2026", self,
                                            @selector(editMessageBoardFile:));
         iy = addRowWithButton(c, @"Message Board:", boardField,
                               boardButton, iy, fieldWidth);
         [boardField release];
         [boardButton release];
 
-        [doc addSubview:box];
-        [box release];
-        y += boxH + 8;
+        float contentH = iy;
+        [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
+        [doc addSubview:c];
+        [self registerDisclosureSection:hdr content:c contentHeight:contentH];
+        [hdr release]; [c release];
     }
 
     /* ===== Network ===== */
     {
-        float boxH = 2 * ROW_HEIGHT + 30;
-        NSBox *box = makeSection(@"Network", SECTION_MARGIN, y,
-                                  secWidth, boxH);
-        NSView *c = [box contentView];
-        float iy = 4;
+        NSButton *hdr = makeDisclosureHeader(@"Network", self, sectionIdx++);
+        [hdr setFrame:NSMakeRect(SECTION_MARGIN, 0, secWidth, DISC_HEADER_H)];
+        [doc addSubview:hdr];
+
+        FlippedView *c = [[FlippedView alloc]
+            initWithFrame:NSMakeRect(0, 0, contentWidth, 100)];
+        float iy = 0;
 
         _portField = makeEditField(70);
         [_portField setStringValue:[NSString stringWithFormat:@"%d", _serverPort]];
+        [_portField setToolTip:@"Main Hotline protocol port (default 5500)"];
         iy = addRow(c, @"Hotline Port:", _portField, iy, 70);
 
-        _bonjourCheckbox = [[NSButton alloc]
-            initWithFrame:NSZeroRect];
+        _bonjourCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
         [_bonjourCheckbox setButtonType:NSButtonTypeSwitch];
         [_bonjourCheckbox setTitle:@"Enable Bonjour"];
         [_bonjourCheckbox setState:NSControlStateValueOn];
-        iy = addCheckbox(c, _bonjourCheckbox, iy);
+        iy = addCheckboxWithHelp(c, _bonjourCheckbox, iy,
+            @"Broadcasts the server on the local network for auto-discovery by Hotline clients.", self);
 
-        [doc addSubview:box];
-        [box release];
-        y += boxH + 8;
+        float contentH = iy;
+        [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
+        [doc addSubview:c];
+        [self registerDisclosureSection:hdr content:c contentHeight:contentH];
+        [hdr release]; [c release];
     }
 
     /* ===== Tracker Registration ===== */
     {
-        float boxH = 170;
-        NSBox *box = makeSection(@"Tracker Registration", SECTION_MARGIN, y,
-                                  secWidth, boxH);
-        NSView *c = [box contentView];
-        float iy = 4;
+        NSButton *hdr = makeDisclosureHeader(@"Tracker Registration", self, sectionIdx++);
+        [hdr setFrame:NSMakeRect(SECTION_MARGIN, 0, secWidth, DISC_HEADER_H)];
+        [doc addSubview:hdr];
+
+        FlippedView *c = [[FlippedView alloc]
+            initWithFrame:NSMakeRect(0, 0, contentWidth, 200)];
+        float iy = 0;
         float listX = LABEL_WIDTH - 4;
         float listW = fieldWidth - ROW_RIGHT_PAD - 12;
         float entryW = listW - 158;
         if (entryW < 180) entryW = 180;
 
-        _trackerCheckbox = [[NSButton alloc]
-            initWithFrame:NSZeroRect];
+        _trackerCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
         [_trackerCheckbox setButtonType:NSButtonTypeSwitch];
         [_trackerCheckbox setTitle:@"Enable Tracker Registration"];
         [_trackerCheckbox setState:NSControlStateValueOff];
-        iy = addCheckbox(c, _trackerCheckbox, iy);
+        iy = addCheckboxWithHelp(c, _trackerCheckbox, iy,
+            @"When enabled, the server periodically announces itself to the public trackers listed below so clients can discover it.", self);
 
         NSScrollView *tsv = [[NSScrollView alloc]
             initWithFrame:NSMakeRect(listX, iy + 2, listW, 78)];
@@ -373,6 +535,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         _newTrackerField = makeEditField(entryW);
         [_newTrackerField setFrame:NSMakeRect(listX, iy + 84, entryW, 22)];
+        [_newTrackerField setToolTip:@"Enter tracker address as host:port"];
         [c addSubview:_newTrackerField];
 
         _addTrackerButton = makeButton(@"Add", self, @selector(addTracker:));
@@ -384,29 +547,33 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_removeTrackerButton setEnabled:NO];
         [c addSubview:_removeTrackerButton];
 
-        [doc addSubview:box];
-        [box release];
-        y += boxH + 8;
+        float contentH = iy + 112;
+        [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
+        [doc addSubview:c];
+        [self registerDisclosureSection:hdr content:c contentHeight:contentH];
+        [hdr release]; [c release];
     }
 
     /* ===== Files ===== */
     {
-        float boxH = 170;
-        NSBox *box = makeSection(@"Files", SECTION_MARGIN, y,
-                                  secWidth, boxH);
-        NSView *c = [box contentView];
-        float iy = 4;
+        NSButton *hdr = makeDisclosureHeader(@"Files", self, sectionIdx++);
+        [hdr setFrame:NSMakeRect(SECTION_MARGIN, 0, secWidth, DISC_HEADER_H)];
+        [doc addSubview:hdr];
+
+        FlippedView *c = [[FlippedView alloc]
+            initWithFrame:NSMakeRect(0, 0, contentWidth, 200)];
+        float iy = 0;
         float listX = LABEL_WIDTH - 4;
         float listW = fieldWidth - ROW_RIGHT_PAD - 12;
         float entryW = listW - 158;
         if (entryW < 180) entryW = 180;
 
-        _preserveForkCheckbox = [[NSButton alloc]
-            initWithFrame:NSZeroRect];
+        _preserveForkCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
         [_preserveForkCheckbox setButtonType:NSButtonTypeSwitch];
         [_preserveForkCheckbox setTitle:@"Preserve Resource Forks"];
         [_preserveForkCheckbox setState:NSControlStateValueOff];
-        iy = addCheckbox(c, _preserveForkCheckbox, iy);
+        iy = addCheckboxWithHelp(c, _preserveForkCheckbox, iy,
+            @"Preserves classic Mac HFS resource fork data when files are uploaded or downloaded. Required for legacy Mac applications and documents.", self);
 
         NSScrollView *isv = [[NSScrollView alloc]
             initWithFrame:NSMakeRect(listX, iy + 2, listW, 78)];
@@ -429,6 +596,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         _newIgnoreFileField = makeEditField(entryW);
         [_newIgnoreFileField setFrame:NSMakeRect(listX, iy + 84, entryW, 22)];
+        [_newIgnoreFileField setToolTip:@"File name pattern to exclude from listings"];
         [c addSubview:_newIgnoreFileField];
 
         _addIgnoreFileButton = makeButton(@"Add", self, @selector(addIgnoreFilePattern:));
@@ -440,18 +608,22 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_removeIgnoreFileButton setEnabled:NO];
         [c addSubview:_removeIgnoreFileButton];
 
-        [doc addSubview:box];
-        [box release];
-        y += boxH + 8;
+        float contentH = iy + 112;
+        [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
+        [doc addSubview:c];
+        [self registerDisclosureSection:hdr content:c contentHeight:contentH];
+        [hdr release]; [c release];
     }
 
-    /* ===== Limits ===== */
+    /* ===== News ===== */
     {
-        float boxH = 2 * ROW_HEIGHT + 34;
-        NSBox *box = makeSection(@"News", SECTION_MARGIN, y,
-                                  secWidth, boxH);
-        NSView *c = [box contentView];
-        float iy = 4;
+        NSButton *hdr = makeDisclosureHeader(@"News", self, sectionIdx++);
+        [hdr setFrame:NSMakeRect(SECTION_MARGIN, 0, secWidth, DISC_HEADER_H)];
+        [doc addSubview:hdr];
+
+        FlippedView *c = [[FlippedView alloc]
+            initWithFrame:NSMakeRect(0, 0, contentWidth, 100)];
+        float iy = 0;
 
         _newsDateFormatPopup = [[NSPopUpButton alloc]
             initWithFrame:NSMakeRect(0, 0, 220, 24) pullsDown:NO];
@@ -461,6 +633,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_newsDateFormatPopup addItemWithTitle:@"2006-01-02 15:04"];
         [_newsDateFormatPopup addItemWithTitle:@"Mon Jan 2 15:04:05"];
         [_newsDateFormatPopup selectItemAtIndex:0];
+        [_newsDateFormatPopup setToolTip:@"Timestamp format for news posts"];
         NSTextField *dateFmtLabel = makeLabel(@"Date Format:", 11.0, NO);
         [dateFmtLabel setAlignment:NSTextAlignmentRight];
         [dateFmtLabel setFrame:NSMakeRect(6, iy + 3, LABEL_WIDTH - 12, 17)];
@@ -472,57 +645,91 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         _newsDelimiterField = makeEditField(fieldWidth);
         [_newsDelimiterField setStringValue:@"__________________________________________________________"];
+        [_newsDelimiterField setToolTip:@"Text separator between news posts"];
         iy = addRow(c, @"Delimiter:", _newsDelimiterField, iy, fieldWidth);
 
-        [doc addSubview:box];
-        [box release];
-        y += boxH + 8;
+        float contentH = iy;
+        [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
+        [doc addSubview:c];
+        [self registerDisclosureSection:hdr content:c contentHeight:contentH];
+        [hdr release]; [c release];
     }
 
-    /* ===== Security / HOPE ===== */
+    /* ===== Security (HOPE) ===== */
     {
-        float boxH = 3 * ROW_HEIGHT + 40;
-        NSBox *box = makeSection(@"Security (HOPE)", SECTION_MARGIN, y,
-                                  secWidth, boxH);
-        NSView *c = [box contentView];
-        float iy = 4;
+        NSButton *hdr = makeDisclosureHeader(@"Security (HOPE)", self, sectionIdx++);
+        [hdr setFrame:NSMakeRect(SECTION_MARGIN, 0, secWidth, DISC_HEADER_H)];
+        [doc addSubview:hdr];
+
+        FlippedView *c = [[FlippedView alloc]
+            initWithFrame:NSMakeRect(0, 0, contentWidth, 250)];
+        float iy = 0;
 
         _hopeCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
         [_hopeCheckbox setButtonType:NSButtonTypeSwitch];
         [_hopeCheckbox setTitle:@"Enable HOPE Encryption"];
         [_hopeCheckbox setState:NSControlStateValueOff];
-        iy = addCheckbox(c, _hopeCheckbox, iy);
+        iy = addCheckboxWithHelp(c, _hopeCheckbox, iy,
+            @"HOPE replaces plaintext password login with a challenge-response MAC handshake. After authentication, the transaction channel (chat, commands, file listings) is encrypted with RC4 stream cipher. File transfers use a separate connection and are NOT encrypted by HOPE alone.", self);
 
         _hopeLegacyCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
         [_hopeLegacyCheckbox setButtonType:NSButtonTypeSwitch];
         [_hopeLegacyCheckbox setTitle:@"Legacy Mode (allow weak algorithms)"];
         [_hopeLegacyCheckbox setState:NSControlStateValueOff];
-        iy = addCheckbox(c, _hopeLegacyCheckbox, iy);
+        iy = addCheckboxWithHelp(c, _hopeLegacyCheckbox, iy,
+            @"Allows older Hotline clients that only support weak authentication methods (INVERSE, bare MD5, bare SHA1) to connect. These algorithms provide minimal security and should only be enabled for backwards compatibility.", self);
 
         _hopePrefixField = makeEditField(120);
         [_hopePrefixField setStringValue:@"[E2E]"];
+        [_hopePrefixField setToolTip:@"File/folder name prefix that marks content as E2E-only"];
         iy = addRow(c, @"E2E Prefix:", _hopePrefixField, iy, 120);
+        /* Place (?) inline after the field */
+        {
+            NSButton *hb = [[NSButton alloc]
+                initWithFrame:NSMakeRect([c frame].size.width - 21 - ROW_RIGHT_PAD, iy - ROW_HEIGHT + 2, 21, 21)];
+            [hb setBezelStyle:NSBezelStyleHelpButton];
+            [hb setTitle:@""];
+            [hb setToolTip:@"Any file or folder whose name begins with this prefix will be hidden from clients that have not established an encrypted HOPE session. Use this to gate sensitive content behind encryption."];
+            [hb setTarget:self];
+            [hb setAction:@selector(showHelpPopover:)];
+            [hb setAccessibilityLabel:[hb toolTip]];
+            [c addSubview:hb];
+            [hb release];
+        }
 
-        [doc addSubview:box];
-        [box release];
-        y += boxH + 8;
+        _hopeRequireTLSCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_hopeRequireTLSCheckbox setButtonType:NSButtonTypeSwitch];
+        [_hopeRequireTLSCheckbox setTitle:@"Require TLS for E2E file transfers"];
+        [_hopeRequireTLSCheckbox setState:NSControlStateValueOff];
+        iy = addCheckboxWithHelp(c, _hopeRequireTLSCheckbox, iy,
+            @"When enabled, clients must connect via TLS to see E2E-prefixed content. This ensures that file transfers (which use a separate TCP connection) are also encrypted, not just the HOPE transaction channel.", self);
+
+        float contentH = iy;
+        [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
+        [doc addSubview:c];
+        [self registerDisclosureSection:hdr content:c contentHeight:contentH];
+        [hdr release]; [c release];
     }
 
     /* ===== TLS Encryption ===== */
     {
-        float boxH = 4 * ROW_HEIGHT + 44;
-        NSBox *box = makeSection(@"TLS Encryption", SECTION_MARGIN, y,
-                                  secWidth, boxH);
-        NSView *c = [box contentView];
-        float iy = 4;
+        NSButton *hdr = makeDisclosureHeader(@"TLS Encryption", self, sectionIdx++);
+        [hdr setFrame:NSMakeRect(SECTION_MARGIN, 0, secWidth, DISC_HEADER_H)];
+        [doc addSubview:hdr];
+
+        FlippedView *c = [[FlippedView alloc]
+            initWithFrame:NSMakeRect(0, 0, contentWidth, 150)];
+        float iy = 0;
 
         _tlsCertField = makeEditField(fieldWidth - 80);
+        [_tlsCertField setToolTip:@"Path to PEM-encoded TLS certificate"];
         _chooseTLSCertButton = makeButton(@"Choose\u2026", self,
                                             @selector(chooseTLSCert:));
         iy = addRowWithButton(c, @"Certificate:", _tlsCertField,
                               _chooseTLSCertButton, iy, fieldWidth);
 
         _tlsKeyField = makeEditField(fieldWidth - 80);
+        [_tlsKeyField setToolTip:@"Path to PEM-encoded TLS private key"];
         _chooseTLSKeyButton = makeButton(@"Choose\u2026", self,
                                           @selector(chooseTLSKey:));
         iy = addRowWithButton(c, @"Private Key:", _tlsKeyField,
@@ -530,71 +737,114 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         _tlsPortField = makeEditField(70);
         [_tlsPortField setStringValue:@"5600"];
+        [_tlsPortField setToolTip:@"TLS listener port (default 5600)"];
         iy = addRow(c, @"TLS Port:", _tlsPortField, iy, 70);
 
+        /* Generate self-signed certificate button */
+        _generateTLSCertButton = makeButton(@"Generate Self-Signed\u2026", self,
+                                             @selector(generateSelfSignedCert:));
+        [_generateTLSCertButton setToolTip:@"Generate a self-signed TLS certificate and private key"];
+        {
+            NSRect bf = [_generateTLSCertButton frame];
+            [_generateTLSCertButton setFrame:NSMakeRect(LABEL_WIDTH - 4, iy, bf.size.width, 24)];
+        }
+        [c addSubview:_generateTLSCertButton];
+        {
+            NSButton *hb = [[NSButton alloc]
+                initWithFrame:NSMakeRect([c frame].size.width - 21 - ROW_RIGHT_PAD, iy, 21, 21)];
+            [hb setBezelStyle:NSBezelStyleHelpButton];
+            [hb setTitle:@""];
+            [hb setToolTip:@"Creates a self-signed RSA 2048-bit certificate valid for 10 years and saves it to your config directory. Suitable for encrypting connections but will show a certificate warning to clients that verify certificates."];
+            [hb setTarget:self];
+            [hb setAction:@selector(showHelpPopover:)];
+            [hb setAccessibilityLabel:[hb toolTip]];
+            [c addSubview:hb];
+            [hb release];
+        }
+        iy += ROW_HEIGHT;
+
         _tlsStatusLabel = [[NSTextField alloc] initWithFrame:
-                            NSMakeRect(LABEL_WIDTH, iy, fieldWidth, 18)];
+                            NSMakeRect(LABEL_WIDTH - 4, iy, fieldWidth, 18)];
         [_tlsStatusLabel setStringValue:@"Provide both a certificate and key to enable TLS"];
         [_tlsStatusLabel setBezeled:NO];
         [_tlsStatusLabel setDrawsBackground:NO];
         [_tlsStatusLabel setEditable:NO];
         [_tlsStatusLabel setSelectable:NO];
-        [_tlsStatusLabel setFont:[NSFont systemFontOfSize:11]];
+        [_tlsStatusLabel setFont:[NSFont systemFontOfSize:10.0]];
         [_tlsStatusLabel setTextColor:[NSColor grayColor]];
         [c addSubview:_tlsStatusLabel];
+        iy += 18;
 
-        [doc addSubview:box];
-        [box release];
-        y += boxH + 8;
+        float contentH = iy;
+        [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
+        [doc addSubview:c];
+        [self registerDisclosureSection:hdr content:c contentHeight:contentH];
+        [hdr release]; [c release];
     }
 
     /* ===== Limits ===== */
     {
-        float boxH = 3 * ROW_HEIGHT + 42;
-        NSBox *box = makeSection(@"Limits", SECTION_MARGIN, y,
-                                  secWidth, boxH);
-        NSView *c = [box contentView];
-        float iy = 4;
+        NSButton *hdr = makeDisclosureHeader(@"Limits", self, sectionIdx++);
+        [hdr setFrame:NSMakeRect(SECTION_MARGIN, 0, secWidth, DISC_HEADER_H)];
+        [doc addSubview:hdr];
+
+        FlippedView *c = [[FlippedView alloc]
+            initWithFrame:NSMakeRect(0, 0, contentWidth, 120)];
+        float iy = 0;
 
         _maxDownloadsField = makeEditField(60);
         [_maxDownloadsField setIntValue:0];
+        [_maxDownloadsField setToolTip:@"Maximum simultaneous downloads across all clients"];
         iy = addRow(c, @"Max Downloads:", _maxDownloadsField, iy, 60);
 
         _maxDLPerClientField = makeEditField(60);
         [_maxDLPerClientField setIntValue:0];
+        [_maxDLPerClientField setToolTip:@"Maximum simultaneous downloads per client"];
         iy = addRow(c, @"Max DL/Client:", _maxDLPerClientField, iy, 60);
 
         _maxConnPerIPField = makeEditField(60);
         [_maxConnPerIPField setIntValue:0];
+        [_maxConnPerIPField setToolTip:@"Maximum concurrent connections from a single IP"];
         iy = addRow(c, @"Max Conn/IP:", _maxConnPerIPField, iy, 60);
+        /* Place (?) inline after the last field */
+        {
+            NSButton *hb = [[NSButton alloc]
+                initWithFrame:NSMakeRect([c frame].size.width - 21 - ROW_RIGHT_PAD, iy - ROW_HEIGHT + 2, 21, 21)];
+            [hb setBezelStyle:NSBezelStyleHelpButton];
+            [hb setTitle:@""];
+            [hb setToolTip:@"Set any limit to 0 to disable it (unlimited). These limits help prevent resource exhaustion from excessive simultaneous transfers or connections."];
+            [hb setTarget:self];
+            [hb setAction:@selector(showHelpPopover:)];
+            [hb setAccessibilityLabel:[hb toolTip]];
+            [c addSubview:hb];
+            [hb release];
+        }
 
-        /* Hint text */
-        NSTextField *hint = makeLabel(@"Set to 0 for unlimited", 10.0, NO);
-        [hint setTextColor:[NSColor grayColor]];
-        [hint setFrame:NSMakeRect(LABEL_WIDTH - 4, iy, 150, 14)];
-        [c addSubview:hint];
-        [hint release];
-
-        [doc addSubview:box];
-        [box release];
-        y += boxH + 8;
+        float contentH = iy;
+        [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
+        [doc addSubview:c];
+        [self registerDisclosureSection:hdr content:c contentHeight:contentH];
+        [hdr release]; [c release];
     }
 
     /* ===== Monitoring ===== */
     {
-        float boxH = ROW_HEIGHT + 32;
-        NSBox *box = makeSection(@"Monitoring", SECTION_MARGIN, y,
-                                  secWidth, boxH);
-        NSView *c = [box contentView];
-        float iy = 4;
+        NSButton *hdr = makeDisclosureHeader(@"Monitoring", self, sectionIdx++);
+        [hdr setFrame:NSMakeRect(SECTION_MARGIN, 0, secWidth, DISC_HEADER_H)];
+        [doc addSubview:hdr];
 
-        NSTextField *lbl = makeLabel(@"Polling Rate:", 12.0, NO);
-        [lbl setFrame:NSMakeRect(6, iy + 2, LABEL_WIDTH, 18)];
+        FlippedView *c = [[FlippedView alloc]
+            initWithFrame:NSMakeRect(0, 0, contentWidth, 60)];
+        float iy = 0;
+
+        NSTextField *lbl = makeLabel(@"Polling Rate:", 11.0, NO);
+        [lbl setAlignment:NSTextAlignmentRight];
+        [lbl setFrame:NSMakeRect(6, iy + 2, LABEL_WIDTH - 12, 17)];
         [c addSubview:lbl];
         [lbl release];
 
         _pollingRatePopup = [[NSPopUpButton alloc]
-            initWithFrame:NSMakeRect(FIELD_X, iy, 140, 22) pullsDown:NO];
+            initWithFrame:NSMakeRect(LABEL_WIDTH - 4, iy, 140, 22) pullsDown:NO];
         [_pollingRatePopup addItemWithTitle:@"1 second"];
         [_pollingRatePopup addItemWithTitle:@"5 seconds"];
         [_pollingRatePopup addItemWithTitle:@"10 seconds"];
@@ -605,21 +855,38 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_pollingRatePopup addItemWithTitle:@"1 hour"];
         [_pollingRatePopup setTarget:self];
         [_pollingRatePopup setAction:@selector(pollingRateChanged:)];
+        [_pollingRatePopup setToolTip:@"How often to refresh online users and statistics"];
         [c addSubview:_pollingRatePopup];
+        iy += ROW_HEIGHT;
 
         /* Select saved value */
         int idx = [self pollingIntervalToIndex:_pollingInterval];
         [_pollingRatePopup selectItemAtIndex:idx];
 
-        [doc addSubview:box];
-        [box release];
-        y += boxH + 8;
+        /* Place (?) inline after the popup */
+        {
+            NSButton *hb = [[NSButton alloc]
+                initWithFrame:NSMakeRect([c frame].size.width - 21 - ROW_RIGHT_PAD, iy - ROW_HEIGHT + 2, 21, 21)];
+            [hb setBezelStyle:NSBezelStyleHelpButton];
+            [hb setTitle:@""];
+            [hb setToolTip:@"Controls how frequently the GUI polls the server process for online users, transfer statistics, and status updates. Lower intervals give more responsive updates but use slightly more CPU."];
+            [hb setTarget:self];
+            [hb setAction:@selector(showHelpPopover:)];
+            [hb setAccessibilityLabel:[hb toolTip]];
+            [c addSubview:hb];
+            [hb release];
+        }
+
+        float contentH = iy;
+        [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
+        [doc addSubview:c];
+        [self registerDisclosureSection:hdr content:c contentHeight:contentH];
+        [hdr release]; [c release];
     }
 
-    /* Size the document view */
-    [doc setFrame:NSMakeRect(0, 0, docWidth, y + SECTION_MARGIN)];
+    /* Initial layout */
+    [self relayoutSettings];
     [_settingsScrollView setDocumentView:doc];
-    [doc release];
     [outer addSubview:_settingsScrollView];
 
     return [outer autorelease];

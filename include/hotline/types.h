@@ -1,9 +1,6 @@
 /*
  * types.h - Foundation types for the Hotline protocol
  *
- * Maps to: hotline/transaction.go (TranType), hotline/field.go (FieldType),
- *          hotline/client_manager.go (ClientID), hotline/chat.go (ChatID)
- *
  * All multi-byte protocol values are big-endian (network byte order),
  * which is native on PowerPC. No byte-swapping needed except in
  * file_resume_data.c (little-endian RFLT format).
