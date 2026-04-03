@@ -180,7 +180,8 @@ Granular per-account permissions including:
 
 ### Compatibility
 
-- Runs on macOS 10.11+ (modern branch) and Mac OS X 10.4 Tiger (main branch)
+- Runs on macOS 10.11+ (modern branch), Mac OS X 10.4 Tiger (main branch), and Linux (x86_64)
+- Docker support for Linux, macOS, and Windows deployment
 - Works with Hotline Navigator, the mierau Swift client, and classic Hotline clients
 - FILP file transfer format with INFO and DATA forks
 - Hotline 1.8+ protocol (version 190)
@@ -188,7 +189,19 @@ Granular per-account permissions including:
 - Compatible account and news file formats (YAML-based)
 
 
-## Building
+## Deployment
+
+Lemoniscate runs on macOS (native or Docker), Linux (native or Docker), and Windows (Docker).
+
+| Platform | Native | Docker |
+|----------|--------|--------|
+| macOS | Build with `make all` | [Docker on macOS](docs/DOCKER-MACOS.md) |
+| Linux | [Build from source](docs/LINUX.md) | [Docker on Linux](docs/DOCKER-LINUX.md) |
+| Windows | -- | [Docker on Windows](docs/DOCKER-WINDOWS.md) |
+
+A complete configuration reference with all options is in [`config/config.yaml.example`](config/config.yaml.example).
+
+## Building (macOS)
 
 On modern macOS for development and testing:
 
@@ -208,18 +221,38 @@ OBJCFLAGS += -mmacosx-version-min=10.4 -I/usr/local/include
 YAML_LDFLAGS = -L/usr/local/lib -lyaml
 ```
 
-Dependencies:
-- CoreFoundation (ships with Tiger)
-- Foundation (ships with Tiger)
-- AppKit (for GUI)
-- pthreads (ships with Tiger)
-- libyaml (statically linked for distribution -- no runtime Homebrew dependencies in signed builds)
+## Building (Linux)
+
+```bash
+sudo apt install build-essential libssl-dev libyaml-dev   # Debian/Ubuntu
+make
+```
+
+See [docs/LINUX.md](docs/LINUX.md) for other distributions, systemd setup, and Docker.
+
+## Dependencies
+
+**macOS:**
+- CoreFoundation, Security, CoreServices (ship with macOS)
+- AppKit (for GUI only)
+- pthreads
+- libyaml
+
+**Linux:**
+- OpenSSL (libssl, libcrypto)
+- libyaml
+- pthreads
 
 ## Documentation
 
 - [Server reference](docs/SERVER.md)
 - [GUI reference](docs/GUI.md)
 - [Security](docs/SECURITY.md)
+- [Linux deployment](docs/LINUX.md)
+- [Docker on Linux](docs/DOCKER-LINUX.md)
+- [Docker on macOS](docs/DOCKER-MACOS.md)
+- [Docker on Windows](docs/DOCKER-WINDOWS.md)
+- [Configuration reference](config/config.yaml.example)
 - [Docs index](docs/README.md)
 
 ## Related projects

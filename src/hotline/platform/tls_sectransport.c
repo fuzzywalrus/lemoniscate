@@ -1,11 +1,11 @@
 /*
- * tls.c - TLS transport abstraction (SecureTransport)
- *
- * Maps to: Go crypto/tls usage in hotline/server.go
+ * tls_sectransport.c - macOS TLS backend using SecureTransport
  *
  * Uses Apple's SecureTransport framework to provide TLS for
  * the Hotline server. PEM certificates and keys are loaded
  * via SecItemImport().
+ *
+ * This file is only compiled on macOS (Darwin).
  */
 
 #include "hotline/tls.h"
@@ -16,9 +16,8 @@
 #include <stdio.h>
 #include <sys/types.h>
 
-#ifdef __APPLE__
 /* Suppress deprecation warnings for SecKeychain APIs —
- * needed for PEM→identity loading; still functional on modern macOS. */
+ * needed for PEM->identity loading; still functional on modern macOS. */
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
@@ -548,81 +547,3 @@ void hl_conn_free(hl_tls_conn_t *conn)
 }
 
 #pragma clang diagnostic pop
-
-#else /* !__APPLE__ */
-
-/* Stub implementations for non-Apple platforms */
-
-int hl_tls_server_ctx_init(hl_tls_server_ctx_t *ctx,
-                            const char *cert_path,
-                            const char *key_path)
-{
-    (void)ctx; (void)cert_path; (void)key_path;
-    fprintf(stderr, "[TLS] Not supported on this platform\n");
-    return -1;
-}
-
-void hl_tls_server_ctx_free(hl_tls_server_ctx_t *ctx) { (void)ctx; }
-
-hl_tls_conn_t *hl_tls_accept(hl_tls_server_ctx_t *ctx, int fd)
-{
-    (void)ctx; close(fd); return NULL;
-}
-
-hl_tls_conn_t *hl_conn_wrap_plain(int fd)
-{
-    hl_tls_conn_t *conn = (hl_tls_conn_t *)calloc(1, sizeof(hl_tls_conn_t));
-    if (!conn) return NULL;
-    conn->fd = fd;
-    conn->ssl_ctx = NULL;
-    return conn;
-}
-
-ssize_t hl_conn_read(hl_tls_conn_t *conn, uint8_t *buf, size_t len)
-{
-    if (!conn) return -1;
-    ssize_t r;
-    do { r = read(conn->fd, buf, len); } while (r < 0 && errno == EINTR);
-    return r;
-}
-
-int hl_conn_read_full(hl_tls_conn_t *conn, uint8_t *buf, size_t n)
-{
-    if (!conn) return -1;
-    size_t total = 0;
-    while (total < n) {
-        ssize_t r = read(conn->fd, buf + total, n - total);
-        if (r < 0) { if (errno == EINTR) continue; return -1; }
-        if (r == 0) return -1;
-        total += (size_t)r;
-    }
-    return 0;
-}
-
-int hl_conn_write_all(hl_tls_conn_t *conn, const uint8_t *buf, size_t n)
-{
-    if (!conn) return -1;
-    size_t total = 0;
-    while (total < n) {
-        ssize_t w = write(conn->fd, buf + total, n - total);
-        if (w < 0) { if (errno == EINTR) continue; return -1; }
-        if (w == 0) return -1;
-        total += (size_t)w;
-    }
-    return 0;
-}
-
-void hl_conn_close(hl_tls_conn_t *conn)
-{
-    if (!conn) return;
-    if (conn->fd >= 0) close(conn->fd);
-    free(conn);
-}
-
-void hl_conn_free(hl_tls_conn_t *conn)
-{
-    if (!conn) return;
-    free(conn);
-}
-
-#endif /* __APPLE__ */

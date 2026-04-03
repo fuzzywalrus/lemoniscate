@@ -1,9 +1,18 @@
 # Makefile for mobius-c (Lemoniscate)
 #
+# Platform detection:
+#   Darwin (macOS): kqueue, SecureTransport, CommonCrypto, CoreFoundation
+#   Linux:          epoll, OpenSSL, lookup table encoding
+#
 # Modern macOS (10.13+): CC = cc (default)
 # Tiger (10.4 PPC):      uncomment Tiger-specific flags below
 
 CC ?= cc
+PLATFORM := $(shell uname -s)
+
+# --- Platform-specific flags ---
+
+ifeq ($(PLATFORM),Darwin)
 
 # Detect Homebrew prefix (arm64 vs x86_64)
 UNAME_M := $(shell uname -m)
@@ -21,6 +30,12 @@ CFLAGS = -std=c11 -Wall -Wextra -pedantic -O2 \
 
 YAML_LDFLAGS = $(HOMEBREW_PREFIX)/lib/libyaml.a
 
+LDFLAGS = -framework CoreFoundation \
+          -framework Foundation \
+          -framework Security \
+          -framework CoreServices \
+          -lpthread
+
 # Obj-C flags (no -std= flag - Obj-C uses its own standard)
 OBJCFLAGS = -Wall -Wextra -O2 \
             -mmacosx-version-min=10.11 \
@@ -34,24 +49,48 @@ OBJCFLAGS = -Wall -Wextra -O2 \
 # OBJCFLAGS = -Wall -Wextra -O2 -mmacosx-version-min=10.4 -I./include -I/usr/local/include -DTARGET_OS_MAC=1
 # YAML_LDFLAGS = -L/usr/local/lib -lyaml
 
-LDFLAGS = -framework CoreFoundation \
-          -framework Foundation \
-          -framework Security \
-          -lpthread
+# macOS platform backends
+PLATFORM_SRCS = \
+	src/hotline/platform/event_kqueue.c \
+	src/hotline/platform/tls_sectransport.c \
+	src/hotline/platform/crypto_commoncrypto.c \
+	src/hotline/platform/encoding_cf.c
 
-# CoreServices needed for Bonjour (dns_sd.h)
-LDFLAGS += -framework CoreServices
+# Test link flags (macOS needs frameworks)
+TEST_LDFLAGS = -framework CoreFoundation -framework Security -framework CoreServices -lpthread
 
-# --- Source files ---
+else ifeq ($(PLATFORM),Linux)
 
-# Phase 1: C wire format library
-HOTLINE_C_SRCS = \
+CFLAGS = -std=c11 -Wall -Wextra -pedantic -O2 \
+         -D_GNU_SOURCE \
+         -I./include
+
+YAML_LDFLAGS = -lyaml
+
+LDFLAGS = -lssl -lcrypto -lyaml -lpthread
+
+# Linux platform backends
+PLATFORM_SRCS = \
+	src/hotline/platform/event_epoll.c \
+	src/hotline/platform/tls_openssl.c \
+	src/hotline/platform/crypto_openssl.c \
+	src/hotline/platform/encoding_table.c
+
+# Test link flags (Linux needs OpenSSL)
+TEST_LDFLAGS = -lssl -lcrypto -lpthread
+
+else
+$(error Unsupported platform: $(PLATFORM). Supported: Darwin, Linux)
+endif
+
+# --- Source files (platform-independent) ---
+
+HOTLINE_COMMON_SRCS = \
 	src/hotline/field.c \
 	src/hotline/transaction.c \
 	src/hotline/handshake.c \
 	src/hotline/user.c \
 	src/hotline/time_conv.c \
-	src/hotline/encoding.c \
 	src/hotline/file_resume_data.c \
 	src/hotline/config.c \
 	src/hotline/logger.c \
@@ -72,18 +111,19 @@ HOTLINE_C_SRCS = \
 	src/hotline/bonjour.c \
 	src/hotline/tracker.c \
 	src/hotline/password.c \
-	src/hotline/hope.c \
-	src/hotline/tls.c
+	src/hotline/hope.c
 
+# Combined C sources: common + platform
+HOTLINE_C_SRCS = $(HOTLINE_COMMON_SRCS) $(PLATFORM_SRCS)
 HOTLINE_C_OBJS = $(HOTLINE_C_SRCS:.c=.o)
 
-# Phase 2: Obj-C client library
+# Phase 2: Obj-C client library (macOS only)
 HOTLINE_OBJC_SRCS = \
 	src/hotline/client.m
 
 HOTLINE_OBJC_OBJS = $(HOTLINE_OBJC_SRCS:.m=.o)
 
-# All hotline library objects
+# All hotline library objects (macOS only — includes Obj-C)
 HOTLINE_OBJS = $(HOTLINE_C_OBJS) $(HOTLINE_OBJC_OBJS)
 
 # Phase 4: Server application (persistence layer)
@@ -109,7 +149,7 @@ TEST_OBJC_OBJS = $(TEST_OBJC_SRCS:.m=.o)
 
 # --- Targets ---
 
-# GUI sources (Obj-C, AppKit)
+# GUI sources (Obj-C, AppKit — macOS only)
 GUI_OBJC_SRCS = \
 	src/gui/main.m \
 	src/gui/AppController.m \
@@ -133,9 +173,13 @@ APP_SKIP_ARCH_CHECK ?= 0
 
 .PHONY: all clean test test-wire test-client gui app
 
+ifeq ($(PLATFORM),Darwin)
 all: libhotline.a lemoniscate $(SERVER_COMPAT_BIN)
+else
+all: lemoniscate
+endif
 
-# Static library (C wire format + Obj-C client)
+# Static library (C wire format + Obj-C client — macOS only)
 libhotline.a: $(HOTLINE_OBJS)
 	ar rcs $@ $^
 	@echo "Built libhotline.a (C wire format + Obj-C client)"
@@ -143,26 +187,29 @@ libhotline.a: $(HOTLINE_OBJS)
 # Server binary
 lemoniscate: $(HOTLINE_C_OBJS) $(MOBIUS_OBJS) src/main.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(YAML_LDFLAGS)
-	@echo "Built lemoniscate server"
+	@echo "Built lemoniscate server ($(PLATFORM))"
 
-# Compatibility alias used by MobiusAdmin launcher expectations
+# Compatibility alias used by MobiusAdmin launcher expectations (macOS only)
 $(SERVER_COMPAT_BIN): lemoniscate
 	cp lemoniscate $(SERVER_COMPAT_BIN)
 	chmod +x $(SERVER_COMPAT_BIN)
 	@echo "Built $(SERVER_COMPAT_BIN) compatibility binary"
 
-# Phase 1 wire format tests (C only, no Foundation needed)
+# Phase 1 wire format tests (C only)
 test-wire: $(TEST_C_OBJS) $(HOTLINE_C_OBJS)
-	$(CC) $(CFLAGS) -o test_runner $^ -framework CoreFoundation -lpthread
+	$(CC) $(CFLAGS) -o test_runner $^ $(TEST_LDFLAGS)
 	./test_runner
 
-# Phase 2 client tests (Obj-C, needs Foundation)
+# Phase 2 client tests (Obj-C, macOS only)
+ifeq ($(PLATFORM),Darwin)
 test-client: $(TEST_OBJC_OBJS) $(HOTLINE_OBJS)
 	$(CC) $(OBJCFLAGS) -o test_client $^ $(LDFLAGS)
 	./test_client
 
-# Run all tests
 test: test-wire test-client
+else
+test: test-wire
+endif
 
 # --- Pattern rules ---
 
@@ -172,12 +219,12 @@ test: test-wire test-client
 %.o: %.m
 	$(CC) $(OBJCFLAGS) -c -o $@ $<
 
-# GUI binary (links against AppKit for the admin interface)
+# GUI binary (links against AppKit — macOS only)
 gui: $(GUI_OBJC_OBJS)
 	$(CC) $(OBJCFLAGS) -o lemoniscate-gui $^ $(GUI_LDFLAGS)
 	@echo "Built lemoniscate-gui"
 
-# App bundle: Lemoniscate.app containing server binary + GUI
+# App bundle: Lemoniscate.app containing server binary + GUI (macOS only)
 app: lemoniscate $(SERVER_COMPAT_BIN) gui
 	@if [ "$(APP_SKIP_ARCH_CHECK)" != "1" ]; then \
 		server_arch=`file lemoniscate | grep -Eo 'ppc64|ppc|x86_64|arm64|i386' | head -n1`; \
@@ -207,8 +254,8 @@ app: lemoniscate $(SERVER_COMPAT_BIN) gui
 	@echo "  GUI binary:    $(APP_MACOS)/Lemoniscate"
 
 clean:
-	rm -f $(HOTLINE_OBJS) $(MOBIUS_OBJS) $(TEST_C_OBJS) $(TEST_OBJC_OBJS) \
-	      $(GUI_OBJC_OBJS) \
+	rm -f $(HOTLINE_C_OBJS) $(HOTLINE_OBJC_OBJS) $(MOBIUS_OBJS) \
+	      $(TEST_C_OBJS) $(TEST_OBJC_OBJS) $(GUI_OBJC_OBJS) \
 	      libhotline.a lemoniscate $(SERVER_COMPAT_BIN) lemoniscate-gui test_runner test_client src/main.o
 	rm -rf $(APP_BUNDLE)
 

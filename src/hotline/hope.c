@@ -3,15 +3,14 @@
  *
  * Server-side HOPE: MAC-based authentication and RC4 transport encryption.
  *
- * Uses CommonCrypto for SHA-1 and MD5 hash primitives (available on Tiger 10.4+).
+ * Uses platform crypto abstraction for SHA-1 and MD5 hash primitives.
  * RC4 is implemented manually for guaranteed Tiger compatibility.
- * HMAC is implemented manually using the standard HMAC construction to avoid
- * reliance on CommonCrypto/CommonHMAC.h availability on all Tiger builds.
+ * HMAC is implemented manually using the standard HMAC construction.
  */
 
 #include "hotline/hope.h"
 #include "hotline/server.h"
-#include <CommonCrypto/CommonDigest.h>
+#include "hotline/platform/platform_crypto.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -90,7 +89,7 @@ void hl_rc4_process(hl_rc4_t *rc4, uint8_t *data, size_t len)
 }
 
 /* ====================================================================
- * HMAC implementation using CommonCrypto hash primitives
+ * HMAC implementation using platform crypto hash primitives
  *
  * HMAC(K, m) = H((K' ^ opad) || H((K' ^ ipad) || m))
  * where K' = H(K) if len(K) > block_size, else K zero-padded
@@ -98,23 +97,20 @@ void hl_rc4_process(hl_rc4_t *rc4, uint8_t *data, size_t len)
  * ==================================================================== */
 
 #define SHA1_BLOCK_SIZE   64
-#define SHA1_DIGEST_SIZE  CC_SHA1_DIGEST_LENGTH   /* 20 */
+#define SHA1_DIGEST_SIZE  HL_SHA1_DIGEST_LENGTH   /* 20 */
 #define MD5_BLOCK_SIZE    64
-#define MD5_DIGEST_SIZE   CC_MD5_DIGEST_LENGTH    /* 16 */
+#define MD5_DIGEST_SIZE   HL_MD5_DIGEST_LENGTH    /* 16 */
 
 static void hmac_sha1(const uint8_t *key, size_t key_len,
                       const uint8_t *data, size_t data_len,
                       uint8_t *out)
 {
     uint8_t k_prime[SHA1_BLOCK_SIZE];
-    CC_SHA1_CTX ctx;
     int i;
 
     memset(k_prime, 0, SHA1_BLOCK_SIZE);
     if (key_len > SHA1_BLOCK_SIZE) {
-        CC_SHA1_Init(&ctx);
-        CC_SHA1_Update(&ctx, key, (CC_LONG)key_len);
-        CC_SHA1_Final(k_prime, &ctx);
+        hl_sha1(key, key_len, k_prime);
     } else {
         memcpy(k_prime, key, key_len);
     }
@@ -124,21 +120,21 @@ static void hmac_sha1(const uint8_t *key, size_t key_len,
     for (i = 0; i < SHA1_BLOCK_SIZE; i++)
         inner_pad[i] = k_prime[i] ^ 0x36;
 
-    CC_SHA1_Init(&ctx);
-    CC_SHA1_Update(&ctx, inner_pad, SHA1_BLOCK_SIZE);
-    CC_SHA1_Update(&ctx, data, (CC_LONG)data_len);
+    hl_sha1_ctx_t *ctx = hl_sha1_init();
+    hl_sha1_update(ctx, inner_pad, SHA1_BLOCK_SIZE);
+    hl_sha1_update(ctx, data, data_len);
     uint8_t inner_hash[SHA1_DIGEST_SIZE];
-    CC_SHA1_Final(inner_hash, &ctx);
+    hl_sha1_final(ctx, inner_hash);
 
     /* Outer: H((K' ^ opad) || inner_hash) */
     uint8_t outer_pad[SHA1_BLOCK_SIZE];
     for (i = 0; i < SHA1_BLOCK_SIZE; i++)
         outer_pad[i] = k_prime[i] ^ 0x5C;
 
-    CC_SHA1_Init(&ctx);
-    CC_SHA1_Update(&ctx, outer_pad, SHA1_BLOCK_SIZE);
-    CC_SHA1_Update(&ctx, inner_hash, SHA1_DIGEST_SIZE);
-    CC_SHA1_Final(out, &ctx);
+    ctx = hl_sha1_init();
+    hl_sha1_update(ctx, outer_pad, SHA1_BLOCK_SIZE);
+    hl_sha1_update(ctx, inner_hash, SHA1_DIGEST_SIZE);
+    hl_sha1_final(ctx, out);
 }
 
 static void hmac_md5(const uint8_t *key, size_t key_len,
@@ -146,14 +142,11 @@ static void hmac_md5(const uint8_t *key, size_t key_len,
                      uint8_t *out)
 {
     uint8_t k_prime[MD5_BLOCK_SIZE];
-    CC_MD5_CTX ctx;
     int i;
 
     memset(k_prime, 0, MD5_BLOCK_SIZE);
     if (key_len > MD5_BLOCK_SIZE) {
-        CC_MD5_Init(&ctx);
-        CC_MD5_Update(&ctx, key, (CC_LONG)key_len);
-        CC_MD5_Final(k_prime, &ctx);
+        hl_md5(key, key_len, k_prime);
     } else {
         memcpy(k_prime, key, key_len);
     }
@@ -162,20 +155,20 @@ static void hmac_md5(const uint8_t *key, size_t key_len,
     for (i = 0; i < MD5_BLOCK_SIZE; i++)
         inner_pad[i] = k_prime[i] ^ 0x36;
 
-    CC_MD5_Init(&ctx);
-    CC_MD5_Update(&ctx, inner_pad, MD5_BLOCK_SIZE);
-    CC_MD5_Update(&ctx, data, (CC_LONG)data_len);
+    hl_md5_ctx_t *ctx = hl_md5_init();
+    hl_md5_update(ctx, inner_pad, MD5_BLOCK_SIZE);
+    hl_md5_update(ctx, data, data_len);
     uint8_t inner_hash[MD5_DIGEST_SIZE];
-    CC_MD5_Final(inner_hash, &ctx);
+    hl_md5_final(ctx, inner_hash);
 
     uint8_t outer_pad[MD5_BLOCK_SIZE];
     for (i = 0; i < MD5_BLOCK_SIZE; i++)
         outer_pad[i] = k_prime[i] ^ 0x5C;
 
-    CC_MD5_Init(&ctx);
-    CC_MD5_Update(&ctx, outer_pad, MD5_BLOCK_SIZE);
-    CC_MD5_Update(&ctx, inner_hash, MD5_DIGEST_SIZE);
-    CC_MD5_Final(out, &ctx);
+    ctx = hl_md5_init();
+    hl_md5_update(ctx, outer_pad, MD5_BLOCK_SIZE);
+    hl_md5_update(ctx, inner_hash, MD5_DIGEST_SIZE);
+    hl_md5_final(ctx, out);
 }
 
 /* ====================================================================
@@ -195,11 +188,10 @@ void hl_hope_mac(hl_hope_mac_alg_t alg,
 
     case HL_HOPE_MAC_SHA1: {
         /* SHA1(key || data) */
-        CC_SHA1_CTX ctx;
-        CC_SHA1_Init(&ctx);
-        CC_SHA1_Update(&ctx, key, (CC_LONG)key_len);
-        CC_SHA1_Update(&ctx, data, (CC_LONG)data_len);
-        CC_SHA1_Final(out, &ctx);
+        hl_sha1_ctx_t *ctx = hl_sha1_init();
+        hl_sha1_update(ctx, key, key_len);
+        hl_sha1_update(ctx, data, data_len);
+        hl_sha1_final(ctx, out);
         *out_len = SHA1_DIGEST_SIZE;
         break;
     }
@@ -211,11 +203,10 @@ void hl_hope_mac(hl_hope_mac_alg_t alg,
 
     case HL_HOPE_MAC_MD5: {
         /* MD5(key || data) */
-        CC_MD5_CTX ctx;
-        CC_MD5_Init(&ctx);
-        CC_MD5_Update(&ctx, key, (CC_LONG)key_len);
-        CC_MD5_Update(&ctx, data, (CC_LONG)data_len);
-        CC_MD5_Final(out, &ctx);
+        hl_md5_ctx_t *ctx = hl_md5_init();
+        hl_md5_update(ctx, key, key_len);
+        hl_md5_update(ctx, data, data_len);
+        hl_md5_final(ctx, out);
         *out_len = MD5_DIGEST_SIZE;
         break;
     }
