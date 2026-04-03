@@ -109,3 +109,44 @@ HOPELegacyMode: false
 # Only applies when HOPERequiredPrefix is set.
 # Default: false
 # E2ERequireTLS: false
+
+# ─── Mnemosyne Search Integration ────────────────────────
+
+# Mnemosyne is a Hotline content indexing service that makes your
+# server's files and news articles discoverable and searchable by
+# clients across the Hotline community.
+#
+# When enabled, Lemoniscate automatically syncs content to a
+# Mnemosyne instance via HTTP POST:
+#   - Heartbeat every 5 minutes (server name, description, counts)
+#   - Full chunked sync of file listings and news on startup
+#   - Incremental sync when files are uploaded/deleted or news posted
+#   - Periodic drift detection every 15 minutes
+#   - Automatic deregistration on graceful shutdown
+#
+# To use Mnemosyne:
+#   1. Register at https://agora.vespernet.net/login
+#   2. Add your server to obtain an msv_-prefixed server API key
+#   3. Configure the url and api_key below
+#
+# If Mnemosyne becomes unreachable, sync suspends automatically
+# after 5 failures with exponential backoff, then resumes when
+# the next heartbeat succeeds. Normal server operation is never
+# affected.
+#
+# Note: Message board sync is not yet supported (the flat
+# MessageBoard.txt format lacks structured post data).
+
+# Mnemosyne:
+#   # URL of the Mnemosyne instance (HTTP only, no trailing slash).
+#   # The default VesperNet instance is tracker.vespernet.net:8980
+#   url: http://tracker.vespernet.net:8980
+#
+#   # Server API key (must start with msv_). Required if url is set.
+#   api_key: msv_your_server_key_here
+#
+#   # Index file listings. Default: true
+#   index_files: true
+#
+#   # Index threaded news articles. Default: true
+#   index_news: true

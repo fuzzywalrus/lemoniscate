@@ -1,120 +1,194 @@
 ## ADDED Requirements
 
-### Requirement: Periodic content sync to Mnemosyne instance
-The server SHALL periodically sync its content (message board posts, threaded news articles, and file listings) to a configured Mnemosyne indexing instance via HTTP. The sync interval SHALL be configurable with a default of 15 minutes. Content SHALL be pushed via `PATCH /api/v1/operator/servers/{server_id}` with the operator API key in the `X-API-Key` header (exact endpoint subject to confirmation).
+### Requirement: Heartbeat to Mnemosyne instance
+The server SHALL send a heartbeat POST to `/api/v1/sync/heartbeat` every 5 minutes when Mnemosyne sync is configured. The heartbeat SHALL include the server name, description, and content counts (message board posts, file count, news article count). Authentication SHALL use the `?api_key=msv_...` query parameter.
 
-#### Scenario: Sync triggers on interval
-- **WHEN** the configured sync interval elapses and Mnemosyne is configured with a URL, API key, and server ID
-- **THEN** the server collects enabled content types and sends them as a JSON payload via HTTP to the Mnemosyne instance
+#### Scenario: Heartbeat sent on interval
+- **WHEN** the 5-minute heartbeat timer fires and Mnemosyne is configured
+- **THEN** the server POSTs `{server_name, description, post_count, file_count, news_count}` to `/api/v1/sync/heartbeat`
 
-#### Scenario: No Mnemosyne URL configured
-- **WHEN** the server starts without a Mnemosyne URL in its configuration
-- **THEN** no sync timer is registered and no outbound HTTP requests are made
+#### Scenario: Heartbeat with no content indexed
+- **WHEN** all content types are disabled
+- **THEN** the heartbeat sends zero counts for all content types
 
-#### Scenario: Sync includes server identification
-- **WHEN** a sync request is sent to the Mnemosyne instance
-- **THEN** the request includes the configured server ID slug, server name, description, and address
+#### Scenario: Heartbeat failure
+- **WHEN** the heartbeat POST fails (network error or non-200 status)
+- **THEN** the server logs a warning and continues operating normally
 
-### Requirement: Configurable content type selection
-The server SHALL allow operators to select which content types are synced to Mnemosyne. Options are: message board posts (`msgboard`), threaded news articles (`news`), and file listings (`files`). All types SHALL be enabled by default when Mnemosyne sync is active.
+### Requirement: Chunked full sync for files
+The server SHALL perform a chunked full sync of file listings via `POST /api/v1/sync/files/chunked`. The sync walks the file directory tree one directory per chunk tick (2 seconds). Each chunk includes a `sync_id`, `chunk_index`, and a `finalize` flag. The final chunk has `finalize: true` and an empty files array.
 
-#### Scenario: All content types enabled
-- **WHEN** the server syncs with all content types enabled
-- **THEN** the JSON payload includes message board posts, news articles, and file listings
+#### Scenario: File sync walks directory tree
+- **WHEN** a file sync starts
+- **THEN** the server walks the file root recursively, sending one directory's files per chunk POST
 
-#### Scenario: Files only
-- **WHEN** the operator configures Mnemosyne sync with only `files` enabled
-- **THEN** the sync payload includes file listings but omits message board posts and news articles
+#### Scenario: File sync skips drop box directories
+- **WHEN** a directory has drop box access restrictions
+- **THEN** it is skipped during file sync
 
-#### Scenario: Subset of content types
-- **WHEN** the operator configures a subset of content types (e.g., `news` and `msgboard`)
-- **THEN** only the selected content types are included in the sync payload
+#### Scenario: File sync finalize
+- **WHEN** all directories have been processed
+- **THEN** the server sends a final chunk with `finalize: true` and an empty files array
 
-### Requirement: Operator-configured server ID
-The server SHALL use an operator-configured server ID slug for Mnemosyne identification. The server ID SHALL be a lowercase alphanumeric string with hyphens and underscores, matching `^[a-z0-9_-]{3,32}$`, and SHALL be set in the server's configuration file.
+#### Scenario: File chunk payload
+- **WHEN** a directory contains files
+- **THEN** each file is serialized as `{path, name, size, type, comment}`
 
-#### Scenario: Valid server ID configured
-- **WHEN** the server starts with a valid `server_id` in the Mnemosyne configuration
-- **THEN** it uses that ID for all Mnemosyne API requests
+### Requirement: Message board sync deferred
+Message board sync is NOT implemented in this change. The flat message board (`MessageBoard.txt`) stores posts as raw unstructured text without post IDs, pagination, or deletion support. The Mnemosyne API expects structured posts. A future change can add a message board parser to enable msgboard sync. The heartbeat SHALL report `post_count` as 0.
 
-#### Scenario: Missing server ID
-- **WHEN** Mnemosyne URL and API key are configured but `server_id` is missing
-- **THEN** Mnemosyne sync is disabled and the server logs a warning that the server ID is required
+#### Scenario: Message board not synced
+- **WHEN** a full sync runs
+- **THEN** message board sync is skipped regardless of the `index_msgboard` config toggle
 
-#### Scenario: Invalid server ID format
-- **WHEN** the configured `server_id` does not match `^[a-z0-9_-]{3,32}$`
-- **THEN** Mnemosyne sync is disabled and the server logs an error describing the format requirement
+### Requirement: Chunked full sync for threaded news
+The server SHALL perform a chunked full sync of threaded news via `POST /api/v1/sync/news/chunked`. The first chunk sends categories. Subsequent chunks send articles per category. The final chunk has `finalize: true`.
 
-### Requirement: Operator API key authentication
-The server SHALL authenticate with the Mnemosyne instance using an operator API key. The API key SHALL be sent in the `X-API-Key` HTTP header on all requests to operator-scoped endpoints. The API key is obtained out-of-band through the Mnemosyne operator registration process.
+#### Scenario: News categories sent first
+- **WHEN** a news sync starts
+- **THEN** the first chunk contains all categories as `{name, path}` with an empty articles array
 
-#### Scenario: API key configured
-- **WHEN** an API key is set in the Mnemosyne configuration
-- **THEN** all HTTP requests to Mnemosyne operator endpoints include the `X-API-Key` header with the configured value
+#### Scenario: News articles sent per category
+- **WHEN** a category has articles
+- **THEN** each article is serialized as `{id, path, title, body, poster, date}`
+
+#### Scenario: News sync finalize
+- **WHEN** all categories and articles have been sent
+- **THEN** the server sends a final chunk with `finalize: true`
+
+### Requirement: Full sync sequencing
+The server SHALL sync content types one at a time in sequence: files, then news. When one type completes (finalize acknowledged), the next type begins.
+
+#### Scenario: Sync queue
+- **WHEN** a full sync starts with both content types enabled
+- **THEN** file sync runs first, then news sync
+
+#### Scenario: Single content type
+- **WHEN** only files is enabled
+- **THEN** only file sync runs
+
+### Requirement: Incremental sync on content changes
+The server SHALL push incremental updates immediately when content changes. Incremental POSTs use `{mode: "incremental", added: [...], removed: [...]}`. Message board incremental sync is deferred (see "Message board sync deferred" requirement).
+
+#### Scenario: File uploaded
+- **WHEN** a file upload completes
+- **THEN** the server POSTs `{mode: "incremental", added: [{path, name, size, type}]}` to `/api/v1/sync/files`
+
+#### Scenario: File deleted
+- **WHEN** a file is deleted
+- **THEN** the server POSTs `{mode: "incremental", removed: ["/path/to/file"]}` to `/api/v1/sync/files`
+
+#### Scenario: News article posted
+- **WHEN** a news article is posted
+- **THEN** the server POSTs `{mode: "incremental", added: [{id, path, title, body, poster, date}]}` to `/api/v1/sync/news`
+
+### Requirement: Periodic drift detection
+The server SHALL check for content drift every 15 minutes by comparing cached content counts with actual counts. If a mismatch is detected, a targeted full sync SHALL be triggered.
+
+#### Scenario: Drift detected
+- **WHEN** the actual content count differs from the cached count for any content type
+- **THEN** the server triggers a targeted full sync for that content type
+
+#### Scenario: No drift
+- **WHEN** all counts match
+- **THEN** no sync is triggered
+
+### Requirement: Sync state persistence
+The server SHALL persist the sync cursor to disk after each chunk. On startup, if an interrupted sync cursor exists, the server SHALL resume from where it left off.
+
+#### Scenario: Sync interrupted by crash
+- **WHEN** the server crashes during a chunked sync
+- **THEN** on restart, the server resumes from the persisted cursor
+
+#### Scenario: Clean startup
+- **WHEN** no persisted sync cursor exists
+- **THEN** a full sync begins after a 30-second startup delay
+
+### Requirement: Deregistration on shutdown
+The server SHALL send `POST /api/v1/sync/deregister` when shutting down gracefully.
+
+#### Scenario: Graceful shutdown
+- **WHEN** the server receives SIGTERM/SIGINT and Mnemosyne is configured
+- **THEN** it sends a deregister POST before exiting
+
+### Requirement: API key authentication via query parameter
+The server SHALL authenticate all Mnemosyne sync requests using the `?api_key=msv_...` query parameter appended to each POST URL.
+
+#### Scenario: API key on every request
+- **WHEN** any POST is sent to Mnemosyne
+- **THEN** the URL includes `?api_key=<configured_key>`
 
 #### Scenario: Missing API key
-- **WHEN** Mnemosyne URL is configured but `api_key` is missing
-- **THEN** Mnemosyne sync is disabled and the server logs a warning that an API key is required
+- **WHEN** Mnemosyne URL is configured but API key is missing
+- **THEN** sync is disabled with a log warning
 
-### Requirement: Health check before enabling sync
-The server SHALL probe the Mnemosyne instance's health endpoint (`GET /api/v1/health`) on startup before enabling the sync timer. If the health check fails, sync SHALL be disabled with a warning log.
+### Requirement: Exponential backoff on failure
+The server SHALL apply exponential backoff when Mnemosyne requests fail. After 5 consecutive failures, all sync activity SHALL be suspended. The heartbeat timer SHALL continue as a health probe. When a heartbeat succeeds, sync SHALL resume with a fresh full sync.
 
-#### Scenario: Health check succeeds
-- **WHEN** the Mnemosyne instance responds to the health check with status `200` and `"status": "ok"`
-- **THEN** the server enables the sync timer and logs that Mnemosyne sync is active
+#### Scenario: First failure
+- **WHEN** a Mnemosyne POST fails for the first time
+- **THEN** the server logs a warning and retries on the next tick
 
-#### Scenario: Health check fails
-- **WHEN** the Mnemosyne instance is unreachable or returns a non-200 status
-- **THEN** the server logs a warning and disables Mnemosyne sync (no timer registered)
+#### Scenario: Escalating backoff
+- **WHEN** consecutive failures occur
+- **THEN** retry intervals double (2s, 4s, 8s, 16s, 32s) and only one log line is emitted per escalation level
 
-#### Scenario: Health check on degraded instance
-- **WHEN** the Mnemosyne instance responds with `503` and `"status": "degraded"`
-- **THEN** the server logs a warning and disables Mnemosyne sync
+#### Scenario: Sync suspension after 5 failures
+- **WHEN** 5 consecutive Mnemosyne requests fail
+- **THEN** the chunk tick timer is stopped, the incremental queue is drained, and the server logs "sync suspended, will resume when heartbeat succeeds"
 
-### Requirement: Graceful degradation on sync failure
-The server SHALL handle sync failures gracefully. If a sync request fails (network error, timeout, HTTP error), the server SHALL log the error and continue operating normally. The next sync attempt SHALL proceed on the regular interval.
+#### Scenario: Recovery via heartbeat
+- **WHEN** a heartbeat succeeds while sync is suspended
+- **THEN** backoff is reset, sync resumes with a fresh full sync, and the server logs "Mnemosyne reachable again, resuming sync"
 
-#### Scenario: Sync request times out
-- **WHEN** the HTTP request to Mnemosyne does not complete within the configured timeout
-- **THEN** the server logs a timeout warning and waits for the next sync interval
+### Requirement: Queued incremental sync
+The server SHALL queue incremental sync events in a bounded ring buffer (64 entries) and drain them on the next chunk tick or heartbeat, not inline during the transaction handler. If the queue is full, the oldest entry SHALL be dropped.
 
-#### Scenario: Mnemosyne returns error
-- **WHEN** the Mnemosyne instance returns an HTTP error status (4xx or 5xx)
-- **THEN** the server logs the error status and message, and waits for the next sync interval
+#### Scenario: Incremental event queued
+- **WHEN** a user uploads a file while Mnemosyne is reachable
+- **THEN** the file metadata is added to the incremental queue and sent on the next timer tick, not during the upload handler
 
-#### Scenario: Operator account not approved
-- **WHEN** the Mnemosyne instance returns `403` with "operator account pending approval"
-- **THEN** the server logs a warning indicating the operator account needs approval and waits for the next sync interval
+#### Scenario: Queue overflow
+- **WHEN** the incremental queue is full (64 entries)
+- **THEN** the oldest entry is dropped and a debug log is emitted
 
-#### Scenario: Network unreachable during sync
-- **WHEN** the Mnemosyne instance becomes unreachable after initial health check
-- **THEN** the server logs a connection error and continues normal Hotline operation
+#### Scenario: Queue drained while sync suspended
+- **WHEN** incremental events queue up while sync is suspended
+- **THEN** the queue entries are discarded on suspension and the next full sync will capture all changes
 
-### Requirement: Message board content serialization
-The server SHALL serialize message board posts as JSON objects containing post ID, author nickname, full body text, and timestamp.
+### Requirement: DNS caching
+The server SHALL resolve the Mnemosyne hostname once on startup and cache the IP address. The cached address SHALL be refreshed on SIGHUP config reload and after recovery from sync suspension.
 
-#### Scenario: Message board sync
-- **WHEN** the server syncs message board content
-- **THEN** each post is serialized as a JSON object with `post_id`, `nick`, `body`, and `timestamp` fields
+#### Scenario: DNS resolved once
+- **WHEN** the server starts with Mnemosyne configured
+- **THEN** the Mnemosyne hostname is resolved to an IP address and cached for all subsequent requests
 
-### Requirement: Threaded news content serialization
-The server SHALL serialize threaded news articles as JSON objects containing the category path, article ID, title, poster name, date, and full body text.
+#### Scenario: DNS failure on startup
+- **WHEN** the Mnemosyne hostname cannot be resolved on startup
+- **THEN** sync is disabled with a log warning
 
-#### Scenario: News article sync
-- **WHEN** the server syncs news content
-- **THEN** each article is serialized with `path`, `article_id`, `title`, `poster`, `date`, and `body` fields
+### Requirement: Tiered logging
+The server SHALL log Mnemosyne sync events at appropriate levels without spamming. First failure logs at WARN. Backoff escalations log once per level. Suspension and recovery log once each. Routine heartbeat failures during suspension SHALL NOT be logged.
 
-#### Scenario: News category hierarchy preserved
-- **WHEN** articles exist in nested news categories
-- **THEN** the serialized `path` field reflects the full category path (e.g., `/General/Announcements`)
+#### Scenario: Normal sync logging
+- **WHEN** a full sync completes successfully
+- **THEN** the server logs one INFO line per completed content type and one INFO line for "full sync complete"
 
-### Requirement: File listing content serialization
-The server SHALL serialize file listings as JSON objects containing the file path, name, size in bytes, Hotline type code, creator code, file comment, and a directory flag.
+#### Scenario: Suspended state logging
+- **WHEN** sync is suspended and heartbeat fails
+- **THEN** no log line is emitted (already logged suspension)
 
-#### Scenario: File listing sync
-- **WHEN** the server syncs file content
-- **THEN** each file entry is serialized with `path`, `name`, `size`, `type`, `creator`, `comment`, and `is_dir` fields
+#### Scenario: Recovery logging
+- **WHEN** heartbeat succeeds after suspension
+- **THEN** one INFO line: "Mnemosyne reachable again, resuming sync"
 
-#### Scenario: Directory entries
-- **WHEN** a directory is encountered during file listing serialization
-- **THEN** the entry has `is_dir` set to true and `size` set to 0
+### Requirement: Resource protection
+The server SHALL bound all sync-related memory allocations. JSON buffers are allocated per-chunk and freed after POST. The pending directory list is bounded by filesystem depth. The incremental queue is a fixed-size ring buffer. Stale sync cursors older than 1 hour SHALL be discarded on startup.
+
+#### Scenario: Stale cursor discarded
+- **WHEN** the server starts and finds a sync cursor file older than 1 hour
+- **THEN** the cursor is discarded and a fresh full sync begins
+
+#### Scenario: JSON buffer freed after POST
+- **WHEN** a chunk POST completes (success or failure)
+- **THEN** the JSON buffer for that chunk is freed immediately

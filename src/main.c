@@ -19,7 +19,7 @@
 #include "mobius/yaml_account_manager.h"
 #include "mobius/ban_file.h"
 #include "mobius/logger_impl.h"
-#include "mobius/ban_file.h"
+#include "mobius/mnemosyne_sync.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,6 +46,9 @@ static void reload_handler(int sig)
 {
     (void)sig;
     g_reload = 1;
+    if (g_server) {
+        g_server->reload_pending = 1;
+    }
 }
 
 /* Perform config reload — maps to Go reloadFunc */
@@ -130,6 +133,15 @@ static int init_config_dir(const char *dir)
             "MaxDownloadsPerClient: 0\n"
             "MaxConnectionsPerIP: 0\n"
             "PreserveResourceForks: false\n"
+            "\n"
+            "# Mnemosyne search integration (optional)\n"
+            "# Syncs files and news to a Mnemosyne indexing service.\n"
+            "# Register at https://agora.vespernet.net/login for an API key.\n"
+            "# Mnemosyne:\n"
+            "#   url: http://tracker.vespernet.net:8980\n"
+            "#   api_key: msv_your_server_key_here\n"
+            "#   index_files: true\n"
+            "#   index_news: true\n"
         );
         fclose(f);
     }
@@ -543,6 +555,20 @@ int main(int argc, char **argv)
                     reg_ok, srv->config.tracker_count);
     }
 
+    /* Store config_dir in server for SIGHUP reload access */
+    if (config_dir) {
+        strncpy(srv->config_dir, config_dir, sizeof(srv->config_dir) - 1);
+    }
+
+    /* Initialize Mnemosyne sync if configured */
+    mn_sync_t mnemosyne_sync;
+    if (srv->config.mnemosyne_url[0] != '\0') {
+        mn_sync_init(&mnemosyne_sync, srv);
+        if (mn_sync_enabled(&mnemosyne_sync)) {
+            srv->mnemosyne_sync = &mnemosyne_sync;
+        }
+    }
+
     /* Run the server (blocks until shutdown) */
     int rc = hl_server_listen_and_serve(srv);
 
@@ -551,10 +577,27 @@ int main(int argc, char **argv)
      * server's event loop to be called when g_reload is set. */
     (void)do_reload; /* Suppress unused warning */
 
+    /* Mnemosyne: deregister on shutdown */
+    if (srv->mnemosyne_sync) {
+        mn_deregister((mn_sync_t *)srv->mnemosyne_sync);
+        mn_sync_cleanup((mn_sync_t *)srv->mnemosyne_sync);
+        srv->mnemosyne_sync = NULL;
+    }
+
     /* Cleanup */
     if (bonjour) {
         hl_bonjour_unregister(bonjour);
     }
+
+    /* Free mobius-layer subsystems before server struct */
+    if (srv->account_mgr) mobius_yaml_account_mgr_free(srv->account_mgr);
+    srv->account_mgr = NULL;
+    if (srv->ban_list) mobius_ban_file_free(srv->ban_list);
+    srv->ban_list = NULL;
+    if (srv->threaded_news) mobius_threaded_news_free(srv->threaded_news);
+    srv->threaded_news = NULL;
+    if (srv->flat_news) mobius_flat_news_free(srv->flat_news);
+    srv->flat_news = NULL;
 
     hl_server_free(srv);
     g_server = NULL;

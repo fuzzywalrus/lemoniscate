@@ -61,8 +61,10 @@ test_runner
 test_client
 lemoniscate
 lemoniscate-gui
+lemoniscate-linux-*
 mobius-hotline-server
 lemoniscate.zip
 Lemoniscate.app/
 Lemoniscate.dmg
 Lemoniscate.zip
+test_mnemosyne

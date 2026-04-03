@@ -1,35 +1,35 @@
 ## ADDED Requirements
 
-### Requirement: Outbound HTTP/1.1 client for Mnemosyne sync
-The server SHALL include a minimal HTTP/1.1 client capable of sending GET, POST, and PATCH requests with JSON bodies to a Mnemosyne instance. The client SHALL use BSD sockets with configurable connect and read timeouts. All operator-scoped requests SHALL include the `X-API-Key` header.
+### Requirement: Outbound HTTP POST for Mnemosyne sync
+The server SHALL use the HTTP client to send POST requests with JSON bodies to the Mnemosyne sync API. The API key SHALL be appended as a `?api_key=` query parameter. The `Content-Type` header SHALL be `application/json`.
 
-#### Scenario: HTTP PATCH with JSON body
+#### Scenario: POST with JSON body
 - **WHEN** the server sends a sync payload to Mnemosyne
-- **THEN** it sends an HTTP/1.1 PATCH request with `Content-Type: application/json` and `X-API-Key` headers and the JSON body
-
-#### Scenario: HTTP GET for health check
-- **WHEN** the server probes the Mnemosyne health endpoint
-- **THEN** it sends an HTTP/1.1 GET request and parses the HTTP status code from the response
+- **THEN** it sends an HTTP/1.1 POST with `Content-Type: application/json` and `?api_key=msv_...` in the URL
 
 #### Scenario: Connect timeout
 - **WHEN** the TCP connection to the Mnemosyne host cannot be established within 5 seconds
-- **THEN** the HTTP client returns a timeout error
+- **THEN** the HTTP client returns a timeout error and the sync chunk is skipped
 
 #### Scenario: Read timeout
-- **WHEN** the Mnemosyne instance does not respond within 10 seconds after connection
-- **THEN** the HTTP client returns a timeout error
+- **WHEN** the Mnemosyne instance does not respond within 10 seconds
+- **THEN** the HTTP client returns a timeout error and the sync chunk is skipped
 
-### Requirement: Sync timer in kqueue event loop
-The server SHALL register a kqueue `EVFILT_TIMER` event for the Mnemosyne sync interval. The timer fires periodically and triggers a sync cycle in the main event loop.
+### Requirement: Multiple sync timers in event loop
+The server SHALL register up to three timers for Mnemosyne sync: a heartbeat timer (every 300 seconds), a periodic drift check timer (every 900 seconds), and a chunk tick timer (every 2 seconds, only active during a chunked sync).
 
-#### Scenario: Timer registration
-- **WHEN** Mnemosyne sync is enabled and the health check succeeds
-- **THEN** a kqueue timer is registered with the configured sync interval
+#### Scenario: Heartbeat timer
+- **WHEN** Mnemosyne is configured and the server starts
+- **THEN** a 300-second repeating timer is registered for heartbeat POSTs
 
-#### Scenario: Timer fires
-- **WHEN** the kqueue timer event fires
-- **THEN** the server executes a full sync cycle (collect content, serialize, PATCH to Mnemosyne)
+#### Scenario: Periodic check timer
+- **WHEN** Mnemosyne is configured and the server starts
+- **THEN** a 900-second repeating timer is registered for drift detection
 
-#### Scenario: Timer removed on disable
-- **WHEN** Mnemosyne sync is disabled (via SIGHUP or health check failure)
-- **THEN** the kqueue timer is removed from the event loop
+#### Scenario: Chunk tick timer
+- **WHEN** a chunked sync begins
+- **THEN** a 2-second repeating timer is registered to drive the sync state machine
+
+#### Scenario: Chunk tick timer removed
+- **WHEN** a chunked sync completes (finalize sent) or is aborted
+- **THEN** the 2-second chunk tick timer is removed

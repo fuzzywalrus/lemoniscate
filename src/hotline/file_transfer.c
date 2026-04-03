@@ -78,6 +78,10 @@ static void mem_del(hl_xfer_mgr_t *self, const hl_xfer_id_t id)
     for (i = 0; i < HL_MAX_FILE_TRANSFERS; i++) {
         if (mgr->transfers[i].active &&
             memcmp(mgr->transfers[i].ref_num, id, 4) == 0) {
+            if (mgr->transfers[i].resume_data) {
+                free(mgr->transfers[i].resume_data);
+                mgr->transfers[i].resume_data = NULL;
+            }
             mgr->transfers[i].active = 0;
             break;
         }
@@ -106,6 +110,12 @@ void hl_mem_xfer_mgr_free(hl_xfer_mgr_t *base)
 {
     if (!base) return;
     mem_xfer_mgr_t *mgr = (mem_xfer_mgr_t *)base;
+    int i;
+    for (i = 0; i < HL_MAX_FILE_TRANSFERS; i++) {
+        if (mgr->transfers[i].resume_data) {
+            free(mgr->transfers[i].resume_data);
+        }
+    }
     pthread_mutex_destroy(&mgr->mu);
     free(mgr);
 }

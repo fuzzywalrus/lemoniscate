@@ -13,6 +13,8 @@
 #define HL_CONFIG_MAX_TRACKERS     16
 #define HL_CONFIG_MAX_IGNORE       16
 #define HL_CONFIG_TRACKER_LEN     256
+#define HL_CONFIG_MNEMOSYNE_URL_MAX  512
+#define HL_CONFIG_MNEMOSYNE_KEY_MAX  128
 
 typedef struct {
     char name[HL_CONFIG_NAME_MAX + 1];           /* Go: Name string                     */
@@ -39,6 +41,12 @@ typedef struct {
     char tls_cert_path[HL_CONFIG_PATH_MAX];      /* TLSCertFile: path to PEM certificate  */
     char tls_key_path[HL_CONFIG_PATH_MAX];       /* TLSKeyFile: path to PEM private key   */
     int  tls_port;                                /* TLSPort: TLS base port (0 = disabled) */
+
+    /* Mnemosyne sync */
+    char mnemosyne_url[HL_CONFIG_MNEMOSYNE_URL_MAX];   /* Mnemosyne instance URL */
+    char mnemosyne_api_key[HL_CONFIG_MNEMOSYNE_KEY_MAX]; /* msv_-prefixed server API key */
+    int  mnemosyne_index_files;                  /* Index file listings (default: true) */
+    int  mnemosyne_index_news;                   /* Index threaded news (default: true) */
 } hl_config_t;
 
 /* Initialize config with defaults */
