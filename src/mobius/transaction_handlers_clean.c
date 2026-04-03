@@ -8,6 +8,7 @@
 
 #include "mobius/transaction_handlers.h"
 #include "mobius/flat_news.h"
+#include "mobius/mnemosyne_sync.h"
 #include "hotline/field.h"
 #include "hotline/user.h"
 #include "hotline/access.h"
@@ -1585,6 +1586,31 @@ static int handle_post_news_art(hl_client_conn_t *cc, const hl_transaction_t *re
     tn_post_article(srv->threaded_news, cat_name, parent_id,
                     title, (const char *)cc->user_name, data, data_len);
 
+    /* Mnemosyne: queue incremental news add */
+    if (srv->mnemosyne_sync) {
+        char date_str[32];
+        time_t now = time(NULL);
+        struct tm *tm = gmtime(&now);
+        snprintf(date_str, sizeof(date_str), "%04d-%02d-%02d",
+                 tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday);
+
+        /* Get the article ID that was just assigned */
+        pthread_mutex_lock(&srv->threaded_news->mu);
+        int ci;
+        uint32_t art_id = 0;
+        for (ci = 0; ci < srv->threaded_news->category_count; ci++) {
+            if (strcmp(srv->threaded_news->categories[ci].name, cat_name) == 0) {
+                art_id = srv->threaded_news->categories[ci].next_article_id - 1;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&srv->threaded_news->mu);
+
+        mn_queue_news_add((mn_sync_t *)srv->mnemosyne_sync, cat_name,
+                          art_id, title, data, (const char *)cc->user_name,
+                          date_str);
+    }
+
     return reply_empty(cc, req, out, out_count);
 }
 
@@ -1986,6 +2012,18 @@ static int handle_delete_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     hl_file_init(&f, dir_path, filename);
     hl_file_delete(&f);
 
+    /* Mnemosyne: queue incremental file remove */
+    if (cc->server->mnemosyne_sync) {
+        char rel_path[2048];
+        const char *root = cc->server->config.file_root;
+        size_t root_len = strlen(root);
+        if (strncmp(full_path, root, root_len) == 0 && full_path[root_len] == '/')
+            snprintf(rel_path, sizeof(rel_path), "%s", full_path + root_len + 1);
+        else
+            snprintf(rel_path, sizeof(rel_path), "%s", filename);
+        mn_queue_file_remove((mn_sync_t *)cc->server->mnemosyne_sync, rel_path);
+    }
+
     return reply_empty(cc, req, out, out_count);
 }
 
@@ -2037,6 +2075,11 @@ static int handle_move_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     hl_file_t f;
     hl_file_init(&f, dir_path, filename);
     hl_file_move(&f, new_dir);
+
+    /* Mnemosyne: file move triggers periodic check (full resync on drift) */
+    if (cc->server->mnemosyne_sync) {
+        mn_periodic_check((mn_sync_t *)cc->server->mnemosyne_sync);
+    }
 
     return reply_empty(cc, req, out, out_count);
 }

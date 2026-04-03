@@ -57,6 +57,8 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
     int in_mapping = 0;
     char current_key[128] = {0};
     int parsing_trackers = 0;
+    int parsing_mnemosyne = 0;
+    char mnemosyne_key[128] = {0};
     int done = 0;
 
     while (!done) {
@@ -68,15 +70,43 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
 
         switch (event.type) {
         case YAML_MAPPING_START_EVENT:
-            in_mapping = 1;
+            if (in_mapping && strcmp(current_key, "Mnemosyne") == 0) {
+                parsing_mnemosyne = 1;
+                mnemosyne_key[0] = '\0';
+                current_key[0] = '\0';
+            } else {
+                in_mapping = 1;
+            }
             break;
 
         case YAML_MAPPING_END_EVENT:
-            in_mapping = 0;
+            if (parsing_mnemosyne) {
+                parsing_mnemosyne = 0;
+            } else {
+                in_mapping = 0;
+            }
             break;
 
         case YAML_SCALAR_EVENT:
-            if (parsing_trackers) {
+            if (parsing_mnemosyne) {
+                /* Inside Mnemosyne mapping — key/value pairs */
+                const char *val = (const char *)event.data.scalar.value;
+                if (mnemosyne_key[0] == '\0') {
+                    strncpy(mnemosyne_key, val, sizeof(mnemosyne_key) - 1);
+                } else {
+                    if (strcmp(mnemosyne_key, "url") == 0)
+                        strncpy(cfg->mnemosyne_url, val,
+                                HL_CONFIG_MNEMOSYNE_URL_MAX - 1);
+                    else if (strcmp(mnemosyne_key, "api_key") == 0)
+                        strncpy(cfg->mnemosyne_api_key, val,
+                                HL_CONFIG_MNEMOSYNE_KEY_MAX - 1);
+                    else if (strcmp(mnemosyne_key, "index_files") == 0)
+                        cfg->mnemosyne_index_files = yaml_parse_bool(val);
+                    else if (strcmp(mnemosyne_key, "index_news") == 0)
+                        cfg->mnemosyne_index_news = yaml_parse_bool(val);
+                    mnemosyne_key[0] = '\0';
+                }
+            } else if (parsing_trackers) {
                 /* Inside Trackers sequence — each scalar is a tracker entry */
                 const char *val = (const char *)event.data.scalar.value;
                 if (cfg->tracker_count < HL_CONFIG_MAX_TRACKERS) {
@@ -178,5 +208,15 @@ int mobius_load_config(hl_config_t *cfg, const char *config_dir)
     char filepath[2048];
     snprintf(filepath, sizeof(filepath), "%s/config.yaml", dir);
 
-    return parse_config_yaml(cfg, filepath);
+    int rc = parse_config_yaml(cfg, filepath);
+    if (rc != 0)
+        return rc;
+
+    /* Validate Mnemosyne config: url requires api_key */
+    if (cfg->mnemosyne_url[0] != '\0' && cfg->mnemosyne_api_key[0] == '\0') {
+        fprintf(stderr, "Warning: Mnemosyne url set but api_key missing — sync disabled\n");
+        cfg->mnemosyne_url[0] = '\0';
+    }
+
+    return 0;
 }

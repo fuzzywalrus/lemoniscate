@@ -111,7 +111,8 @@ HOTLINE_COMMON_SRCS = \
 	src/hotline/bonjour.c \
 	src/hotline/tracker.c \
 	src/hotline/password.c \
-	src/hotline/hope.c
+	src/hotline/hope.c \
+	src/hotline/http_client.c
 
 # Combined C sources: common + platform
 HOTLINE_C_SRCS = $(HOTLINE_COMMON_SRCS) $(PLATFORM_SRCS)
@@ -136,7 +137,9 @@ MOBIUS_SRCS = \
 	src/mobius/threaded_news_yaml.c \
 	src/mobius/transaction_handlers.c \
 	src/mobius/logger_impl.c \
-	src/mobius/config_plist.c
+	src/mobius/config_plist.c \
+	src/mobius/json_builder.c \
+	src/mobius/mnemosyne_sync.c
 
 MOBIUS_OBJS = $(MOBIUS_SRCS:.c=.o)
 
@@ -200,15 +203,20 @@ test-wire: $(TEST_C_OBJS) $(HOTLINE_C_OBJS)
 	$(CC) $(CFLAGS) -o test_runner $^ $(TEST_LDFLAGS)
 	./test_runner
 
+# Mnemosyne sync tests
+test-mnemosyne: test/test_mnemosyne.o $(HOTLINE_C_OBJS) $(MOBIUS_OBJS)
+	$(CC) $(CFLAGS) -o test_mnemosyne $^ $(LDFLAGS) $(YAML_LDFLAGS)
+	./test_mnemosyne
+
 # Phase 2 client tests (Obj-C, macOS only)
 ifeq ($(PLATFORM),Darwin)
 test-client: $(TEST_OBJC_OBJS) $(HOTLINE_OBJS)
 	$(CC) $(OBJCFLAGS) -o test_client $^ $(LDFLAGS)
 	./test_client
 
-test: test-wire test-client
+test: test-wire test-mnemosyne test-client
 else
-test: test-wire
+test: test-wire test-mnemosyne
 endif
 
 # --- Pattern rules ---
@@ -256,7 +264,7 @@ app: lemoniscate $(SERVER_COMPAT_BIN) gui
 clean:
 	rm -f $(HOTLINE_C_OBJS) $(HOTLINE_OBJC_OBJS) $(MOBIUS_OBJS) \
 	      $(TEST_C_OBJS) $(TEST_OBJC_OBJS) $(GUI_OBJC_OBJS) \
-	      libhotline.a lemoniscate $(SERVER_COMPAT_BIN) lemoniscate-gui test_runner test_client src/main.o
+	      libhotline.a lemoniscate $(SERVER_COMPAT_BIN) lemoniscate-gui test_runner test_mnemosyne test_client src/main.o test/test_mnemosyne.o
 	rm -rf $(APP_BUNDLE)
 
 # Auto-dependency generation

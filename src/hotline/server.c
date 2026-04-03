@@ -22,6 +22,8 @@
 #include "hotline/file_types.h"
 #include "hotline/file_path.h"
 #include "mobius/transaction_handlers.h"
+#include "mobius/mnemosyne_sync.h"
+#include "mobius/config_loader.h"
 
 #include "hotline/platform/platform_event.h"
 #include <sys/socket.h>
@@ -43,6 +45,18 @@
 #define HL_USER_IDLE_SECONDS   300   /* seconds before user is marked away */
 #define HL_IDLE_CHECK_INTERVAL  10   /* seconds between idle checks */
 #define HL_DEFAULT_PORT       5500
+
+/* Timer IDs */
+#define HL_TIMER_IDLE          1     /* Idle check (10s) */
+#define HL_TIMER_MN_HEARTBEAT  2     /* Mnemosyne heartbeat (300s) */
+#define HL_TIMER_MN_PERIODIC   3     /* Mnemosyne periodic check (900s) */
+#define HL_TIMER_MN_CHUNK      4     /* Mnemosyne chunk tick (2s) */
+
+/* Mnemosyne timer intervals */
+#define MN_HEARTBEAT_MS     300000   /* 5 minutes */
+#define MN_PERIODIC_MS      900000   /* 15 minutes */
+#define MN_CHUNK_TICK_MS      2000   /* 2 seconds */
+#define MN_STARTUP_DELAY_SECS  30    /* seconds before first full sync */
 
 /* --- Helpers: write with EINTR handling (used for local file I/O) --- */
 
@@ -288,6 +302,8 @@ void hl_server_free(hl_server_t *srv)
     if (srv->stats) hl_stats_free(srv->stats);
     if (srv->client_mgr) hl_mem_client_mgr_free(srv->client_mgr);
     if (srv->chat_mgr) hl_mem_chat_mgr_free(srv->chat_mgr);
+    if (srv->fs) hl_file_store_free(srv->fs);
+    if (srv->file_transfer_mgr) hl_mem_xfer_mgr_free(srv->file_transfer_mgr);
 
     free(srv);
 }
@@ -1445,6 +1461,21 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
             } else {
                 hl_log_info(srv->logger, "File received: %s (%zu bytes)",
                             ft->file_root, total_received);
+
+                /* Mnemosyne: queue incremental file add */
+                if (srv->mnemosyne_sync) {
+                    const char *root = srv->config.file_root;
+                    size_t root_len = strlen(root);
+                    const char *rel = ft->file_root;
+                    if (strncmp(rel, root, root_len) == 0 && rel[root_len] == '/')
+                        rel = rel + root_len + 1;
+                    /* Extract filename from path */
+                    const char *fname = strrchr(rel, '/');
+                    fname = fname ? fname + 1 : rel;
+                    mn_queue_file_add((mn_sync_t *)srv->mnemosyne_sync,
+                                      rel, fname, (uint64_t)total_received,
+                                      "file", "");
+                }
             }
         }
 
@@ -1669,10 +1700,19 @@ int hl_server_listen_and_serve(hl_server_t *srv)
     if (srv->tls_transfer_fd >= 0)
         hl_event_add_fd(evloop, srv->tls_transfer_fd, NULL);
 
-    if (hl_event_add_timer(evloop, 1, HL_IDLE_CHECK_INTERVAL * 1000) < 0) {
+    if (hl_event_add_timer(evloop, HL_TIMER_IDLE, HL_IDLE_CHECK_INTERVAL * 1000) < 0) {
         hl_log_error(srv->logger, "Failed to register timer: %s", strerror(errno));
         hl_event_loop_free(evloop);
         return -1;
+    }
+
+    /* Mnemosyne timers */
+    mn_sync_t *mn_sync = (mn_sync_t *)srv->mnemosyne_sync;
+    int mn_chunk_timer_active = 0;
+    if (mn_sync && mn_sync_enabled(mn_sync)) {
+        hl_event_add_timer(evloop, HL_TIMER_MN_HEARTBEAT, MN_HEARTBEAT_MS);
+        hl_event_add_timer(evloop, HL_TIMER_MN_PERIODIC, MN_PERIODIC_MS);
+        hl_log_info(srv->logger, "Mnemosyne timers registered (heartbeat 5m, periodic 15m)");
     }
 
     hl_log_info(srv->logger, "Server started, entering event loop");
@@ -1693,7 +1733,7 @@ int hl_server_listen_and_serve(hl_server_t *srv)
         for (i = 0; i < nev; i++) {
             hl_event_t *ev = &events[i];
 
-            if (ev->type == HL_EVENT_TIMER) {
+            if (ev->type == HL_EVENT_TIMER && ev->fd == HL_TIMER_IDLE) {
                 /* Idle check — maps to Go keepaliveHandler() */
                 int count = 0;
                 hl_client_conn_t **clients = srv->client_mgr->vt->list(
@@ -1739,6 +1779,101 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                         hl_log_error(srv->logger,
                             "Tracker re-registration: %d/%d succeeded",
                             reg_ok, srv->config.tracker_count);
+                    }
+                }
+
+                /* Mnemosyne: startup delay — trigger first full sync after 30s */
+                if (mn_sync && mn_sync_enabled(mn_sync) &&
+                    !mn_sync->startup_delay_done) {
+                    mn_sync->startup_ticks += HL_IDLE_CHECK_INTERVAL;
+                    if (mn_sync->startup_ticks >= MN_STARTUP_DELAY_SECS) {
+                        mn_sync->startup_delay_done = 1;
+                        if (mn_load_cursor(mn_sync)) {
+                            mn_sync->chunked_sync_active = 1;
+                            hl_log_info(srv->logger,
+                                "Mnemosyne: resuming interrupted sync");
+                        } else {
+                            mn_start_full_sync(mn_sync);
+                        }
+                        /* Start chunk timer if needed */
+                        if (mn_sync->chunked_sync_active && !mn_chunk_timer_active) {
+                            hl_event_add_timer(evloop, HL_TIMER_MN_CHUNK,
+                                               MN_CHUNK_TICK_MS);
+                            mn_chunk_timer_active = 1;
+                        }
+                    }
+                }
+
+                /* Check for SIGHUP reload */
+                if (srv->reload_pending) {
+                    srv->reload_pending = 0;
+
+                    /* Reload config from disk */
+                    if (srv->config_dir[0]) {
+                        hl_log_info(srv->logger, "Reloading configuration (SIGHUP)");
+                        mobius_load_config(&srv->config, srv->config_dir);
+                    }
+
+                    /* Mnemosyne: stop timers, reconfigure, restart */
+                    if (mn_sync) {
+                        hl_event_remove_timer(evloop, HL_TIMER_MN_HEARTBEAT);
+                        hl_event_remove_timer(evloop, HL_TIMER_MN_PERIODIC);
+                        if (mn_chunk_timer_active) {
+                            hl_event_remove_timer(evloop, HL_TIMER_MN_CHUNK);
+                            mn_chunk_timer_active = 0;
+                        }
+
+                        if (mn_sync_reconfigure(mn_sync, srv)) {
+                            hl_event_add_timer(evloop, HL_TIMER_MN_HEARTBEAT, MN_HEARTBEAT_MS);
+                            hl_event_add_timer(evloop, HL_TIMER_MN_PERIODIC, MN_PERIODIC_MS);
+                            hl_log_info(srv->logger, "Mnemosyne: timers restarted after SIGHUP");
+                            mn_start_full_sync(mn_sync);
+                        } else {
+                            hl_log_info(srv->logger, "Mnemosyne: sync disabled after SIGHUP");
+                            srv->mnemosyne_sync = NULL;
+                            mn_sync = NULL;
+                        }
+                    }
+                }
+            }
+            else if (ev->type == HL_EVENT_TIMER && ev->fd == HL_TIMER_MN_HEARTBEAT) {
+                /* Mnemosyne heartbeat */
+                if (mn_sync && mn_sync_enabled(mn_sync)) {
+                    mn_send_heartbeat(mn_sync);
+                    /* Drain incrementals if not chunking */
+                    mn_drain_incremental_queue(mn_sync);
+
+                    /* Manage chunk tick timer */
+                    if (mn_sync->chunked_sync_active && !mn_chunk_timer_active) {
+                        hl_event_add_timer(evloop, HL_TIMER_MN_CHUNK, MN_CHUNK_TICK_MS);
+                        mn_chunk_timer_active = 1;
+                    } else if (!mn_sync->chunked_sync_active && mn_chunk_timer_active) {
+                        hl_event_remove_timer(evloop, HL_TIMER_MN_CHUNK);
+                        mn_chunk_timer_active = 0;
+                    }
+                }
+            }
+            else if (ev->type == HL_EVENT_TIMER && ev->fd == HL_TIMER_MN_PERIODIC) {
+                /* Mnemosyne periodic drift check */
+                if (mn_sync && mn_sync_enabled(mn_sync)) {
+                    mn_periodic_check(mn_sync);
+
+                    /* Start chunk timer if sync was triggered */
+                    if (mn_sync->chunked_sync_active && !mn_chunk_timer_active) {
+                        hl_event_add_timer(evloop, HL_TIMER_MN_CHUNK, MN_CHUNK_TICK_MS);
+                        mn_chunk_timer_active = 1;
+                    }
+                }
+            }
+            else if (ev->type == HL_EVENT_TIMER && ev->fd == HL_TIMER_MN_CHUNK) {
+                /* Mnemosyne chunk tick */
+                if (mn_sync && mn_sync_enabled(mn_sync)) {
+                    mn_do_sync_tick(mn_sync);
+
+                    /* Remove chunk timer when sync finishes */
+                    if (!mn_sync->chunked_sync_active && mn_chunk_timer_active) {
+                        hl_event_remove_timer(evloop, HL_TIMER_MN_CHUNK);
+                        mn_chunk_timer_active = 0;
                     }
                 }
             }

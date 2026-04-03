@@ -21,6 +21,9 @@
 #include "mobius/threaded_news_yaml.h"
 #include <pthread.h>
 
+/* Forward declaration for Mnemosyne sync */
+typedef struct mn_sync mn_sync_opaque_t;
+
 /* Rate limiter entry (token bucket) */
 typedef struct hl_rate_limiter {
     char                     ip[64];
@@ -69,7 +72,11 @@ typedef struct hl_server {
      * On Tiger, CoreFoundation handles the conversion. */
     int                 use_mac_roman;       /* 1 = MacRoman, 0 = UTF-8 */
 
+    void               *mnemosyne_sync;       /* mn_sync_t* (opaque to hotline layer) */
+
     volatile int        shutdown;            /* Go: context cancellation */
+    volatile int        reload_pending;      /* Set by SIGHUP handler */
+    char                config_dir[1024];    /* Config directory for reloads */
 
     int                 listen_fd;           /* Main protocol listener */
     int                 transfer_fd;         /* File transfer listener */

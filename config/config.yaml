@@ -8,3 +8,13 @@ MaxDownloads: 10
 Trackers:
   - hltracker.com:5499
   - tracker.preterhuman.net:5499
+
+# Mnemosyne search integration (optional)
+# Syncs file listings and news articles to a Mnemosyne indexing service,
+# making your server discoverable and searchable by Hotline clients.
+# Register at https://agora.vespernet.net/login to get your msv_ API key.
+# Mnemosyne:
+#   url: http://tracker.vespernet.net:8980
+#   api_key: msv_your_server_key_here
+#   index_files: true
+#   index_news: true

@@ -1,107 +1,148 @@
 ## Context
 
-Lemoniscate is a C-based Hotline server using a kqueue event loop, libyaml for configuration, and a handler dispatch table for transaction processing. It currently only accepts inbound TCP connections (Hotline protocol + file transfers) and sends outbound UDP packets for tracker registration.
+Lemoniscate is a C-based Hotline server using a platform-abstracted event loop (kqueue on macOS, epoll on Linux), libyaml for configuration, and a handler dispatch table for transaction processing. It already has an HTTP client capability from the linux-platform-support work (or will build a minimal one using BSD sockets).
 
-Mnemosyne is an external indexing service that aggregates Hotline server content (message board posts, news articles, file listings) and exposes a REST API for search. Servers opt in by registering as an operator, getting approved, then periodically syncing content.
+Mnemosyne is an external indexing service. The server-side sync API was confirmed via fogWraith's reference Janus plugin (`mnemosyne.lua`). The API uses:
 
-**Discovered API model (from live probing of `tracker.vespernet.net:8980`):**
+- **Authentication:** `?api_key=msv_...` query parameter on all POST requests
+- **Heartbeat:** `POST /api/v1/sync/heartbeat` — server name, description, content counts
+- **Chunked full sync:** `POST /api/v1/sync/{type}/chunked` — sync_id-based chunked protocol with finalize
+- **Incremental sync:** `POST /api/v1/sync/{type}` — event-driven adds/removes
+- **Deregistration:** `POST /api/v1/sync/deregister` — called on server shutdown
 
-The Mnemosyne server-side API uses an operator/server hierarchy:
+Content is synced via three separate endpoint families: `/sync/files/...`, `/sync/msgboard/...`, `/sync/news/...`.
 
-1. **Operator registration:** `POST /api/v1/register` with `{id, name, address}` returns an API key (`mop_`-prefixed) and a pending-approval status. Admin must approve the operator before sync works.
-2. **Server management:** Once approved, `POST /api/v1/operator/servers` registers a server, `PATCH /api/v1/operator/servers/{server_id}` updates it. All operator endpoints require `X-API-Key` header.
-3. **Server IDs are operator-chosen slugs** (e.g., `vnet`, `hotline-central-hub`), not UUIDs. Must match `^[a-z0-9_-]{3,32}$`.
-4. **Heartbeat is separate from sync** — live data shows distinct `last_heartbeat` and `last_sync` timestamps. Heartbeat mechanism is unknown (may be a lightweight GET or embedded in the sync).
-5. **Content push endpoint** — likely `PATCH /api/v1/operator/servers/{id}` with content arrays in the body. Exact payload format awaiting confirmation from fogWraith.
-
-The server has no HTTP client capability today. All content (flat news, threaded news, file listings) is accessible via existing internal APIs (`mobius_flat_news_t`, `mobius_threaded_news_t`, `hl_file_store_t`).
+All content (flat news, threaded news, file listings) is accessible via existing internal APIs (`mobius_flat_news_t`, `mobius_threaded_news_t`, `hl_file_store_t`).
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Periodically sync server content to a Mnemosyne instance over HTTP
-- Support configurable Mnemosyne URL, operator API key, server ID slug, sync interval, and content types
-- Integrate with the existing kqueue event loop using a timer (no threads for sync scheduling)
+- Implement the full Mnemosyne sync protocol: heartbeat, chunked full sync, incremental sync, drift detection, deregistration
+- Support configurable Mnemosyne URL, `msv_`-prefixed server API key, and per-content-type indexing toggles
+- Integrate with the platform event loop using timers (heartbeat, periodic check, chunk tick)
+- Persist sync state so interrupted syncs can resume after restart
+- Push incremental changes in response to content events (post, upload, delete)
 - Gracefully handle Mnemosyne unavailability without affecting Hotline server operation
-- Authenticate with Mnemosyne using the operator API key (`X-API-Key` header)
 
 **Non-Goals:**
 - Implementing the Mnemosyne indexing service itself
-- Automating operator registration/approval (this is a one-time out-of-band step)
 - Supporting HTTPS for the sync connection (HTTP only for initial implementation)
-- Real-time push on content changes (periodic batch sync only)
-- Implementing the client-side Mnemosyne search API (that's a Hotline client concern)
+- Implementing the client-side Mnemosyne search API
 - Thread-safe concurrent sync (sync runs in the main event loop)
+- Operator registration flow (one-time out-of-band step)
+- Message board sync — the flat message board (`MessageBoard.txt`) stores posts as raw unstructured text (prepend-only, no post IDs, no pagination, no deletion). The Mnemosyne API expects structured posts with `{id, nick, body, timestamp}`. Syncing it requires a text parser to extract posts from the raw format, which is a separate change. Files and news are fully supported.
 
 ## Decisions
 
-### 1. Minimal HTTP/1.1 client using BSD sockets
+### 1. Port sync logic to C (not run the Lua plugin)
 
-**Decision:** Implement a minimal HTTP/1.1 client using raw BSD sockets rather than adding a dependency like libcurl. Must support GET, POST, and PATCH methods.
+**Decision:** Implement the Mnemosyne sync protocol directly in C, not by embedding a Lua runtime to run the reference plugin.
 
-**Rationale:** The project targets Mac OS X 10.4 Tiger (PowerPC) on the main branch. libcurl may not be available or may require a specific build. The sync only needs HTTP GET/POST/PATCH with JSON bodies and basic response status parsing. A minimal implementation (~300 lines) keeps the dependency footprint zero and matches the project's existing socket-based networking style.
-
-**Alternatives considered:**
-- libcurl: Full-featured but adds a dependency that complicates the Tiger build.
-- NSURLConnection (Obj-C): Only available in the GUI target, not the CLI server.
-
-### 2. JSON serialization via string formatting
-
-**Decision:** Build JSON payloads using snprintf/string formatting rather than adding a JSON library.
-
-**Rationale:** The sync payloads are structured JSON objects with known shapes. The server already uses snprintf extensively. A JSON library (cJSON, jansson) adds a dependency for minimal benefit. Response parsing only needs HTTP status codes and simple field extraction.
+**Rationale:** Lemoniscate has no Lua runtime and adding one (Lua 5.1 + the `server.*` API bindings) would be a much larger project than porting ~500 lines of state machine logic to C. We have direct access to all the content managers that the Lua plugin accesses through the `server.*` API.
 
 **Alternatives considered:**
-- cJSON: Lightweight but still an external dependency. Would be warranted if we needed complex JSON response parsing.
+- Embed Lua 5.1: Adds a runtime dependency, requires binding all `server.*` APIs. Overkill when the sync logic is straightforward.
 
-### 3. Timer-based sync in the kqueue event loop
+### 2. Chunked sync with state machine (matching reference plugin)
 
-**Decision:** Use `EVFILT_TIMER` in the existing kqueue event loop to trigger periodic sync, with non-blocking socket I/O for the HTTP request.
+**Decision:** Implement chunked sync exactly as the reference plugin does — one content type at a time, one chunk per 2-second timer tick, with a sync_id for correlation and a finalize flag on the last chunk.
 
-**Rationale:** This matches the server's existing architecture (kqueue for everything). The sync runs in the main event loop, avoiding thread synchronization issues. If the HTTP request blocks (DNS resolution, slow Mnemosyne), it will briefly stall the event loop — acceptable for a background sync that runs every 15 minutes by default.
+**Rationale:** This is the protocol that the Mnemosyne server expects. Deviating (e.g., sending everything in one POST) would likely break the server-side processing. The chunked approach also avoids large payloads and spreads I/O over time.
+
+### 3. API key via query parameter (not header)
+
+**Decision:** Send the API key as `?api_key=msv_...` on every POST URL, not via the `X-API-Key` header.
+
+**Rationale:** The reference plugin uses query parameter authentication. The Mnemosyne server may not check the header for sync endpoints. Follow the reference implementation exactly.
+
+### 4. Sync state persistence for crash recovery
+
+**Decision:** Persist the sync cursor (content type, sync_id, chunk_index, position) to a file in the config directory. On startup, check for an interrupted sync and resume it.
+
+**Rationale:** The reference plugin uses `server.save()` for this. A chunked file sync of a large server could take minutes — losing progress on crash means re-scanning thousands of files. Persistence is cheap (one small file write per chunk).
+
+### 5. JSON serialization via string formatting
+
+**Decision:** Build JSON payloads using snprintf/dynamic buffer rather than a JSON library.
+
+**Rationale:** The sync payloads are structured JSON with known shapes (arrays of objects with fixed fields). A JSON string escaping utility handles special characters. This avoids adding cJSON or jansson as a dependency.
+
+### 6. Incremental sync via transaction handler hooks
+
+**Decision:** Hook into the existing transaction handler responses to detect content changes and trigger incremental sync POSTs. Specifically: after message board post/delete, after file upload/delete/move, after news article post.
+
+**Rationale:** The reference plugin uses Janus event hooks (`on_msgboard_post`, `on_upload`, `on_delete_file`, etc.). In Lemoniscate, we can trigger incremental syncs from the transaction handler return path — when a handler successfully modifies content, fire the corresponding incremental sync.
+
+### 7. Three timers: heartbeat (5 min), periodic check (15 min), chunk tick (2 sec)
+
+**Decision:** Register three event loop timers matching the reference plugin's intervals.
+
+**Rationale:** The heartbeat keeps the server "alive" in Mnemosyne's view. The periodic check detects content drift (e.g., files changed outside Hotline). The chunk tick drives the chunked sync state machine — it's only active during a sync, sending one chunk per tick to avoid overwhelming Mnemosyne.
+
+### 8. Drop box directory filtering
+
+**Decision:** Skip directories with drop box access during file sync, matching the reference plugin behavior.
+
+**Rationale:** Drop boxes are for user uploads and shouldn't be indexed in a public search engine.
+
+### 9. Exponential backoff with sync suspension
+
+**Decision:** When Mnemosyne requests fail, apply exponential backoff (2s → 4s → 8s → 16s → 32s) up to 5 retries. After 5 consecutive failures, suspend all sync activity (stop chunk tick timer, stop incremental POSTs, drain the incremental queue). The heartbeat timer continues at its normal 5-minute interval as a health probe. When a heartbeat succeeds, reset backoff and resume sync with a fresh full sync.
+
+**Rationale:** The reference Lua plugin doesn't handle this — it just logs warnings and keeps trying. For a C server that blocks the event loop on each POST, we need to fail fast and stop wasting cycles against an unreachable Mnemosyne. The heartbeat is the lightest-weight request and already runs on a long interval, so it's the ideal canary to detect recovery without spamming.
+
+**State machine:**
+
+```
+ACTIVE ──(5 consecutive failures)──▶ SUSPENDED
+  │                                      │
+  │◀──(heartbeat succeeds)───────────────┘
+```
+
+### 10. Queued incremental sync (not inline)
+
+**Decision:** Incremental sync events (post, upload, delete) are queued in a bounded ring buffer (64 entries) and drained on the next chunk tick or heartbeat, not sent inline during the transaction handler.
+
+**Rationale:** Sending an HTTP POST inside a transaction handler blocks the event loop while a user is waiting for their upload/post to complete. Queuing decouples content changes from network I/O. If the queue is full, the oldest entry is dropped — the periodic drift check will catch any missed changes within 15 minutes.
 
 **Alternatives considered:**
-- Separate pthread for sync: Adds threading complexity and requires locking around content access (flat news, threaded news, file store). Not worth it for a periodic background task.
-- SIGALRM timer: Less precise and harder to manage alongside kqueue.
+- Inline POST in handler: Simpler but blocks the user's transaction on network I/O. A slow or unreachable Mnemosyne would make uploads feel laggy.
+- Unbounded queue: Memory leak risk if Mnemosyne is down for a long time and content changes rapidly. Bounded queue with drop is safer.
 
-### 4. Operator-chosen server ID slug (not generated UUID)
+### 11. DNS caching
 
-**Decision:** The server ID is a human-readable slug configured by the operator in config.yaml, not a generated UUID.
+**Decision:** Resolve the Mnemosyne hostname once on startup (and on SIGHUP config reload) and cache the IP address. All subsequent HTTP POSTs connect to the cached IP directly.
 
-**Rationale:** Live API probing confirmed that Mnemosyne server IDs are operator-chosen strings matching `^[a-z0-9_-]{3,32}$` (e.g., `vnet`, `hotline-central-hub`). This is a configuration value, not something the server generates.
+**Rationale:** `gethostbyname` is blocking and hits the DNS resolver on every call. During a chunked sync with 2-second ticks, that's a DNS lookup every 2 seconds. Caching avoids this and eliminates DNS as a source of event loop stalls. The cached address is refreshed on config reload or after sync suspension recovery.
 
-**Alternatives considered (previously):**
-- UUID v4 generation: This was the original design assumption, but live data showed slug-based IDs. Dropped.
+### 12. Aggressive timeouts (2s connect, 5s total)
 
-### 5. Content sync as full snapshots
+**Decision:** Set HTTP connect timeout to 2 seconds and total request timeout to 5 seconds, tighter than the reference plugin's defaults.
 
-**Decision:** Each sync cycle sends a full snapshot of enabled content types, not incremental diffs.
+**Rationale:** Each POST blocks the event loop. A 2-second connect timeout means an unreachable Mnemosyne stalls the loop for at most 2 seconds per attempt. Combined with the backoff/suspension mechanism, the worst case is 5 attempts × 2 seconds = 10 seconds of total stall before suspension kicks in.
 
-**Rationale:** The content volume of a typical Hotline server (hundreds of posts/files, not millions) makes full snapshots feasible. Full snapshots are simpler to implement and reason about. The exact API may support incremental updates, but snapshots work as a starting point.
+### 13. Tiered logging (log escalation, not every failure)
 
-**Alternatives considered:**
-- Incremental sync with change tracking: Requires tracking modification timestamps across all content types. Can be added later if needed.
+**Decision:** Log the first failure at WARN level. During backoff, log once per escalation level (not per retry). On suspension, log once at WARN with "will resume when heartbeat succeeds." On recovery, log once at INFO. During suspension, do not log skipped heartbeat failures.
 
-### 6. Out-of-band operator registration
-
-**Decision:** Operator registration and approval happen outside the server software. The operator registers via curl/browser, gets approved by the Mnemosyne admin, then enters the API key and server ID in config.yaml.
-
-**Rationale:** Registration is a one-time setup step requiring admin approval. Automating it in the server binary adds complexity for no recurring benefit. The server only needs the resulting API key and server ID.
+**Rationale:** If Mnemosyne is down for hours, the log should have ~3 lines about it, not thousands. Operators can see "sync suspended" and "sync resumed" — that's enough.
 
 ## Risks / Trade-offs
 
-- **[Undocumented push API]** → The exact content push payload format is not publicly documented. Our best hypothesis is `PATCH /api/v1/operator/servers/{id}` with content arrays. Mitigation: awaiting confirmation from fogWraith. The design is structured so the sync payload builder is isolated and easy to adjust once the API is confirmed.
+- **[Blocking event loop during HTTP POST]** → Each chunk POST runs synchronously in the event loop. Mitigation: DNS caching eliminates resolver stalls. 2-second connect timeout caps the worst case. Chunks are small. 2-second tick spacing gives breathing room. Exponential backoff and suspension prevent sustained stalls against an unreachable server.
 
-- **[Blocking event loop during sync]** → The HTTP request runs in the main kqueue loop. DNS resolution and slow Mnemosyne responses could stall transaction processing for seconds. Mitigation: set aggressive socket timeouts (5 seconds connect, 10 seconds total). For a 15-minute sync interval, brief stalls are acceptable.
+- **[No HTTPS]** → API key is sent in plaintext as a query parameter. Mitigation: `msv_` keys only authorize content push to a specific server. Mnemosyne content is public. HTTPS can be added later.
 
-- **[No HTTPS support]** → Sync data including the API key is sent in plaintext. Mitigation: Mnemosyne content is public anyway (it's an indexing service for discovery). The API key only authorizes content push, not destructive operations. HTTPS can be added later if needed.
+- **[Sync state file corruption]** → If the server crashes while writing the sync cursor file, the cursor may be corrupt. Mitigation: write to a temp file and rename (atomic on POSIX). On corrupt/missing cursor, start a fresh full sync. Discard stale cursors older than 1 hour.
 
-- **[Large file listings]** → Servers with thousands of files could produce large JSON payloads. Mitigation: file sync only includes metadata (name, path, size, type, comment), not file contents. Even 10,000 files produce a manageable payload (~2-5 MB).
+- **[Large file trees]** → Servers with thousands of files will have many chunks. Mitigation: the 2-second tick and chunking prevent memory spikes. Pending directory list is bounded by actual filesystem depth. JSON buffers are allocated per-chunk and freed after POST.
 
-- **[Operator approval delay]** → New operators must wait for manual approval before sync works. Mitigation: this is a Mnemosyne design choice, not something we can change. Document it clearly so operators know to register ahead of time.
+- **[Incremental queue overflow]** → If Mnemosyne is down and content changes rapidly, the 64-entry ring buffer will drop old entries. Mitigation: the periodic drift check catches discrepancies within 15 minutes and triggers a targeted full sync.
+
+- **[Mnemosyne extended outage]** → Sync suspended, heartbeat probing every 5 minutes. Mitigation: automatic recovery when heartbeat succeeds. Fresh full sync on resume ensures consistency. One log line on suspension, one on recovery.
 
 ## Open Questions
 
-- **Exact content push endpoint and payload** — Is it `PATCH /api/v1/operator/servers/{id}` with content arrays? Or a separate content-specific endpoint? Awaiting fogWraith's response.
-- **Heartbeat mechanism** — Live data shows `last_heartbeat` separate from `last_sync`. Is heartbeat a lightweight ping, or does it piggyback on the sync request?
-- **Server creation** — Does `POST /api/v1/operator/servers` auto-create the server from the first sync, or must it be explicitly created with metadata before content can be pushed?
+- **Sync cursor file format** — Use YAML (consistent with other config files) or a simpler format? YAML avoids adding a serializer but requires parsing with libyaml. **Resolved:** Using a simple `key: value` text format — avoids libyaml dependency for a single small file.
+
+- **How does the `msv_` key get provisioned?** — **Resolved:** Operators register at https://agora.vespernet.net/login to obtain an `mop_`-prefixed operator key, then add their server through the Agora portal to receive an `msv_`-prefixed server API key. The default Mnemosyne instance is `tracker.vespernet.net:8980`.
