@@ -366,9 +366,10 @@ int main(int argc, char **argv)
     /* Set text encoding from config (default MacRoman for PPC) */
     srv->use_mac_roman = (strcmp(srv->config.encoding, "utf-8") != 0);
 
-    /* Load config — try plist first (macOS native), then YAML fallback */
+    /* Load config — try plist first on macOS, then YAML */
     int config_loaded = 0;
     if (config_dir) {
+#ifdef __APPLE__
         /* Try plist in ~/Library/Preferences/ */
         char plist_path[2048];
         const char *home = getenv("HOME");
@@ -388,7 +389,8 @@ int main(int argc, char **argv)
                 config_loaded = 1;
             }
         }
-        /* Fall back to YAML */
+#endif
+        /* Load YAML config */
         if (!config_loaded) {
             if (mobius_load_config(&srv->config, config_dir) == 0) {
                 hl_log_info(srv->logger, "Loaded config from %s", config_dir);
@@ -512,15 +514,19 @@ int main(int argc, char **argv)
 
     hl_log_info(srv->logger, "Lemoniscate starting on port %d", port);
 
-    /* Bonjour registration */
+    /* Bonjour registration (macOS only) */
     hl_bonjour_reg_t *bonjour = NULL;
     if (srv->config.enable_bonjour) {
+#ifdef __APPLE__
         bonjour = hl_bonjour_register(srv->config.name, port);
         if (bonjour) {
             hl_log_info(srv->logger, "Registered with Bonjour as \"%s\"", srv->config.name);
         } else {
             hl_log_error(srv->logger, "Failed to register with Bonjour");
         }
+#else
+        hl_log_info(srv->logger, "Bonjour is not supported on this platform");
+#endif
     }
 
     /* Initial tracker registration */

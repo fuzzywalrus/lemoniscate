@@ -23,7 +23,7 @@
 #include "hotline/file_path.h"
 #include "mobius/transaction_handlers.h"
 
-#include <sys/event.h>
+#include "hotline/platform/platform_event.h"
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <netinet/in.h>
@@ -342,15 +342,13 @@ static int create_listener(const char *interface, int port)
 
 /* --- Disconnect a client and clean up --- */
 
-static void disconnect_client(hl_server_t *srv, hl_client_conn_t *cc, int kq)
+static void disconnect_client(hl_server_t *srv, hl_client_conn_t *cc, hl_event_loop_t *evloop)
 {
     hl_log_info(srv->logger, "Client disconnected: %s (id=%d)",
                 cc->remote_addr, hl_read_u16(cc->id));
 
-    /* Remove from kqueue (closing fd does this automatically, but be explicit) */
-    struct kevent change;
-    EV_SET(&change, cc->fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
-    kevent(kq, &change, 1, NULL, 0, NULL);
+    /* Remove from event loop (closing fd does this automatically, but be explicit) */
+    hl_event_remove_fd(evloop, cc->fd);
 
     if (cc->conn) {
         hl_conn_close(cc->conn);
@@ -381,13 +379,13 @@ static void disconnect_client(hl_server_t *srv, hl_client_conn_t *cc, int kq)
 
 /* --- Process incoming data from a client --- */
 
-static void process_client_data(hl_server_t *srv, hl_client_conn_t *cc, int kq)
+static void process_client_data(hl_server_t *srv, hl_client_conn_t *cc, hl_event_loop_t *evloop)
 {
     /* Read available data into the client's accumulation buffer */
     if (cc->read_buf_len >= sizeof(cc->read_buf)) {
         hl_log_error(srv->logger, "Client %d buffer full, disconnecting",
                      hl_read_u16(cc->id));
-        disconnect_client(srv, cc, kq);
+        disconnect_client(srv, cc, evloop);
         return;
     }
 
@@ -403,7 +401,7 @@ static void process_client_data(hl_server_t *srv, hl_client_conn_t *cc, int kq)
     }
     if (n < 0 && errno == EINTR) return;
     if (n <= 0) {
-        disconnect_client(srv, cc, kq);
+        disconnect_client(srv, cc, evloop);
         return;
     }
     cc->read_buf_len += (size_t)n;
@@ -524,7 +522,8 @@ static void process_client_data(hl_server_t *srv, hl_client_conn_t *cc, int kq)
 /* --- Handle a new client connection (handshake + login) --- */
 
 static void handle_new_connection(hl_server_t *srv, int client_fd,
-                                  struct sockaddr_in *client_addr, int kq,
+                                  struct sockaddr_in *client_addr,
+                                  hl_event_loop_t *evloop,
                                   hl_tls_conn_t *tls_conn)
 {
     char ip_str[INET_ADDRSTRLEN];
@@ -1008,18 +1007,16 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
 
     hl_transaction_free(&login_tran);
 
-    /* Clear socket timeouts — client is now managed by kqueue */
+    /* Clear socket timeouts — client is now managed by event loop */
     tv.tv_sec = 0;
     tv.tv_usec = 0;
     setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
-    /* Register client fd with kqueue for read events */
-    struct kevent change;
-    EV_SET(&change, client_fd, EVFILT_READ, EV_ADD, 0, 0, cc);
-    if (kevent(kq, &change, 1, NULL, 0, NULL) < 0) {
-        hl_log_error(srv->logger, "Failed to register client fd with kqueue");
-        disconnect_client(srv, cc, kq);
+    /* Register client fd with event loop for read events */
+    if (hl_event_add_fd(evloop, client_fd, cc) < 0) {
+        hl_log_error(srv->logger, "Failed to register client fd with event loop");
+        disconnect_client(srv, cc, evloop);
         return;
     }
 }
@@ -1655,27 +1652,26 @@ int hl_server_listen_and_serve(hl_server_t *srv)
         }
     }
 
-    int kq = kqueue();
-    if (kq < 0) {
-        hl_log_error(srv->logger, "kqueue() failed: %s", strerror(errno));
+    hl_event_loop_t *evloop = hl_event_loop_new();
+    if (!evloop) {
+        hl_log_error(srv->logger, "Failed to create event loop: %s", strerror(errno));
         return -1;
     }
 
-    struct kevent changes[6];
-    int nchanges = 0;
-
-    EV_SET(&changes[nchanges++], srv->listen_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-    EV_SET(&changes[nchanges++], srv->transfer_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+    if (hl_event_add_fd(evloop, srv->listen_fd, NULL) < 0 ||
+        hl_event_add_fd(evloop, srv->transfer_fd, NULL) < 0) {
+        hl_log_error(srv->logger, "Failed to register listener fds: %s", strerror(errno));
+        hl_event_loop_free(evloop);
+        return -1;
+    }
     if (srv->tls_listen_fd >= 0)
-        EV_SET(&changes[nchanges++], srv->tls_listen_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+        hl_event_add_fd(evloop, srv->tls_listen_fd, NULL);
     if (srv->tls_transfer_fd >= 0)
-        EV_SET(&changes[nchanges++], srv->tls_transfer_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-    EV_SET(&changes[nchanges++], 1, EVFILT_TIMER, EV_ADD, 0,
-           HL_IDLE_CHECK_INTERVAL * 1000, NULL);
+        hl_event_add_fd(evloop, srv->tls_transfer_fd, NULL);
 
-    if (kevent(kq, changes, nchanges, NULL, 0, NULL) < 0) {
-        hl_log_error(srv->logger, "kevent() register failed: %s", strerror(errno));
-        close(kq);
+    if (hl_event_add_timer(evloop, 1, HL_IDLE_CHECK_INTERVAL * 1000) < 0) {
+        hl_log_error(srv->logger, "Failed to register timer: %s", strerror(errno));
+        hl_event_loop_free(evloop);
         return -1;
     }
 
@@ -1685,21 +1681,19 @@ int hl_server_listen_and_serve(hl_server_t *srv)
     int tracker_elapsed = HL_TRACKER_UPDATE_FREQ; /* trigger on first tick */
 
     while (!srv->shutdown) {
-        struct kevent events[64];
-        struct timespec timeout = {1, 0};
+        hl_event_t events[64];
 
-        int nev = kevent(kq, NULL, 0, events, 64, &timeout);
+        int nev = hl_event_poll(evloop, events, 64, 1000);
         if (nev < 0) {
-            if (errno == EINTR) continue;
-            hl_log_error(srv->logger, "kevent() wait failed: %s", strerror(errno));
+            hl_log_error(srv->logger, "Event poll failed: %s", strerror(errno));
             break;
         }
 
         int i;
         for (i = 0; i < nev; i++) {
-            struct kevent *ev = &events[i];
+            hl_event_t *ev = &events[i];
 
-            if (ev->filter == EVFILT_TIMER) {
+            if (ev->type == HL_EVENT_TIMER) {
                 /* Idle check — maps to Go keepaliveHandler() */
                 int count = 0;
                 hl_client_conn_t **clients = srv->client_mgr->vt->list(
@@ -1748,7 +1742,7 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                     }
                 }
             }
-            else if ((int)ev->ident == srv->listen_fd) {
+            else if (ev->fd == srv->listen_fd) {
                 /* New connection on protocol port */
                 struct sockaddr_in client_addr;
                 socklen_t addr_len = sizeof(client_addr);
@@ -1756,10 +1750,11 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                                        (struct sockaddr *)&client_addr,
                                        &addr_len);
                 if (client_fd >= 0) {
-                    handle_new_connection(srv, client_fd, &client_addr, kq, NULL);
+                    handle_new_connection(srv, client_fd, &client_addr,
+                                         evloop, NULL);
                 }
             }
-            else if ((int)ev->ident == srv->transfer_fd) {
+            else if (ev->fd == srv->transfer_fd) {
                 /* New connection on file transfer port */
                 struct sockaddr_in client_addr;
                 socklen_t addr_len = sizeof(client_addr);
@@ -1771,7 +1766,7 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                 }
             }
             else if (srv->tls_listen_fd >= 0 &&
-                     (int)ev->ident == srv->tls_listen_fd) {
+                     ev->fd == srv->tls_listen_fd) {
                 /* New TLS connection on protocol port */
                 struct sockaddr_in client_addr;
                 socklen_t addr_len = sizeof(client_addr);
@@ -1783,13 +1778,12 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                                                           client_fd);
                     if (tconn) {
                         handle_new_connection(srv, tconn->fd, &client_addr,
-                                              kq, tconn);
+                                              evloop, tconn);
                     }
-                    /* hl_tls_accept closes fd on failure */
                 }
             }
             else if (srv->tls_transfer_fd >= 0 &&
-                     (int)ev->ident == srv->tls_transfer_fd) {
+                     ev->fd == srv->tls_transfer_fd) {
                 /* New TLS connection on file transfer port */
                 struct sockaddr_in client_addr;
                 socklen_t addr_len = sizeof(client_addr);
@@ -1804,14 +1798,15 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                     }
                 }
             }
-            else if (ev->filter == EVFILT_READ && ev->udata != NULL) {
+            else if (ev->type == HL_EVENT_EOF && ev->udata != NULL) {
+                /* Client disconnected */
+                hl_client_conn_t *cc = (hl_client_conn_t *)ev->udata;
+                disconnect_client(srv, cc, evloop);
+            }
+            else if (ev->type == HL_EVENT_READ && ev->udata != NULL) {
                 /* Data available from a connected client */
                 hl_client_conn_t *cc = (hl_client_conn_t *)ev->udata;
-                if (ev->flags & EV_EOF) {
-                    disconnect_client(srv, cc, kq);
-                } else {
-                    process_client_data(srv, cc, kq);
-                }
+                process_client_data(srv, cc, evloop);
             }
         }
     }
@@ -1836,6 +1831,6 @@ int hl_server_listen_and_serve(hl_server_t *srv)
         free(clients);
     }
 
-    close(kq);
+    hl_event_loop_free(evloop);
     return 0;
 }

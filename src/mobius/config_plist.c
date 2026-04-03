@@ -2,10 +2,13 @@
  * config_plist.c - macOS plist configuration loader
  *
  * Uses CoreFoundation's CFPropertyList API to read server configuration
- * from a standard macOS property list file. Tiger 10.4 compatible.
+ * from a standard macOS property list file. macOS only.
  */
 
 #include "mobius/config_plist.h"
+
+#ifdef __APPLE__
+
 #include <CoreFoundation/CoreFoundation.h>
 #include <string.h>
 #include <stdio.h>
@@ -163,3 +166,15 @@ int mobius_load_config_plist(hl_config_t *cfg, const char *plist_path)
     CFRelease(plist);
     return 0;
 }
+
+#else /* !__APPLE__ */
+
+#include "hotline/config.h"
+
+int mobius_load_config_plist(hl_config_t *cfg, const char *path)
+{
+    (void)cfg; (void)path;
+    return -1; /* plist not supported on this platform */
+}
+
+#endif /* __APPLE__ */

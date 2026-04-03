@@ -1,13 +1,13 @@
 /*
  * bonjour.c - Bonjour/mDNS service registration via dns_sd.h
  *
- * Maps to: oleksandr/bonjour usage in cmd/mobius-hotline-server/main.go
- *
- * Tiger's dns_sd.h provides DNSServiceRegister() which is simpler
- * than the Go wrapper — just one function call.
+ * macOS only. On Linux, this file compiles to stubs that return NULL.
  */
 
 #include "hotline/bonjour.h"
+
+#ifdef __APPLE__
+
 #include <dns_sd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,3 +61,20 @@ void hl_bonjour_unregister(hl_bonjour_reg_t *reg)
     }
     free(reg);
 }
+
+#else /* !__APPLE__ */
+
+#include <stddef.h>
+
+hl_bonjour_reg_t *hl_bonjour_register(const char *service_name, int port)
+{
+    (void)service_name; (void)port;
+    return NULL;
+}
+
+void hl_bonjour_unregister(hl_bonjour_reg_t *reg)
+{
+    (void)reg;
+}
+
+#endif /* __APPLE__ */

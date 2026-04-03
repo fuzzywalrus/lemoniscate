@@ -1,10 +1,8 @@
 /*
- * encoding.c - MacRoman <-> UTF-8 via CoreFoundation
+ * encoding_cf.c - MacRoman <-> UTF-8 via CoreFoundation (macOS backend)
  *
- * Maps to: golang.org/x/text/encoding/charmap usage in hotline/server.go
- *
- * On Mac OS X Tiger, CoreFoundation provides CFStringConvertEncoding
- * with kCFStringEncodingMacRoman — the definitive MacRoman tables.
+ * Uses CoreFoundation's CFString APIs with kCFStringEncodingMacRoman.
+ * This file is only compiled on macOS (Darwin).
  */
 
 #include "hotline/encoding.h"

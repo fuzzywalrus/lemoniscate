@@ -1,9 +1,12 @@
 /*
- * tls.h - TLS transport abstraction (SecureTransport)
+ * tls.h - TLS transport abstraction
  *
  * Provides a connection wrapper that routes I/O through either
- * plain BSD sockets or SecureTransport SSL, and a server-side
- * TLS context for accepting TLS connections.
+ * plain BSD sockets or TLS, and a server-side TLS context for
+ * accepting TLS connections.
+ *
+ * macOS: SecureTransport backend (tls_sectransport.c)
+ * Linux: OpenSSL backend (tls_openssl.c)
  */
 
 #ifndef HOTLINE_TLS_H
@@ -11,31 +14,19 @@
 
 #include <stdint.h>
 #include <stddef.h>
-
-#ifdef __APPLE__
-#include <Security/Security.h>
-#include <Security/SecureTransport.h>
-#endif
+#include "hotline/platform/platform_tls.h"
 
 /* --- Connection wrapper --- */
 
 typedef struct hl_tls_conn {
-    int fd;                    /* underlying socket (kept for kqueue) */
-#ifdef __APPLE__
-    SSLContextRef ssl_ctx;     /* NULL for plain connections */
-#else
-    void *ssl_ctx;
-#endif
+    int fd;                    /* underlying socket (kept for event loop) */
+    HL_TLS_CONN_FIELDS         /* platform-specific: SSLContextRef or SSL* */
 } hl_tls_conn_t;
 
 /* --- Server-side TLS context --- */
 
 typedef struct {
-#ifdef __APPLE__
-    CFArrayRef identity_certs; /* SecIdentity + optional chain certs */
-#else
-    void *identity_certs;
-#endif
+    HL_TLS_CTX_FIELDS          /* platform-specific: CFArrayRef or SSL_CTX* */
     int enabled;               /* 1 if cert+key loaded successfully */
 } hl_tls_server_ctx_t;
 
