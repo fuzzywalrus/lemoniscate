@@ -59,4 +59,22 @@ int hl_http_post_to_ip(const char *ip, const char *hostname, int port,
                        const char *content_type,
                        int connect_timeout_ms, int read_timeout_ms);
 
+/*
+ * hl_http_get - Send an HTTP GET request and read the response body.
+ *
+ * host:         Hostname to connect to (also used for DNS resolution)
+ * port:         TCP port
+ * path:         URL path with query string
+ * out_body:     Caller-provided buffer to receive response body
+ * out_body_size: Size of out_body buffer
+ * connect_timeout_ms: TCP connect timeout in milliseconds
+ * read_timeout_ms:    Response read timeout in milliseconds
+ *
+ * Returns the HTTP status code on success, -1 on error.
+ * out_body is null-terminated on success.
+ */
+int hl_http_get(const char *host, int port, const char *path,
+                char *out_body, size_t out_body_size,
+                int connect_timeout_ms, int read_timeout_ms);
+
 #endif /* HOTLINE_HTTP_CLIENT_H */
