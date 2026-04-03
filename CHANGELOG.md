@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.1.5 — 2026-04-03
+
+### Added
+
+- **Mnemosyne search integration**: Server content (files, news) is synced to a Mnemosyne indexing instance, making the server discoverable and searchable via Hotline Navigator. Default instance: `tracker.vespernet.net:8980`. Register at `agora.vespernet.net` for an API key.
+- **HTTP client**: Minimal blocking HTTP POST/GET client for Mnemosyne sync and search verification.
+- **JSON builder**: String escaping and dynamic buffer utilities for building JSON payloads without a library dependency.
+- **Mnemosyne integration tests**: 18 live integration tests against the VesperNet Mnemosyne instance (requires `MSV_API_KEY` env var, skips gracefully without it).
+- **New config section**: `Mnemosyne` block in `config.yaml` with `url`, `api_key`, `index_files`, `index_news`.
+
+### Fixed
+
+- **File transfer memory leak**: `resume_data` was not freed when transfers were deleted or the manager was destroyed.
+- **File store missing free function**: Added `hl_file_store_free()`.
+
 ## 0.1.4 — 2026-03-29
 
 ### Added

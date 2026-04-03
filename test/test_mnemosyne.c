@@ -148,15 +148,19 @@ static void test_heartbeat_json(void)
 {
     json_buf_t buf;
     json_buf_init(&buf);
-    mn_build_heartbeat_json(&buf, "My Server", "A cool server", 0, 42, 10);
+    mn_build_heartbeat_json(&buf, "My Server", "A cool server",
+                            "example.com:5500", 0, 3, 10, 42, 1048576LL);
 
     assert(strstr(buf.data, "\"server_name\": \"My Server\"") != NULL);
-    assert(strstr(buf.data, "\"description\": \"A cool server\"") != NULL);
-    assert(strstr(buf.data, "\"post_count\": 0") != NULL);
-    assert(strstr(buf.data, "\"file_count\": 42") != NULL);
-    assert(strstr(buf.data, "\"news_count\": 10") != NULL);
+    assert(strstr(buf.data, "\"server_description\": \"A cool server\"") != NULL);
+    assert(strstr(buf.data, "\"server_address\": \"example.com:5500\"") != NULL);
+    assert(strstr(buf.data, "\"counts\"") != NULL);
+    assert(strstr(buf.data, "\"msgboard_posts\": 0") != NULL);
+    assert(strstr(buf.data, "\"news_categories\": 3") != NULL);
+    assert(strstr(buf.data, "\"news_articles\": 10") != NULL);
+    assert(strstr(buf.data, "\"files\": 42") != NULL);
+    assert(strstr(buf.data, "\"total_file_size\": 1048576") != NULL);
 
-    /* Must be valid JSON structure */
     assert(buf.data[0] == '{');
     assert(buf.data[buf.len - 1] == '}');
 
@@ -264,11 +268,13 @@ static void test_incr_news_add_json(void)
     mn_build_incr_news_json(&buf, &entry);
 
     assert(strstr(buf.data, "\"mode\": \"incremental\"") != NULL);
+    assert(strstr(buf.data, "\"added_articles\": [") != NULL);
     assert(strstr(buf.data, "\"id\": 42") != NULL);
     assert(strstr(buf.data, "\"path\": \"General\"") != NULL);
     assert(strstr(buf.data, "\"title\": \"Hello World\"") != NULL);
     assert(strstr(buf.data, "\"body\": \"This is a test.\"") != NULL);
     assert(strstr(buf.data, "\"poster\": \"admin\"") != NULL);
+    assert(strstr(buf.data, "\"parent_id\": 0") != NULL);
 
     json_buf_free(&buf);
 }

@@ -320,7 +320,7 @@ int main(int argc, char **argv)
     }
 
     if (show_version) {
-        printf("lemoniscate 0.1.4\n");
+        printf("lemoniscate 0.1.5\n");
         return 0;
     }
 

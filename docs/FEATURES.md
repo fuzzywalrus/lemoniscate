@@ -1,6 +1,6 @@
 # Lemoniscate Server Features
 
-**Version 0.1.4** — A native Hotline server in C and Objective-C
+**Version 0.1.5** — A native Hotline server in C and Objective-C
 
 ---
 

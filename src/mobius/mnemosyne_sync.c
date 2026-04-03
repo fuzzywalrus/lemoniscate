@@ -34,8 +34,8 @@ static const int backoff_delays[] = { 2, 4, 8, 16, 32 };
 static int mn_post(mn_sync_t *sync, const char *endpoint,
                    const char *body, size_t body_len);
 static void mn_handle_post_result(mn_sync_t *sync, int status);
-static void mn_start_next_in_queue(mn_sync_t *sync);
 static void free_pending_dirs(mn_dir_entry_t *head);
+static int count_files_recursive(const char *root);
 
 /* --- sync_id generation --- */
 
@@ -267,20 +267,29 @@ static void mn_handle_post_result(mn_sync_t *sync, int status)
 /* --- JSON builders --- */
 
 void mn_build_heartbeat_json(json_buf_t *buf, const char *server_name,
-                             const char *description, int post_count,
-                             int file_count, int news_count)
+                             const char *description,
+                             const char *server_address,
+                             int msgboard_posts, int news_categories,
+                             int news_articles, int files,
+                             long long total_file_size)
 {
     json_buf_append_str(buf, "{");
     json_buf_add_string(buf, "server_name", server_name);
     json_buf_append_str(buf, ", ");
-    json_buf_add_string(buf, "description", description);
+    json_buf_add_string(buf, "server_description", description);
     json_buf_append_str(buf, ", ");
-    json_buf_add_int(buf, "post_count", post_count);
+    json_buf_add_string(buf, "server_address", server_address);
+    json_buf_append_str(buf, ", \"counts\": {");
+    json_buf_add_int(buf, "msgboard_posts", msgboard_posts);
     json_buf_append_str(buf, ", ");
-    json_buf_add_int(buf, "file_count", file_count);
+    json_buf_add_int(buf, "news_categories", news_categories);
     json_buf_append_str(buf, ", ");
-    json_buf_add_int(buf, "news_count", news_count);
-    json_buf_append_str(buf, "}");
+    json_buf_add_int(buf, "news_articles", news_articles);
+    json_buf_append_str(buf, ", ");
+    json_buf_add_int(buf, "files", files);
+    json_buf_append_str(buf, ", ");
+    json_buf_printf(buf, "\"total_file_size\": %lld", total_file_size);
+    json_buf_append_str(buf, "}}");
 }
 
 /* File chunk JSON with files array (populated by caller appending entries) */
@@ -331,7 +340,9 @@ void mn_build_incr_file_json(json_buf_t *buf, const mn_incr_entry_t *entry)
 
 void mn_build_incr_news_json(json_buf_t *buf, const mn_incr_entry_t *entry)
 {
-    json_buf_append_str(buf, "{\"mode\": \"incremental\", \"added\": [{");
+    json_buf_append_str(buf, "{\"mode\": \"incremental\", ");
+    json_buf_append_str(buf, "\"added_categories\": [], \"removed_categories\": [], ");
+    json_buf_append_str(buf, "\"added_articles\": [{");
     json_buf_printf(buf, "\"id\": %u, ", entry->article_id);
     json_buf_add_string(buf, "path", entry->path);
     json_buf_append_str(buf, ", ");
@@ -342,7 +353,9 @@ void mn_build_incr_news_json(json_buf_t *buf, const mn_incr_entry_t *entry)
     json_buf_add_string(buf, "poster", entry->poster);
     json_buf_append_str(buf, ", ");
     json_buf_add_string(buf, "date", entry->date_str);
-    json_buf_append_str(buf, "}]}");
+    json_buf_append_str(buf, ", ");
+    json_buf_printf(buf, "\"parent_id\": 0");
+    json_buf_append_str(buf, "}], \"removed_articles\": []}");
 }
 
 /* --- Heartbeat --- */
@@ -354,41 +367,42 @@ int mn_send_heartbeat(mn_sync_t *sync)
 
     hl_server_t *srv = sync->server;
 
-    /* Count files */
+    /* Count files recursively */
     int file_count = 0;
+    long long total_file_size = 0;
     if (sync->index_files && srv->config.file_root[0]) {
-        /* Quick count via directory scan */
-        DIR *d = opendir(srv->config.file_root);
-        if (d) {
-            struct dirent *ent;
-            while ((ent = readdir(d)) != NULL) {
-                if (ent->d_name[0] == '.') continue;
-                file_count++;
-            }
-            closedir(d);
-        }
+        file_count = count_files_recursive(srv->config.file_root);
+        /* TODO: accumulate total_file_size in count_files_recursive */
     }
 
-    /* Count news articles */
-    int news_count = 0;
+    /* Count news */
+    int news_categories = 0;
+    int news_articles = 0;
     if (sync->index_news && srv->threaded_news) {
         pthread_mutex_lock(&srv->threaded_news->mu);
+        news_categories = srv->threaded_news->category_count;
         int i;
         for (i = 0; i < srv->threaded_news->category_count; i++) {
-            news_count += srv->threaded_news->categories[i].article_count;
+            news_articles += srv->threaded_news->categories[i].article_count;
         }
         pthread_mutex_unlock(&srv->threaded_news->mu);
     }
 
     /* Update cached counts */
     sync->cached_file_count = file_count;
-    sync->cached_news_count = news_count;
+    sync->cached_news_count = news_articles;
+
+    /* Build server address string */
+    char server_address[128];
+    snprintf(server_address, sizeof(server_address), "%s:%d",
+             sync->parsed_url.host, srv->port);
 
     /* Build JSON */
     json_buf_t buf;
     json_buf_init(&buf);
     mn_build_heartbeat_json(&buf, srv->config.name, srv->config.description,
-                            0, file_count, news_count);
+                            server_address, 0, news_categories,
+                            news_articles, file_count, total_file_size);
 
     int status = mn_post(sync, "/api/v1/sync/heartbeat", buf.data, buf.len);
     json_buf_free(&buf);
@@ -475,27 +489,216 @@ static int count_files_recursive(const char *root)
     return count;
 }
 
-/* --- Full sync --- */
+/* --- Recursive file collector for full sync --- */
+
+static void collect_files_recursive(json_buf_t *buf, const char *root,
+                                    const char *rel_prefix, int *count,
+                                    long long *total_size)
+{
+    DIR *d = opendir(root);
+    if (!d) return;
+
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (ent->d_name[0] == '.') continue;
+
+        char full_path[2048];
+        snprintf(full_path, sizeof(full_path), "%s/%s", root, ent->d_name);
+
+        struct stat st;
+        if (stat(full_path, &st) != 0) continue;
+
+        char rel_path[1024];
+        if (rel_prefix[0]) {
+            snprintf(rel_path, sizeof(rel_path), "/%s/%s", rel_prefix, ent->d_name);
+        } else {
+            snprintf(rel_path, sizeof(rel_path), "/%s", ent->d_name);
+        }
+
+        if (*count > 0) json_buf_append_str(buf, ", ");
+
+        /* Format modified time as ISO date */
+        char modified[32] = "";
+        struct tm *tm = gmtime(&st.st_mtime);
+        if (tm) {
+            snprintf(modified, sizeof(modified), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+                     tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                     tm->tm_hour, tm->tm_min, tm->tm_sec);
+        }
+
+        json_buf_append_str(buf, "{");
+        json_buf_add_string(buf, "path", rel_path);
+        json_buf_append_str(buf, ", ");
+        json_buf_add_string(buf, "name", ent->d_name);
+        json_buf_append_str(buf, ", ");
+        json_buf_printf(buf, "\"size\": %lld", (long long)st.st_size);
+        json_buf_append_str(buf, ", ");
+        json_buf_add_string(buf, "type", S_ISDIR(st.st_mode) ? "fold" : "");
+        json_buf_append_str(buf, ", ");
+        json_buf_add_string(buf, "creator", "");
+        json_buf_append_str(buf, ", ");
+        json_buf_add_string(buf, "comment", "");
+        json_buf_append_str(buf, ", ");
+        json_buf_add_string(buf, "modified", modified);
+        json_buf_append_str(buf, ", ");
+        json_buf_add_bool(buf, "is_dir", S_ISDIR(st.st_mode));
+        json_buf_append_str(buf, "}");
+        (*count)++;
+        if (!S_ISDIR(st.st_mode))
+            *total_size += (long long)st.st_size;
+
+        if (S_ISDIR(st.st_mode)) {
+            char sub_rel[1024];
+            if (rel_prefix[0]) {
+                snprintf(sub_rel, sizeof(sub_rel), "%s/%s", rel_prefix, ent->d_name);
+            } else {
+                snprintf(sub_rel, sizeof(sub_rel), "%s", ent->d_name);
+            }
+            collect_files_recursive(buf, full_path, sub_rel, count, total_size);
+        }
+    }
+    closedir(d);
+}
+
+/* --- Full sync (single POST per content type) --- */
+
+static void do_full_file_sync(mn_sync_t *sync)
+{
+    hl_server_t *srv = sync->server;
+
+    hl_log_info(sync->logger, "Mnemosyne: starting file sync (full mode)");
+
+    json_buf_t buf;
+    json_buf_init(&buf);
+    json_buf_append_str(&buf, "{\"mode\": \"full\", \"files\": [");
+
+    int count = 0;
+    long long total_size = 0;
+    if (srv->config.file_root[0]) {
+        collect_files_recursive(&buf, srv->config.file_root, "", &count, &total_size);
+    }
+
+    json_buf_append_str(&buf, "]}");
+
+    int status = mn_post(sync, "/api/v1/sync/files", buf.data, buf.len);
+    json_buf_free(&buf);
+
+    mn_handle_post_result(sync, status);
+    if (status >= 200 && status < 300) {
+        hl_log_info(sync->logger, "Mnemosyne: file sync complete (%d entries)", count);
+        sync->cached_file_count = count;
+    }
+}
+
+static void do_full_news_sync(mn_sync_t *sync)
+{
+    hl_server_t *srv = sync->server;
+
+    if (!srv->threaded_news) return;
+
+    hl_log_info(sync->logger, "Mnemosyne: starting news sync (full mode)");
+
+    pthread_mutex_lock(&srv->threaded_news->mu);
+
+    json_buf_t buf;
+    json_buf_init(&buf);
+    json_buf_append_str(&buf, "{\"mode\": \"full\", \"categories\": [");
+
+    /* Categories */
+    int i;
+    for (i = 0; i < srv->threaded_news->category_count; i++) {
+        if (i > 0) json_buf_append_str(&buf, ", ");
+        char cat_path[256];
+        snprintf(cat_path, sizeof(cat_path), "/%s",
+                 srv->threaded_news->categories[i].name);
+        json_buf_append_str(&buf, "{");
+        json_buf_add_string(&buf, "path", cat_path);
+        json_buf_append_str(&buf, ", ");
+        json_buf_add_string(&buf, "name", srv->threaded_news->categories[i].name);
+        json_buf_append_str(&buf, "}");
+    }
+
+    json_buf_append_str(&buf, "], \"articles\": [");
+
+    /* Articles across all categories */
+    int first = 1;
+    int article_count = 0;
+    for (i = 0; i < srv->threaded_news->category_count; i++) {
+        tn_category_t *cat = &srv->threaded_news->categories[i];
+        char cat_path[256];
+        snprintf(cat_path, sizeof(cat_path), "/%s", cat->name);
+
+        int j;
+        for (j = 0; j < cat->article_count; j++) {
+            tn_article_t *art = &cat->articles[j];
+            if (!art->active) continue;
+
+            if (!first) json_buf_append_str(&buf, ", ");
+            first = 0;
+
+            /* Convert Hotline date to ISO string */
+            char date_str[32] = "1970-01-01T00:00:00Z";
+            uint32_t secs = ((uint32_t)art->date[4] << 24) |
+                            ((uint32_t)art->date[5] << 16) |
+                            ((uint32_t)art->date[6] << 8) |
+                             (uint32_t)art->date[7];
+            if (secs > 0) {
+                time_t unix_secs = (time_t)secs - 2082844800LL;
+                struct tm *tm = gmtime(&unix_secs);
+                if (tm) {
+                    snprintf(date_str, sizeof(date_str),
+                             "%04d-%02d-%02dT%02d:%02d:%02dZ",
+                             tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                             tm->tm_hour, tm->tm_min, tm->tm_sec);
+                }
+            }
+
+            json_buf_append_str(&buf, "{");
+            json_buf_printf(&buf, "\"id\": %u, ", art->id);
+            json_buf_add_string(&buf, "path", cat_path);
+            json_buf_append_str(&buf, ", ");
+            json_buf_add_string(&buf, "title", art->title);
+            json_buf_append_str(&buf, ", ");
+            json_buf_add_string(&buf, "poster", art->poster);
+            json_buf_append_str(&buf, ", ");
+            json_buf_add_string(&buf, "date", date_str);
+            json_buf_append_str(&buf, ", ");
+            json_buf_printf(&buf, "\"parent_id\": %u, ", art->parent_id);
+            json_buf_add_string(&buf, "body", art->data);
+            json_buf_append_str(&buf, "}");
+            article_count++;
+        }
+    }
+
+    json_buf_append_str(&buf, "]}");
+    pthread_mutex_unlock(&srv->threaded_news->mu);
+
+    int status = mn_post(sync, "/api/v1/sync/news", buf.data, buf.len);
+    json_buf_free(&buf);
+
+    mn_handle_post_result(sync, status);
+    if (status >= 200 && status < 300) {
+        hl_log_info(sync->logger, "Mnemosyne: news sync complete (%d articles)", article_count);
+        sync->cached_news_count = article_count;
+    }
+}
 
 void mn_start_full_sync(mn_sync_t *sync)
 {
     if (!mn_sync_enabled(sync) || sync->state == MN_STATE_SUSPENDED)
         return;
 
-    /* Build queue from enabled content types */
-    memset(&sync->queue, 0, sizeof(sync->queue));
-    if (sync->index_files) {
-        sync->queue.types[sync->queue.count++] = MN_SYNC_FILES;
-    }
-    if (sync->index_news) {
-        sync->queue.types[sync->queue.count++] = MN_SYNC_NEWS;
-    }
+    if (sync->index_files)
+        do_full_file_sync(sync);
 
-    if (sync->queue.count == 0)
+    if (sync->state == MN_STATE_SUSPENDED)
         return;
 
-    sync->queue.current = 0;
-    mn_start_next_in_queue(sync);
+    if (sync->index_news)
+        do_full_news_sync(sync);
+
+    if (sync->state != MN_STATE_SUSPENDED)
+        hl_log_info(sync->logger, "Mnemosyne: full sync complete");
 }
 
 void mn_start_targeted_sync(mn_sync_t *sync, mn_sync_type_t type)
@@ -503,358 +706,22 @@ void mn_start_targeted_sync(mn_sync_t *sync, mn_sync_type_t type)
     if (!mn_sync_enabled(sync) || sync->state == MN_STATE_SUSPENDED)
         return;
 
-    /* If a chunked sync is already active, skip */
-    if (sync->chunked_sync_active)
-        return;
-
-    memset(&sync->queue, 0, sizeof(sync->queue));
-    sync->queue.types[0] = type;
-    sync->queue.count = 1;
-    sync->queue.current = 0;
-    mn_start_next_in_queue(sync);
-}
-
-static void start_file_sync(mn_sync_t *sync)
-{
-    hl_server_t *srv = sync->server;
-
-    memset(&sync->cursor, 0, sizeof(sync->cursor));
-    sync->cursor.type = MN_SYNC_FILES;
-    generate_sync_id(sync->cursor.sync_id, sizeof(sync->cursor.sync_id));
-    sync->cursor.chunk_index = 0;
-
-    /* Push root directory */
-    if (srv->config.file_root[0]) {
-        sync->cursor.pending_dirs = push_dir(NULL, "");
-    }
-
-    sync->chunked_sync_active = 1;
-    hl_log_info(sync->logger, "Mnemosyne: starting file sync (id: %s)",
-                sync->cursor.sync_id);
-}
-
-static void start_news_sync(mn_sync_t *sync)
-{
-    memset(&sync->cursor, 0, sizeof(sync->cursor));
-    sync->cursor.type = MN_SYNC_NEWS;
-    generate_sync_id(sync->cursor.sync_id, sizeof(sync->cursor.sync_id));
-    sync->cursor.chunk_index = 0;
-    sync->cursor.cat_index = 0;
-    sync->cursor.cats_sent = 0;
-
-    sync->chunked_sync_active = 1;
-    hl_log_info(sync->logger, "Mnemosyne: starting news sync (id: %s)",
-                sync->cursor.sync_id);
-}
-
-static void mn_start_next_in_queue(mn_sync_t *sync)
-{
-    if (sync->queue.current >= sync->queue.count) {
-        /* All done */
-        sync->chunked_sync_active = 0;
-        hl_log_info(sync->logger, "Mnemosyne: full sync complete");
-        return;
-    }
-
-    mn_sync_type_t type = sync->queue.types[sync->queue.current];
     switch (type) {
     case MN_SYNC_FILES:
-        start_file_sync(sync);
+        do_full_file_sync(sync);
         break;
     case MN_SYNC_NEWS:
-        start_news_sync(sync);
+        do_full_news_sync(sync);
         break;
     default:
-        sync->queue.current++;
-        mn_start_next_in_queue(sync);
         break;
     }
 }
 
-/* --- File sync tick --- */
-
-static void do_file_sync_tick(mn_sync_t *sync)
-{
-    hl_server_t *srv = sync->server;
-    mn_sync_cursor_t *cur = &sync->cursor;
-
-    if (!cur->pending_dirs) {
-        /* No more directories — send finalize chunk */
-        json_buf_t buf;
-        json_buf_init(&buf);
-        mn_build_file_chunk_json(&buf, cur->sync_id, cur->chunk_index, 1);
-        json_buf_append_str(&buf, "]}");
-
-        int status = mn_post(sync, "/api/v1/sync/files/chunked", buf.data, buf.len);
-        json_buf_free(&buf);
-
-        mn_handle_post_result(sync, status);
-        if (sync->state == MN_STATE_SUSPENDED)
-            return;
-
-        hl_log_info(sync->logger, "Mnemosyne: file sync complete (%d chunks)",
-                    cur->chunk_index + 1);
-
-        /* Advance queue */
-        sync->queue.current++;
-        mn_start_next_in_queue(sync);
-        return;
-    }
-
-    /* Pop one directory */
-    char rel_path[1024];
-    cur->pending_dirs = pop_dir(cur->pending_dirs, rel_path, sizeof(rel_path));
-
-    /* Build absolute path */
-    char abs_path[2048];
-    if (rel_path[0]) {
-        snprintf(abs_path, sizeof(abs_path), "%s/%s", srv->config.file_root, rel_path);
-    } else {
-        snprintf(abs_path, sizeof(abs_path), "%s", srv->config.file_root);
-    }
-
-    /* Build chunk JSON */
-    json_buf_t buf;
-    json_buf_init(&buf);
-    mn_build_file_chunk_json(&buf, cur->sync_id, cur->chunk_index, 0);
-
-    DIR *d = opendir(abs_path);
-    int first_file = 1;
-    if (d) {
-        struct dirent *ent;
-        while ((ent = readdir(d)) != NULL) {
-            if (ent->d_name[0] == '.') continue;
-
-            char full_path[2048];
-            snprintf(full_path, sizeof(full_path), "%s/%s", abs_path, ent->d_name);
-
-            struct stat st;
-            if (stat(full_path, &st) != 0) continue;
-
-            if (S_ISDIR(st.st_mode)) {
-                /* Push subdirectory for later processing */
-                char sub_rel[1024];
-                if (rel_path[0]) {
-                    snprintf(sub_rel, sizeof(sub_rel), "%s/%s", rel_path, ent->d_name);
-                } else {
-                    snprintf(sub_rel, sizeof(sub_rel), "%s", ent->d_name);
-                }
-                /* TODO: skip drop boxes (need access check integration) */
-                cur->pending_dirs = push_dir(cur->pending_dirs, sub_rel);
-            } else {
-                /* Add file entry to chunk */
-                if (!first_file) json_buf_append_str(&buf, ", ");
-                first_file = 0;
-
-                char file_path[1024];
-                if (rel_path[0]) {
-                    snprintf(file_path, sizeof(file_path), "%s/%s", rel_path, ent->d_name);
-                } else {
-                    snprintf(file_path, sizeof(file_path), "%s", ent->d_name);
-                }
-
-                json_buf_append_str(&buf, "{");
-                json_buf_add_string(&buf, "path", file_path);
-                json_buf_append_str(&buf, ", ");
-                json_buf_add_string(&buf, "name", ent->d_name);
-                json_buf_append_str(&buf, ", ");
-                json_buf_printf(&buf, "\"size\": %lld", (long long)st.st_size);
-                json_buf_append_str(&buf, ", ");
-                json_buf_add_string(&buf, "type", S_ISDIR(st.st_mode) ? "folder" : "file");
-                json_buf_append_str(&buf, ", ");
-                json_buf_add_string(&buf, "comment", "");
-                json_buf_append_str(&buf, "}");
-            }
-        }
-        closedir(d);
-    }
-
-    json_buf_append_str(&buf, "]}");
-
-    int status = mn_post(sync, "/api/v1/sync/files/chunked", buf.data, buf.len);
-    json_buf_free(&buf);
-
-    mn_handle_post_result(sync, status);
-    if (sync->state == MN_STATE_SUSPENDED)
-        return;
-
-    cur->chunk_index++;
-    mn_save_cursor(sync);
-}
-
-/* --- News sync tick --- */
-
-static void do_news_sync_tick(mn_sync_t *sync)
-{
-    hl_server_t *srv = sync->server;
-    mn_sync_cursor_t *cur = &sync->cursor;
-
-    if (!srv->threaded_news) {
-        /* No news system — finalize immediately */
-        json_buf_t buf;
-        json_buf_init(&buf);
-        mn_build_news_chunk_json(&buf, cur->sync_id, cur->chunk_index, 1);
-        json_buf_append_str(&buf, ", \"categories\": [], \"articles\": []}");
-
-        int status = mn_post(sync, "/api/v1/sync/news/chunked", buf.data, buf.len);
-        json_buf_free(&buf);
-        mn_handle_post_result(sync, status);
-
-        sync->queue.current++;
-        mn_start_next_in_queue(sync);
-        return;
-    }
-
-    pthread_mutex_lock(&srv->threaded_news->mu);
-
-    if (!cur->cats_sent) {
-        /* First chunk: send categories */
-        json_buf_t buf;
-        json_buf_init(&buf);
-        mn_build_news_chunk_json(&buf, cur->sync_id, cur->chunk_index, 0);
-        json_buf_append_str(&buf, ", \"categories\": [");
-
-        int i;
-        for (i = 0; i < srv->threaded_news->category_count; i++) {
-            if (i > 0) json_buf_append_str(&buf, ", ");
-            json_buf_append_str(&buf, "{");
-            json_buf_add_string(&buf, "name", srv->threaded_news->categories[i].name);
-            json_buf_append_str(&buf, ", ");
-            json_buf_add_string(&buf, "path", srv->threaded_news->categories[i].name);
-            json_buf_append_str(&buf, "}");
-        }
-
-        json_buf_append_str(&buf, "], \"articles\": []}");
-        pthread_mutex_unlock(&srv->threaded_news->mu);
-
-        int status = mn_post(sync, "/api/v1/sync/news/chunked", buf.data, buf.len);
-        json_buf_free(&buf);
-        mn_handle_post_result(sync, status);
-        if (sync->state == MN_STATE_SUSPENDED)
-            return;
-
-        cur->cats_sent = 1;
-        cur->chunk_index++;
-        cur->cat_index = 0;
-        mn_save_cursor(sync);
-        return;
-    }
-
-    /* Subsequent chunks: send articles per category */
-    if (cur->cat_index >= srv->threaded_news->category_count) {
-        pthread_mutex_unlock(&srv->threaded_news->mu);
-
-        /* All categories done — send finalize */
-        json_buf_t buf;
-        json_buf_init(&buf);
-        mn_build_news_chunk_json(&buf, cur->sync_id, cur->chunk_index, 1);
-        json_buf_append_str(&buf, ", \"categories\": [], \"articles\": []}");
-
-        int status = mn_post(sync, "/api/v1/sync/news/chunked", buf.data, buf.len);
-        json_buf_free(&buf);
-        mn_handle_post_result(sync, status);
-        if (sync->state == MN_STATE_SUSPENDED)
-            return;
-
-        hl_log_info(sync->logger, "Mnemosyne: news sync complete (%d chunks)",
-                    cur->chunk_index + 1);
-
-        sync->queue.current++;
-        mn_start_next_in_queue(sync);
-        return;
-    }
-
-    /* Send articles for current category */
-    tn_category_t *cat = &srv->threaded_news->categories[cur->cat_index];
-
-    json_buf_t buf;
-    json_buf_init(&buf);
-    mn_build_news_chunk_json(&buf, cur->sync_id, cur->chunk_index, 0);
-    json_buf_append_str(&buf, ", \"categories\": [], \"articles\": [");
-
-    int j;
-    int first = 1;
-    for (j = 0; j < cat->article_count; j++) {
-        tn_article_t *art = &cat->articles[j];
-        if (!art->active) continue;
-
-        if (!first) json_buf_append_str(&buf, ", ");
-        first = 0;
-
-        /* Convert Hotline date to ISO string */
-        char date_str[32] = "1970-01-01";
-        /* Hotline date: 2 bytes year, 2 bytes msecs, 4 bytes seconds */
-        uint16_t year = ((uint16_t)art->date[0] << 8) | art->date[1];
-        uint32_t secs = ((uint32_t)art->date[4] << 24) |
-                        ((uint32_t)art->date[5] << 16) |
-                        ((uint32_t)art->date[6] << 8) |
-                         (uint32_t)art->date[7];
-        if (year > 0) {
-            /* Approximate: Hotline epoch is 1904, secs since midnight Jan 1 */
-            /* For sync purposes, just format year + rough date */
-            time_t unix_secs = (time_t)secs - 2082844800LL; /* Mac epoch offset */
-            struct tm *tm = gmtime(&unix_secs);
-            if (tm) {
-                snprintf(date_str, sizeof(date_str), "%04d-%02d-%02d",
-                         tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday);
-            }
-        }
-
-        json_buf_append_str(&buf, "{");
-        json_buf_printf(&buf, "\"id\": %u, ", art->id);
-        json_buf_add_string(&buf, "path", cat->name);
-        json_buf_append_str(&buf, ", ");
-        json_buf_add_string(&buf, "title", art->title);
-        json_buf_append_str(&buf, ", ");
-        json_buf_add_string(&buf, "body", art->data);
-        json_buf_append_str(&buf, ", ");
-        json_buf_add_string(&buf, "poster", art->poster);
-        json_buf_append_str(&buf, ", ");
-        json_buf_add_string(&buf, "date", date_str);
-        json_buf_append_str(&buf, "}");
-    }
-
-    json_buf_append_str(&buf, "]}");
-    pthread_mutex_unlock(&srv->threaded_news->mu);
-
-    int status = mn_post(sync, "/api/v1/sync/news/chunked", buf.data, buf.len);
-    json_buf_free(&buf);
-    mn_handle_post_result(sync, status);
-    if (sync->state == MN_STATE_SUSPENDED)
-        return;
-
-    cur->chunk_index++;
-    cur->cat_index++;
-    mn_save_cursor(sync);
-}
-
-/* --- Sync tick dispatcher --- */
-
+/* mn_do_sync_tick — no longer needed for full mode, but keep for API compat */
 void mn_do_sync_tick(mn_sync_t *sync)
 {
-    if (!sync->chunked_sync_active)
-        return;
-
-    if (sync->state == MN_STATE_SUSPENDED) {
-        sync->chunked_sync_active = 0;
-        return;
-    }
-
-    /* Check backoff */
-    if (sync->next_retry_time > 0 && time(NULL) < sync->next_retry_time)
-        return;
-
-    switch (sync->cursor.type) {
-    case MN_SYNC_FILES:
-        do_file_sync_tick(sync);
-        break;
-    case MN_SYNC_NEWS:
-        do_news_sync_tick(sync);
-        break;
-    default:
-        sync->chunked_sync_active = 0;
-        break;
-    }
+    (void)sync;
 }
 
 /* --- Periodic check (drift detection) --- */
