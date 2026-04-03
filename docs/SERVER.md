@@ -301,6 +301,6 @@ make test   # builds and runs all tests
 
 ## Version
 
-Current: `0.1.4`
+Current: `0.1.5`
 
 Originally inspired by [Mobius](https://github.com/jhalter/mobius) by Jeff Halter.

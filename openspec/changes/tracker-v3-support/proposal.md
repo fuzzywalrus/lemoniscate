@@ -2,7 +2,14 @@
 
 Lemoniscate currently speaks only v1 of the Hotline tracker protocol — a basic UDP registration with name, description, and user count. The v3 tracker protocol (specified in fogWraith/Hotline) adds TLV-encoded metadata extensions that let servers advertise capabilities (HOPE, TLS, hostname), content statistics (file count, news count, message board posts), and security features (HMAC-SHA256 signing, registration tokens). Implementing v3 makes Lemoniscate visible with richer metadata on modern trackers, and enables content index fields that integrate with Mnemosyne — trackers can surface file/news counts in server listings without clients needing to query Mnemosyne separately.
 
-**Sequencing:** This change depends on `mnemosyne-support` being completed first, since the content index TLV fields (0x0450-0x0453) are most useful when the server already tracks and syncs that content. The HTTP client and content serialization from `mnemosyne-support` provide the content counts needed for the v3 registration fields.
+**Sequencing:** `mnemosyne-support` is complete. Content counts from the Mnemosyne sync module are available for the v3 TLV fields.
+
+**Verified (2026-04-03):**
+- Registration is the same V1 UDP packet on port 5499 for all tracker versions. Confirmed by fogWraith (protocol author): "servers register on udp 5499, clients pull over tcp on 5498 — same for all versions."
+- V3 trackers (track.bigredh.com, tracker.vespernet.net) accept V1 registration packets. Tested live — "The Apple Media Archive" appears on both with 6/6 tracker registrations succeeding.
+- V3 is a **client-side listing protocol** enhancement (TCP 5498): TLV metadata in server records lets clients display HOPE/TLS badges, file counts, tags. The V3 extension block in the registration UDP packet is what populates these fields.
+- Without V3 metadata, the server is listed but shows no capability badges or content stats in Navigator's tracker view. This is cosmetic, not a connectivity blocker.
+- The Hotline Navigator tracker spec is at `/Users/greggant/Development/hotline/openspec/specs/tracker/spec.md` — covers the client-side V3 listing protocol with all TLV field IDs.
 
 ## What Changes
 
@@ -32,4 +39,9 @@ Lemoniscate currently speaks only v1 of the Hotline tracker protocol — a basic
 - **Dependencies**: Content counts (file count, news count, message board posts) come from the same managers used by `mnemosyne-support`. This change should be implemented after `mnemosyne-support`.
 - **New state**: Registration token (from ack) must be persisted per-tracker and included in subsequent registrations. Tracker-assigned heartbeat interval overrides the configured default.
 
-**Note:** This proposal captures the full scope based on the fogWraith/Hotline v3 tracker spec. Design, specs, and tasks will be generated when this change is ready to be worked on — after `mnemosyne-support` is complete. The spec documents may need revisiting as v3 tracker support is tested against live trackers.
+**Live V3 trackers for testing:**
+- `track.bigredh.com:5499` (UDP registration) / `:5498` (TCP listing)
+- `tracker.vespernet.net:5499` (UDP registration) / `:5498` (TCP listing)
+
+**Live V1 trackers:**
+- `hltracker.com:5499`, `tracker.preterhuman.net:5499`, `saddle.dyndns.org:5499`, `hotline.kicks-ass.net:5499`

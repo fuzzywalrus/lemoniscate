@@ -219,8 +219,11 @@ int mn_resolve_dns(mn_sync_t *sync);
 
 /* Build heartbeat JSON payload */
 void mn_build_heartbeat_json(json_buf_t *buf, const char *server_name,
-                             const char *description, int post_count,
-                             int file_count, int news_count);
+                             const char *description,
+                             const char *server_address,
+                             int msgboard_posts, int news_categories,
+                             int news_articles, int files,
+                             long long total_file_size);
 
 /* Build file chunk JSON payload */
 void mn_build_file_chunk_json(json_buf_t *buf, const char *sync_id,
