@@ -203,10 +203,15 @@ test-wire: $(TEST_C_OBJS) $(HOTLINE_C_OBJS)
 	$(CC) $(CFLAGS) -o test_runner $^ $(TEST_LDFLAGS)
 	./test_runner
 
-# Mnemosyne sync tests
+# Mnemosyne unit tests
 test-mnemosyne: test/test_mnemosyne.o $(HOTLINE_C_OBJS) $(MOBIUS_OBJS)
 	$(CC) $(CFLAGS) -o test_mnemosyne $^ $(LDFLAGS) $(YAML_LDFLAGS)
 	./test_mnemosyne
+
+# Mnemosyne live integration tests (requires MSV_API_KEY env var)
+test-mnemosyne-live: test/test_mnemosyne_live.o $(HOTLINE_C_OBJS) $(MOBIUS_OBJS)
+	$(CC) $(CFLAGS) -o test_mnemosyne_live $^ $(LDFLAGS) $(YAML_LDFLAGS)
+	./test_mnemosyne_live
 
 # Phase 2 client tests (Obj-C, macOS only)
 ifeq ($(PLATFORM),Darwin)
@@ -264,7 +269,7 @@ app: lemoniscate $(SERVER_COMPAT_BIN) gui
 clean:
 	rm -f $(HOTLINE_C_OBJS) $(HOTLINE_OBJC_OBJS) $(MOBIUS_OBJS) \
 	      $(TEST_C_OBJS) $(TEST_OBJC_OBJS) $(GUI_OBJC_OBJS) \
-	      libhotline.a lemoniscate $(SERVER_COMPAT_BIN) lemoniscate-gui test_runner test_mnemosyne test_client src/main.o test/test_mnemosyne.o
+	      libhotline.a lemoniscate $(SERVER_COMPAT_BIN) lemoniscate-gui test_runner test_mnemosyne test_mnemosyne_live test_client src/main.o test/test_mnemosyne.o test/test_mnemosyne_live.o
 	rm -rf $(APP_BUNDLE)
 
 # Auto-dependency generation

@@ -281,3 +281,81 @@ int hl_http_post_to_ip(const char *ip, const char *hostname, int port,
     return do_http_post(ip, hostname, port, path, body, body_len,
                         content_type, connect_timeout_ms, read_timeout_ms);
 }
+
+/* --- HTTP GET with response body --- */
+
+int hl_http_get(const char *host, int port, const char *path,
+                char *out_body, size_t out_body_size,
+                int connect_timeout_ms, int read_timeout_ms)
+{
+    /* Resolve hostname */
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if (getaddrinfo(host, NULL, &hints, &res) != 0)
+        return -1;
+
+    char ip[INET_ADDRSTRLEN];
+    struct sockaddr_in *sin = (struct sockaddr_in *)res->ai_addr;
+    inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip));
+    freeaddrinfo(res);
+
+    int fd = tcp_connect(ip, port, connect_timeout_ms);
+    if (fd < 0)
+        return -1;
+
+    set_read_timeout(fd, read_timeout_ms);
+
+    /* Send GET request */
+    char header[2048];
+    int hlen = snprintf(header, sizeof(header),
+        "GET %s HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        path, host, port);
+
+    if (hlen < 0 || (size_t)hlen >= sizeof(header) ||
+        send_all(fd, header, (size_t)hlen) < 0) {
+        close(fd);
+        return -1;
+    }
+
+    /* Read full response */
+    char resp[16384];
+    ssize_t total = 0;
+    while (total < (ssize_t)sizeof(resp) - 1) {
+        ssize_t n = recv(fd, resp + total, sizeof(resp) - 1 - (size_t)total, 0);
+        if (n <= 0) break;
+        total += n;
+    }
+    close(fd);
+
+    if (total <= 0)
+        return -1;
+    resp[total] = '\0';
+
+    /* Parse status code */
+    if (strncmp(resp, "HTTP/1.", 7) != 0)
+        return -1;
+    const char *sp = strchr(resp, ' ');
+    if (!sp) return -1;
+    int status = atoi(sp + 1);
+
+    /* Find body after \r\n\r\n */
+    const char *body_start = strstr(resp, "\r\n\r\n");
+    if (body_start && out_body && out_body_size > 0) {
+        body_start += 4;
+        size_t body_len = (size_t)(total - (body_start - resp));
+        if (body_len >= out_body_size)
+            body_len = out_body_size - 1;
+        memcpy(out_body, body_start, body_len);
+        out_body[body_len] = '\0';
+    } else if (out_body && out_body_size > 0) {
+        out_body[0] = '\0';
+    }
+
+    return status;
+}
