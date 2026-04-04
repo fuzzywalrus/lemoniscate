@@ -47,6 +47,7 @@ typedef struct {
     char mnemosyne_api_key[HL_CONFIG_MNEMOSYNE_KEY_MAX]; /* msv_-prefixed server API key */
     int  mnemosyne_index_files;                  /* Index file listings (default: true) */
     int  mnemosyne_index_news;                   /* Index threaded news (default: true) */
+    int  mnemosyne_index_msgboard;               /* Index message board (default: true) */
 } hl_config_t;
 
 /* Initialize config with defaults */

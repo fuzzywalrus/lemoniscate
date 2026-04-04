@@ -9,12 +9,14 @@
  */
 
 #include "mobius/threaded_news_yaml.h"
+#include "mobius/dir_threaded_news.h"
 #include "hotline/types.h"
 #include "hotline/time_conv.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <sys/stat.h>
 
 /* Wire format constants */
 static const uint8_t NEWS_CATEGORY[2] = {0x00, 0x03};
@@ -64,6 +66,12 @@ static void yaml_write_escaped(FILE *f, const char *s, size_t len)
 int tn_save(mobius_threaded_news_t *tn)
 {
     if (!tn || tn->file_path[0] == '\0') return -1;
+
+    /* Route to directory backend if file_path is a directory */
+    struct stat st;
+    if (stat(tn->file_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        return tn_dir_save(tn);
+    }
 
     pthread_mutex_lock(&tn->mu);
 
