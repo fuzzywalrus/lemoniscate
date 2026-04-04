@@ -210,6 +210,11 @@ test-mnemosyne: test/test_mnemosyne.o $(HOTLINE_C_OBJS) $(MOBIUS_OBJS)
 	$(CC) $(CFLAGS) -o test_mnemosyne $^ $(LDFLAGS) $(YAML_LDFLAGS)
 	./test_mnemosyne
 
+# Threaded news YAML parser tests
+test-threaded-news: test/test_threaded_news.o $(HOTLINE_C_OBJS) $(MOBIUS_OBJS)
+	$(CC) $(CFLAGS) -o test_threaded_news $^ $(LDFLAGS) $(YAML_LDFLAGS)
+	./test_threaded_news
+
 # Mnemosyne live integration tests (requires MSV_API_KEY env var)
 test-mnemosyne-live: test/test_mnemosyne_live.o $(HOTLINE_C_OBJS) $(MOBIUS_OBJS)
 	$(CC) $(CFLAGS) -o test_mnemosyne_live $^ $(LDFLAGS) $(YAML_LDFLAGS)
