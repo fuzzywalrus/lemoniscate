@@ -104,6 +104,8 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
                         cfg->mnemosyne_index_files = yaml_parse_bool(val);
                     else if (strcmp(mnemosyne_key, "index_news") == 0)
                         cfg->mnemosyne_index_news = yaml_parse_bool(val);
+                    else if (strcmp(mnemosyne_key, "index_msgboard") == 0)
+                        cfg->mnemosyne_index_msgboard = yaml_parse_bool(val);
                     mnemosyne_key[0] = '\0';
                 }
             } else if (parsing_trackers) {

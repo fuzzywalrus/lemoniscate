@@ -139,7 +139,9 @@ MOBIUS_SRCS = \
 	src/mobius/logger_impl.c \
 	src/mobius/config_plist.c \
 	src/mobius/json_builder.c \
-	src/mobius/mnemosyne_sync.c
+	src/mobius/mnemosyne_sync.c \
+	src/mobius/jsonl_message_board.c \
+	src/mobius/dir_threaded_news.c
 
 MOBIUS_OBJS = $(MOBIUS_SRCS:.c=.o)
 

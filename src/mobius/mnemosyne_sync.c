@@ -6,6 +6,7 @@
  */
 
 #include "mobius/mnemosyne_sync.h"
+#include "mobius/jsonl_message_board.h"
 #include "hotline/server.h"
 #include "hotline/http_client.h"
 #include "mobius/json_builder.h"
@@ -392,6 +393,12 @@ int mn_send_heartbeat(mn_sync_t *sync)
     sync->cached_file_count = file_count;
     sync->cached_news_count = news_articles;
 
+    /* Count msgboard posts */
+    int msgboard_posts = 0;
+    if (srv->config.mnemosyne_index_msgboard && srv->flat_news) {
+        msgboard_posts = mobius_jsonl_post_count(srv->flat_news);
+    }
+
     /* Build server address string */
     char server_address[128];
     snprintf(server_address, sizeof(server_address), "%s:%d",
@@ -401,7 +408,7 @@ int mn_send_heartbeat(mn_sync_t *sync)
     json_buf_t buf;
     json_buf_init(&buf);
     mn_build_heartbeat_json(&buf, srv->config.name, srv->config.description,
-                            server_address, 0, news_categories,
+                            server_address, msgboard_posts, news_categories,
                             news_articles, file_count, total_file_size);
 
     int status = mn_post(sync, "/api/v1/sync/heartbeat", buf.data, buf.len);
@@ -683,6 +690,52 @@ static void do_full_news_sync(mn_sync_t *sync)
     }
 }
 
+static void do_full_msgboard_sync(mn_sync_t *sync)
+{
+    hl_server_t *srv = sync->server;
+    if (!srv->flat_news) return;
+
+    /* Only sync if JSONL backend (has structured posts) */
+    mb_post_t *posts = NULL;
+    int count = 0;
+    if (mobius_jsonl_get_posts(srv->flat_news, &posts, &count) != 0 || count == 0) {
+        mobius_jsonl_free_posts(posts, count);
+        return;
+    }
+
+    hl_log_info(sync->logger, "Mnemosyne: starting msgboard sync (full mode)");
+
+    json_buf_t buf;
+    json_buf_init(&buf);
+    json_buf_append_str(&buf, "{\"mode\": \"full\", \"posts\": [");
+
+    int i;
+    for (i = 0; i < count; i++) {
+        if (i > 0) json_buf_append_str(&buf, ", ");
+        json_buf_append_str(&buf, "{");
+        json_buf_printf(&buf, "\"id\": %d, ", posts[i].id);
+        json_buf_add_string(&buf, "nick", posts[i].nick);
+        json_buf_append_str(&buf, ", ");
+        json_buf_add_string(&buf, "login", posts[i].login);
+        json_buf_append_str(&buf, ", ");
+        json_buf_add_string(&buf, "body", posts[i].body ? posts[i].body : "");
+        json_buf_append_str(&buf, ", ");
+        json_buf_add_string(&buf, "timestamp", posts[i].ts);
+        json_buf_append_str(&buf, "}");
+    }
+
+    json_buf_append_str(&buf, "]}");
+    mobius_jsonl_free_posts(posts, count);
+
+    int status = mn_post(sync, "/api/v1/sync/msgboard", buf.data, buf.len);
+    json_buf_free(&buf);
+
+    mn_handle_post_result(sync, status);
+    if (status >= 200 && status < 300) {
+        hl_log_info(sync->logger, "Mnemosyne: msgboard sync complete (%d posts)", count);
+    }
+}
+
 void mn_start_full_sync(mn_sync_t *sync)
 {
     if (!mn_sync_enabled(sync) || sync->state == MN_STATE_SUSPENDED)
@@ -696,6 +749,12 @@ void mn_start_full_sync(mn_sync_t *sync)
 
     if (sync->index_news)
         do_full_news_sync(sync);
+
+    if (sync->state == MN_STATE_SUSPENDED)
+        return;
+
+    if (sync->server->config.mnemosyne_index_msgboard)
+        do_full_msgboard_sync(sync);
 
     if (sync->state != MN_STATE_SUSPENDED)
         hl_log_info(sync->logger, "Mnemosyne: full sync complete");
