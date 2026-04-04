@@ -457,6 +457,23 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [boardField release];
         [boardButton release];
 
+        /* Text Encoding popup */
+        {
+            NSTextField *lbl = makeLabel(@"Text Encoding:", 11.0, NO);
+            [lbl setAlignment:NSTextAlignmentRight];
+            [lbl setFrame:NSMakeRect(6, iy + 2, LABEL_WIDTH - 12, 17)];
+            [c addSubview:lbl];
+            [lbl release];
+
+            _encodingPopup = [[NSPopUpButton alloc]
+                initWithFrame:NSMakeRect(LABEL_WIDTH - 4, iy, 140, 22) pullsDown:NO];
+            [_encodingPopup addItemWithTitle:@"Mac Roman"];
+            [_encodingPopup addItemWithTitle:@"UTF-8"];
+            [_encodingPopup setToolTip:@"Text encoding for client communication. Mac Roman is compatible with classic Hotline clients."];
+            [c addSubview:_encodingPopup];
+            iy += ROW_HEIGHT;
+        }
+
         float contentH = iy;
         [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
         [doc addSubview:c];
@@ -774,6 +791,113 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_tlsStatusLabel setTextColor:[NSColor grayColor]];
         [c addSubview:_tlsStatusLabel];
         iy += 18;
+
+        float contentH = iy;
+        [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
+        [doc addSubview:c];
+        [self registerDisclosureSection:hdr content:c contentHeight:contentH];
+        [hdr release]; [c release];
+    }
+
+    /* ===== Mnemosyne Search ===== */
+    {
+        NSButton *hdr = makeDisclosureHeader(@"Mnemosyne Search", self, sectionIdx++);
+        [hdr setFrame:NSMakeRect(SECTION_MARGIN, 0, secWidth, DISC_HEADER_H)];
+        [doc addSubview:hdr];
+
+        FlippedView *c = [[FlippedView alloc]
+            initWithFrame:NSMakeRect(0, 0, contentWidth, 200)];
+        float iy = 0;
+
+        _mnemosyneEnableCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_mnemosyneEnableCheckbox setButtonType:NSButtonTypeSwitch];
+        [_mnemosyneEnableCheckbox setTitle:@"Enable Mnemosyne Sync"];
+        [_mnemosyneEnableCheckbox setState:NSControlStateValueOff];
+        [_mnemosyneEnableCheckbox setTarget:self];
+        [_mnemosyneEnableCheckbox setAction:@selector(toggleMnemosyneEnable:)];
+        iy = addCheckboxWithHelp(c, _mnemosyneEnableCheckbox, iy,
+            @"Mnemosyne indexes your server's files, news, and message board for search on compatible trackers. Register for an API key at https://agora.vespernet.net/login", self);
+
+        _mnemosyneURLField = makeEditField(fieldWidth);
+        [_mnemosyneURLField setStringValue:@"http://tracker.vespernet.net:8980"];
+        [_mnemosyneURLField setToolTip:@"URL of the Mnemosyne indexing service"];
+        [_mnemosyneURLField setEnabled:NO];
+        iy = addRow(c, @"URL:", _mnemosyneURLField, iy, fieldWidth);
+
+        _mnemosyneAPIKeyField = makeEditField(fieldWidth);
+        [_mnemosyneAPIKeyField setPlaceholderString:@"msv_..."];
+        [_mnemosyneAPIKeyField setToolTip:@"Server API key from agora.vespernet.net"];
+        [_mnemosyneAPIKeyField setEnabled:NO];
+        iy = addRow(c, @"API Key:", _mnemosyneAPIKeyField, iy, fieldWidth);
+
+        /* Index checkboxes in a row */
+        {
+            NSTextField *lbl = makeLabel(@"Index:", 11.0, NO);
+            [lbl setAlignment:NSTextAlignmentRight];
+            [lbl setFrame:NSMakeRect(6, iy + 2, LABEL_WIDTH - 12, 17)];
+            [c addSubview:lbl];
+            [lbl release];
+
+            float cx = LABEL_WIDTH - 4;
+
+            _mnemosyneIndexFilesCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+            [_mnemosyneIndexFilesCheckbox setButtonType:NSButtonTypeSwitch];
+            [_mnemosyneIndexFilesCheckbox setTitle:@"Files"];
+            [_mnemosyneIndexFilesCheckbox setState:NSControlStateValueOn];
+            [_mnemosyneIndexFilesCheckbox setEnabled:NO];
+            [_mnemosyneIndexFilesCheckbox sizeToFit];
+            [_mnemosyneIndexFilesCheckbox setFrame:NSMakeRect(cx, iy, [_mnemosyneIndexFilesCheckbox frame].size.width, 18)];
+            [c addSubview:_mnemosyneIndexFilesCheckbox];
+            cx += [_mnemosyneIndexFilesCheckbox frame].size.width + 12;
+
+            _mnemosyneIndexNewsCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+            [_mnemosyneIndexNewsCheckbox setButtonType:NSButtonTypeSwitch];
+            [_mnemosyneIndexNewsCheckbox setTitle:@"News"];
+            [_mnemosyneIndexNewsCheckbox setState:NSControlStateValueOn];
+            [_mnemosyneIndexNewsCheckbox setEnabled:NO];
+            [_mnemosyneIndexNewsCheckbox sizeToFit];
+            [_mnemosyneIndexNewsCheckbox setFrame:NSMakeRect(cx, iy, [_mnemosyneIndexNewsCheckbox frame].size.width, 18)];
+            [c addSubview:_mnemosyneIndexNewsCheckbox];
+            cx += [_mnemosyneIndexNewsCheckbox frame].size.width + 12;
+
+            _mnemosyneIndexMsgboardCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+            [_mnemosyneIndexMsgboardCheckbox setButtonType:NSButtonTypeSwitch];
+            [_mnemosyneIndexMsgboardCheckbox setTitle:@"Message Board"];
+            [_mnemosyneIndexMsgboardCheckbox setState:NSControlStateValueOn];
+            [_mnemosyneIndexMsgboardCheckbox setEnabled:NO];
+            [_mnemosyneIndexMsgboardCheckbox sizeToFit];
+            [_mnemosyneIndexMsgboardCheckbox setFrame:NSMakeRect(cx, iy, [_mnemosyneIndexMsgboardCheckbox frame].size.width, 18)];
+            [c addSubview:_mnemosyneIndexMsgboardCheckbox];
+
+            iy += ROW_HEIGHT;
+        }
+
+        /* "Obtain Vespernet API Key" link */
+        {
+            NSButton *linkBtn = [[NSButton alloc]
+                initWithFrame:NSMakeRect(LABEL_WIDTH - 4, iy, 200, 18)];
+            [linkBtn setButtonType:NSButtonTypeMomentaryPushIn];
+            [linkBtn setBordered:NO];
+            NSMutableAttributedString *linkTitle = [[NSMutableAttributedString alloc]
+                initWithString:@"Obtain Vespernet API Key \u2197"];
+            [linkTitle addAttribute:NSForegroundColorAttributeName
+                              value:[NSColor colorWithCalibratedRed:0.2 green:0.4 blue:0.8 alpha:1.0]
+                              range:NSMakeRange(0, [linkTitle length])];
+            [linkTitle addAttribute:NSUnderlineStyleAttributeName
+                              value:[NSNumber numberWithInt:NSUnderlineStyleSingle]
+                              range:NSMakeRange(0, [linkTitle length] - 2)];
+            [linkTitle addAttribute:NSFontAttributeName
+                              value:[NSFont systemFontOfSize:11.0]
+                              range:NSMakeRange(0, [linkTitle length])];
+            [linkBtn setAttributedTitle:linkTitle];
+            [linkTitle release];
+            [linkBtn setTarget:self];
+            [linkBtn setAction:@selector(openMnemosyneRegistration:)];
+            [linkBtn setToolTip:@"https://agora.vespernet.net/"];
+            [c addSubview:linkBtn];
+            [linkBtn release];
+            iy += 22;
+        }
 
         float contentH = iy;
         [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
