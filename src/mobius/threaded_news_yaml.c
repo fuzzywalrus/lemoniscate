@@ -48,14 +48,15 @@ void mobius_threaded_news_free(mobius_threaded_news_t *tn)
     free(tn);
 }
 
-/* Escape YAML special chars in a string value */
+/* Escape YAML special chars in a string value.
+ * \r (Hotline wire format) is written as \n (YAML) so it round-trips. */
 static void yaml_write_escaped(FILE *f, const char *s, size_t len)
 {
     size_t i;
     fputc('"', f);
     for (i = 0; i < len; i++) {
         if (s[i] == '"') fputs("\\\"", f);
-        else if (s[i] == '\n') fputs("\\n", f);
+        else if (s[i] == '\n' || s[i] == '\r') fputs("\\n", f);
         else if (s[i] == '\\') fputs("\\\\", f);
         else fputc(s[i], f);
     }
@@ -109,10 +110,13 @@ int tn_save(mobius_threaded_news_t *tn)
                 fprintf(f, "        Poster: ");
                 yaml_write_escaped(f, art->poster, strlen(art->poster));
                 fprintf(f, "\n");
+                fprintf(f, "        Date: [%u, %u, %u, %u, %u, %u, %u, %u]\n",
+                        art->date[0], art->date[1], art->date[2], art->date[3],
+                        art->date[4], art->date[5], art->date[6], art->date[7]);
+                fprintf(f, "        ParentArt: [0, 0, 0, %u]\n", art->parent_id);
                 fprintf(f, "        Body: ");
                 yaml_write_escaped(f, art->data, art->data_len);
                 fprintf(f, "\n");
-                fprintf(f, "        ParentID: %u\n", art->parent_id);
             }
         }
     }
@@ -123,25 +127,89 @@ int tn_save(mobius_threaded_news_t *tn)
 }
 
 /*
- * tn_load — Load threaded news from YAML using libyaml event parser.
- * Handles plain, quoted, and block scalar Data fields correctly.
+ * Sanitize a buffer so it contains only valid UTF-8.
+ * Invalid bytes are replaced with '?' to keep libyaml happy.
+ * Operates in-place and returns the (unchanged) length.
  */
+static size_t sanitize_utf8(unsigned char *buf, size_t len)
+{
+    size_t i = 0;
+    while (i < len) {
+        unsigned char c = buf[i];
+        int expect; /* number of continuation bytes */
+
+        if (c < 0x80) { i++; continue; }                /* ASCII */
+        else if ((c & 0xE0) == 0xC0) expect = 1;        /* 110xxxxx */
+        else if ((c & 0xF0) == 0xE0) expect = 2;        /* 1110xxxx */
+        else if ((c & 0xF8) == 0xF0) expect = 3;        /* 11110xxx */
+        else { buf[i] = '?'; i++; continue; }           /* bad leader */
+
+        /* Check that we have enough continuation bytes (10xxxxxx) */
+        int ok = 1;
+        int j;
+        for (j = 1; j <= expect; j++) {
+            if (i + (size_t)j >= len || (buf[i + j] & 0xC0) != 0x80) {
+                ok = 0;
+                break;
+            }
+        }
+        if (ok) {
+            i += 1 + (size_t)expect;
+        } else {
+            buf[i] = '?';
+            i++;
+        }
+    }
+    return len;
+}
+
 /*
- * tn_load - Load threaded news from YAML using libyaml event parser.
+ * Read an entire file into a malloc'd buffer.
+ * Returns NULL on error. Caller must free.
+ */
+static unsigned char *read_file_to_buf(const char *path, size_t *out_len)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (sz <= 0) { fclose(f); return NULL; }
+
+    unsigned char *buf = (unsigned char *)malloc((size_t)sz);
+    if (!buf) { fclose(f); return NULL; }
+
+    size_t nread = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+
+    *out_len = nread;
+    return buf;
+}
+
+/*
+ * tn_load — Load threaded news from YAML using libyaml event parser.
+ *
+ * Reads the file into memory and sanitizes invalid UTF-8 bytes before
+ * parsing (libyaml rejects the entire file on any encoding error).
  * Handles plain, quoted, and block scalar Data fields correctly.
  */
 int tn_load(mobius_threaded_news_t *tn)
 {
     if (!tn || tn->file_path[0] == '\0') return -1;
 
-    FILE *f = fopen(tn->file_path, "r");
-    if (!f) return -1;
+    size_t buf_len = 0;
+    unsigned char *buf = read_file_to_buf(tn->file_path, &buf_len);
+    if (!buf) return -1;
+
+    sanitize_utf8(buf, buf_len);
 
     yaml_parser_t parser;
     yaml_event_t event;
 
-    if (!yaml_parser_initialize(&parser)) { fclose(f); return -1; }
-    yaml_parser_set_input_file(&parser, f);
+    if (!yaml_parser_initialize(&parser)) { free(buf); return -1; }
+    yaml_parser_set_input_string(&parser, buf, buf_len);
 
     pthread_mutex_lock(&tn->mu);
     tn->category_count = 0;
@@ -236,6 +304,8 @@ int tn_load(mobius_threaded_news_t *tn)
                         }
                         cur_art->data[dpos] = '\0';
                         cur_art->data_len = (uint16_t)dpos;
+                    } else if (strcmp(k, "ParentID") == 0) {
+                        cur_art->parent_id = (uint32_t)atoi(val);
                     }
                 } else if (cur_cat) {
                     if (strcmp(k, "Name") == 0)
@@ -321,7 +391,7 @@ int tn_load(mobius_threaded_news_t *tn)
     }
 
     yaml_parser_delete(&parser);
-    fclose(f);
+    free(buf);
 
     pthread_mutex_unlock(&tn->mu);
     return 0;
