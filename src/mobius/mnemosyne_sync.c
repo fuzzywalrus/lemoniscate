@@ -36,6 +36,7 @@ static int mn_post(mn_sync_t *sync, const char *endpoint,
 static void mn_handle_post_result(mn_sync_t *sync, int status);
 static void free_pending_dirs(mn_dir_entry_t *head);
 static int count_files_recursive(const char *root);
+static int count_flat_msgboard_posts(mobius_flat_news_t *fn);
 
 /* --- sync_id generation --- */
 
@@ -392,6 +393,12 @@ int mn_send_heartbeat(mn_sync_t *sync)
     sync->cached_file_count = file_count;
     sync->cached_news_count = news_articles;
 
+    /* Count msgboard posts */
+    int msgboard_posts = 0;
+    if (srv->config.mnemosyne_index_msgboard && srv->flat_news) {
+        msgboard_posts = count_flat_msgboard_posts(srv->flat_news);
+    }
+
     /* Build server address string */
     char server_address[128];
     snprintf(server_address, sizeof(server_address), "%s:%d",
@@ -401,7 +408,7 @@ int mn_send_heartbeat(mn_sync_t *sync)
     json_buf_t buf;
     json_buf_init(&buf);
     mn_build_heartbeat_json(&buf, srv->config.name, srv->config.description,
-                            server_address, 0, news_categories,
+                            server_address, msgboard_posts, news_categories,
                             news_articles, file_count, total_file_size);
 
     int status = mn_post(sync, "/api/v1/sync/heartbeat", buf.data, buf.len);
@@ -683,6 +690,204 @@ static void do_full_news_sync(mn_sync_t *sync)
     }
 }
 
+/* --- Flat text message board parser (for Mnemosyne sync) --- */
+
+/* Count posts by counting delimiters in flat text */
+static int count_flat_msgboard_posts(mobius_flat_news_t *fn)
+{
+    if (!fn) return 0;
+    size_t data_len = 0;
+    const char *data = mobius_flat_news_data(fn, &data_len);
+    if (!data || data_len == 0) return 0;
+
+    int count = 0;
+    const char *p = data;
+    while (p) {
+        p = strstr(p, "____");
+        if (p) { count++; p += 4; }
+    }
+    /* At least 1 post if there's any content */
+    return count > 0 ? count : (data_len > 0 ? 1 : 0);
+}
+
+/* Parse flat text message board into structured posts for Mnemosyne sync.
+ * Format: posts separated by "\r___...\r", each with optional "nick (date)\r\r" header.
+ * Also handles "From nick (date):\r\r" format. */
+static void parse_flat_msgboard_to_json(mobius_flat_news_t *fn, json_buf_t *buf)
+{
+    if (!fn) return;
+    size_t data_len = 0;
+    const char *data = mobius_flat_news_data(fn, &data_len);
+    if (!data || data_len == 0) return;
+
+    /* Work on a mutable copy */
+    char *text = (char *)malloc(data_len + 1);
+    if (!text) return;
+    memcpy(text, data, data_len);
+    text[data_len] = '\0';
+
+    /* Replace \r with \n for easier parsing */
+    size_t ti;
+    for (ti = 0; ti < data_len; ti++) {
+        if (text[ti] == '\r') text[ti] = '\n';
+    }
+
+    int post_id = 1;
+    int first = 1;
+    char *section = text;
+
+    while (section && *section) {
+        /* Find next separator (line of underscores) */
+        char *sep = strstr(section, "____");
+        char *next_section = NULL;
+        size_t section_len;
+
+        if (sep) {
+            /* Find end of separator line */
+            char *sep_end = sep;
+            while (*sep_end == '_') sep_end++;
+            while (*sep_end == '\n') sep_end++;
+            section_len = (size_t)(sep - section);
+            next_section = sep_end;
+        } else {
+            section_len = strlen(section);
+        }
+
+        /* Skip empty sections */
+        if (section_len <= 1) {
+            section = next_section;
+            continue;
+        }
+
+        /* Trim leading newlines */
+        while (*section == '\n' && section_len > 0) {
+            section++;
+            section_len--;
+        }
+        if (section_len == 0) {
+            section = next_section;
+            continue;
+        }
+
+        /* Extract nick and body from section */
+        char nick[128] = "unknown";
+        char timestamp[64] = "";
+        const char *body = section;
+        size_t body_len = section_len;
+
+        /* Try to parse header: "nick (date)" or "From nick (date):" */
+        char *first_nl = memchr(section, '\n', section_len);
+        if (first_nl) {
+            size_t hdr_len = (size_t)(first_nl - section);
+            char header[512];
+            if (hdr_len >= sizeof(header)) hdr_len = sizeof(header) - 1;
+            memcpy(header, section, hdr_len);
+            header[hdr_len] = '\0';
+
+            /* Check for "From nick (date):" or "nick (date)" */
+            char *hdr_start = header;
+            if (strncmp(hdr_start, "From ", 5) == 0)
+                hdr_start += 5;
+
+            char *paren = strrchr(hdr_start, '(');
+            if (paren && paren > hdr_start) {
+                /* Extract nick */
+                size_t nlen = (size_t)(paren - hdr_start);
+                while (nlen > 0 && hdr_start[nlen - 1] == ' ') nlen--;
+                if (nlen > 0 && nlen < sizeof(nick)) {
+                    memcpy(nick, hdr_start, nlen);
+                    nick[nlen] = '\0';
+                }
+                /* Extract date from parens */
+                char *close = strchr(paren, ')');
+                if (close) {
+                    size_t dlen = (size_t)(close - paren - 1);
+                    if (dlen < sizeof(timestamp)) {
+                        memcpy(timestamp, paren + 1, dlen);
+                        timestamp[dlen] = '\0';
+                    }
+                }
+
+                /* Body starts after header + newlines */
+                body = first_nl;
+                body_len = section_len - (size_t)(first_nl - section);
+                while (body_len > 0 && *body == '\n') {
+                    body++;
+                    body_len--;
+                }
+            }
+        }
+
+        /* Generate ISO timestamp if we got a date string */
+        char ts_iso[64] = "";
+        if (timestamp[0]) {
+            /* Try to parse "Mar23 16:29" or "Apr 04, 2026 00:41" style */
+            /* For now, use as-is — Mnemosyne accepts freeform date strings */
+            snprintf(ts_iso, sizeof(ts_iso), "%s", timestamp);
+        } else {
+            /* Fallback: current time */
+            time_t now = time(NULL);
+            struct tm *tm = gmtime(&now);
+            snprintf(ts_iso, sizeof(ts_iso), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+                     tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                     tm->tm_hour, tm->tm_min, tm->tm_sec);
+        }
+
+        /* Emit JSON post */
+        if (!first) json_buf_append_str(buf, ", ");
+        first = 0;
+
+        json_buf_append_str(buf, "{");
+        json_buf_printf(buf, "\"id\": %d, ", post_id);
+        json_buf_add_string(buf, "nick", nick);
+        json_buf_append_str(buf, ", ");
+        json_buf_add_string(buf, "login", "");
+        json_buf_append_str(buf, ", ");
+        /* Escape body */
+        json_buf_append_str(buf, "\"body\": \"");
+        if (body_len > 0) {
+            json_buf_append_escaped(buf, body);
+        }
+        json_buf_append_str(buf, "\", ");
+        json_buf_add_string(buf, "timestamp", ts_iso);
+        json_buf_append_str(buf, "}");
+
+        post_id++;
+        section = next_section;
+    }
+
+    free(text);
+}
+
+static void do_full_msgboard_sync(mn_sync_t *sync)
+{
+    hl_server_t *srv = sync->server;
+    if (!srv->flat_news) return;
+
+    /* Check if there are any posts */
+    int post_count = count_flat_msgboard_posts(srv->flat_news);
+    if (post_count == 0) return;
+
+    hl_log_info(sync->logger, "Mnemosyne: starting msgboard sync (full mode)");
+
+    json_buf_t buf;
+    json_buf_init(&buf);
+    json_buf_append_str(&buf, "{\"mode\": \"full\", \"posts\": [");
+
+    /* Parse flat text directly */
+    parse_flat_msgboard_to_json(srv->flat_news, &buf);
+
+    json_buf_append_str(&buf, "]}");
+
+    int status = mn_post(sync, "/api/v1/sync/msgboard", buf.data, buf.len);
+    json_buf_free(&buf);
+
+    mn_handle_post_result(sync, status);
+    if (status >= 200 && status < 300) {
+        hl_log_info(sync->logger, "Mnemosyne: msgboard sync complete (%d posts)", post_count);
+    }
+}
+
 void mn_start_full_sync(mn_sync_t *sync)
 {
     if (!mn_sync_enabled(sync) || sync->state == MN_STATE_SUSPENDED)
@@ -696,6 +901,12 @@ void mn_start_full_sync(mn_sync_t *sync)
 
     if (sync->index_news)
         do_full_news_sync(sync);
+
+    if (sync->state == MN_STATE_SUSPENDED)
+        return;
+
+    if (sync->server->config.mnemosyne_index_msgboard)
+        do_full_msgboard_sync(sync);
 
     if (sync->state != MN_STATE_SUSPENDED)
         hl_log_info(sync->logger, "Mnemosyne: full sync complete");

@@ -21,4 +21,5 @@ void hl_config_init(hl_config_t *cfg)
     /* Mnemosyne defaults: enabled per-content-type when URL is set */
     cfg->mnemosyne_index_files = 1;
     cfg->mnemosyne_index_news = 1;
+    cfg->mnemosyne_index_msgboard = 1;
 }
