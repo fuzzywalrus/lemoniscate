@@ -163,6 +163,15 @@ int mobius_load_config_plist(hl_config_t *cfg, const char *plist_path)
                      sizeof(cfg->tls_key_path));
     plist_get_int(dict, "TLSPort", &cfg->tls_port);
 
+    /* Mnemosyne */
+    plist_get_string(dict, "MnemosyneURL", cfg->mnemosyne_url,
+                     sizeof(cfg->mnemosyne_url));
+    plist_get_string(dict, "MnemosyneAPIKey", cfg->mnemosyne_api_key,
+                     sizeof(cfg->mnemosyne_api_key));
+    plist_get_bool(dict, "MnemosyneIndexFiles", &cfg->mnemosyne_index_files);
+    plist_get_bool(dict, "MnemosyneIndexNews", &cfg->mnemosyne_index_news);
+    plist_get_bool(dict, "MnemosyneIndexMsgboard", &cfg->mnemosyne_index_msgboard);
+
     CFRelease(plist);
     return 0;
 }

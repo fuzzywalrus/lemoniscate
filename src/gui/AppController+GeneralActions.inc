@@ -1038,3 +1038,38 @@ static int pollingIntervalCount = 8;
     [done runModal];
     [done release];
 }
+
+- (void)openMnemosyneRegistration:(id)sender
+{
+    (void)sender;
+    [[NSWorkspace sharedWorkspace] openURL:
+        [NSURL URLWithString:@"https://agora.vespernet.net/"]];
+}
+
+- (void)toggleMnemosyneEnable:(id)sender
+{
+    (void)sender;
+    BOOL enabled = (_mnemosyneEnableCheckbox &&
+                    [_mnemosyneEnableCheckbox state] == NSControlStateValueOn);
+
+    if (enabled) {
+        /* Restore saved URL or use default */
+        if (_mnemosyneSavedURL && [_mnemosyneSavedURL length] > 0) {
+            [_mnemosyneURLField setStringValue:_mnemosyneSavedURL];
+        } else if ([[_mnemosyneURLField stringValue] length] == 0) {
+            [_mnemosyneURLField setStringValue:@"http://tracker.vespernet.net:8980"];
+        }
+    } else {
+        /* Save current URL before clearing */
+        NSString *url = [_mnemosyneURLField stringValue];
+        [url retain];
+        [_mnemosyneSavedURL release];
+        _mnemosyneSavedURL = url;
+    }
+
+    [_mnemosyneURLField setEnabled:enabled];
+    [_mnemosyneAPIKeyField setEnabled:enabled];
+    [_mnemosyneIndexFilesCheckbox setEnabled:enabled];
+    [_mnemosyneIndexNewsCheckbox setEnabled:enabled];
+    [_mnemosyneIndexMsgboardCheckbox setEnabled:enabled];
+}

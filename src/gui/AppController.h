@@ -92,6 +92,15 @@
     NSTextField *_tlsStatusLabel;
     NSButton *_generateTLSCertButton;
 
+    /* Mnemosyne Search section */
+    NSButton *_mnemosyneEnableCheckbox;
+    NSTextField *_mnemosyneURLField;
+    NSTextField *_mnemosyneAPIKeyField;
+    NSButton *_mnemosyneIndexFilesCheckbox;
+    NSButton *_mnemosyneIndexNewsCheckbox;
+    NSButton *_mnemosyneIndexMsgboardCheckbox;
+    NSString *_mnemosyneSavedURL;
+
     /* Monitoring section */
     NSPopUpButton *_pollingRatePopup;
     NSTimeInterval _pollingInterval;
@@ -99,6 +108,9 @@
     /* News settings section */
     NSPopUpButton *_newsDateFormatPopup;
     NSTextField *_newsDelimiterField;
+
+    /* Encoding */
+    NSPopUpButton *_encodingPopup;
 
     /* Right panel: tab view */
     NSTabView *_tabView;
@@ -328,6 +340,8 @@
 - (void)chooseTLSCert:(id)sender;
 - (void)chooseTLSKey:(id)sender;
 - (void)generateSelfSignedCert:(id)sender;
+- (void)openMnemosyneRegistration:(id)sender;
+- (void)toggleMnemosyneEnable:(id)sender;
 - (void)toggleDisclosure:(id)sender;
 - (void)relayoutSettings;
 - (void)showHelpPopover:(id)sender;
