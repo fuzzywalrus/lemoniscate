@@ -343,6 +343,45 @@
     if (numVal && _tlsPortField)
         [_tlsPortField setStringValue:[NSString stringWithFormat:@"%d", [numVal intValue]]];
 
+    /* Encoding popup */
+    val = [dict objectForKey:@"Encoding"];
+    if (val && _encodingPopup) {
+        if ([val isEqualToString:@"utf-8"])
+            [_encodingPopup selectItemWithTitle:@"UTF-8"];
+        else
+            [_encodingPopup selectItemWithTitle:@"Mac Roman"];
+    }
+
+    /* Mnemosyne */
+    val = [dict objectForKey:@"MnemosyneURL"];
+    if (val && _mnemosyneURLField) [_mnemosyneURLField setStringValue:val];
+    val = [dict objectForKey:@"MnemosyneAPIKey"];
+    if (val && _mnemosyneAPIKeyField) [_mnemosyneAPIKeyField setStringValue:val];
+
+    boolVal = [dict objectForKey:@"MnemosyneIndexFiles"];
+    if (_mnemosyneIndexFilesCheckbox)
+        [_mnemosyneIndexFilesCheckbox setState:
+            (boolVal ? [boolVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff];
+    boolVal = [dict objectForKey:@"MnemosyneIndexNews"];
+    if (_mnemosyneIndexNewsCheckbox)
+        [_mnemosyneIndexNewsCheckbox setState:
+            (boolVal ? [boolVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff];
+    boolVal = [dict objectForKey:@"MnemosyneIndexMsgboard"];
+    if (_mnemosyneIndexMsgboardCheckbox)
+        [_mnemosyneIndexMsgboardCheckbox setState:
+            (boolVal ? [boolVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff];
+
+    /* Set enable state based on whether URL is non-empty */
+    {
+        NSString *mnURL = [dict objectForKey:@"MnemosyneURL"];
+        BOOL mnEnabled = (mnURL && [mnURL length] > 0);
+        if (_mnemosyneEnableCheckbox) {
+            [_mnemosyneEnableCheckbox setState:
+                mnEnabled ? NSControlStateValueOn : NSControlStateValueOff];
+            [self toggleMnemosyneEnable:nil];
+        }
+    }
+
     if (_filesTableView) [self refreshFilesList:nil];
     if (_accountsTableView) [self refreshAccountsList:nil];
     if (_bannedIPsTableView || _bannedUsersTableView || _bannedNicksTableView)
@@ -411,7 +450,12 @@
     [dict setObject:(_trackerItems ? _trackerItems : [NSArray array]) forKey:@"Trackers"];
     [dict setObject:newsDateFormat forKey:@"NewsDateFormat"];
     [dict setObject:newsDelimiter forKey:@"NewsDelimiter"];
-    [dict setObject:@"macintosh" forKey:@"Encoding"];
+    /* Encoding from popup */
+    {
+        NSString *encTitle = _encodingPopup ? [_encodingPopup titleOfSelectedItem] : @"Mac Roman";
+        NSString *encValue = [encTitle isEqualToString:@"UTF-8"] ? @"utf-8" : @"macintosh";
+        [dict setObject:encValue forKey:@"Encoding"];
+    }
     [dict setObject:[NSNumber numberWithBool:enableHOPE] forKey:@"EnableHOPE"];
     [dict setObject:[NSNumber numberWithBool:hopeLegacy] forKey:@"HOPELegacyMode"];
     [dict setObject:(hopePrefix ? hopePrefix : @"[E2E]") forKey:@"HOPERequiredPrefix"];
@@ -419,6 +463,28 @@
     [dict setObject:(tlsCert ? tlsCert : @"") forKey:@"TLSCertFile"];
     [dict setObject:(tlsKey ? tlsKey : @"") forKey:@"TLSKeyFile"];
     [dict setObject:[NSNumber numberWithInt:tlsPort] forKey:@"TLSPort"];
+
+    /* Mnemosyne */
+    {
+        BOOL mnEnabled = _mnemosyneEnableCheckbox &&
+            [_mnemosyneEnableCheckbox state] == NSControlStateValueOn;
+        NSString *mnURL = mnEnabled && _mnemosyneURLField ?
+            [_mnemosyneURLField stringValue] : @"";
+        NSString *mnKey = _mnemosyneAPIKeyField ?
+            [_mnemosyneAPIKeyField stringValue] : @"";
+        BOOL mnFiles = _mnemosyneIndexFilesCheckbox ?
+            ([_mnemosyneIndexFilesCheckbox state] == NSControlStateValueOn) : YES;
+        BOOL mnNews = _mnemosyneIndexNewsCheckbox ?
+            ([_mnemosyneIndexNewsCheckbox state] == NSControlStateValueOn) : YES;
+        BOOL mnMsgboard = _mnemosyneIndexMsgboardCheckbox ?
+            ([_mnemosyneIndexMsgboardCheckbox state] == NSControlStateValueOn) : YES;
+
+        [dict setObject:(mnURL ? mnURL : @"") forKey:@"MnemosyneURL"];
+        [dict setObject:(mnKey ? mnKey : @"") forKey:@"MnemosyneAPIKey"];
+        [dict setObject:[NSNumber numberWithBool:mnFiles] forKey:@"MnemosyneIndexFiles"];
+        [dict setObject:[NSNumber numberWithBool:mnNews] forKey:@"MnemosyneIndexNews"];
+        [dict setObject:[NSNumber numberWithBool:mnMsgboard] forKey:@"MnemosyneIndexMsgboard"];
+    }
 
     /* Write to ~/Library/Preferences/com.lemoniscate.server.plist */
     NSString *plistPath = [NSHomeDirectory()
