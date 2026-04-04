@@ -16,6 +16,8 @@
 #include "mobius/config_plist.h"
 #include "mobius/agreement.h"
 #include "mobius/flat_news.h"
+#include "mobius/jsonl_message_board.h"
+#include "mobius/dir_threaded_news.h"
 #include "mobius/yaml_account_manager.h"
 #include "mobius/ban_file.h"
 #include "mobius/logger_impl.h"
@@ -455,14 +457,65 @@ int main(int argc, char **argv)
             }
         }
 
-        /* Load message board (flat news) */
-        snprintf(path, sizeof(path), "%s/MessageBoard.txt", config_dir);
-        srv->flat_news = mobius_flat_news_new(path);
+        /* Load message board — prefer JSONL (Janus-compatible), fall back to flat text */
+        {
+            char jsonl_path[2048], txt_path[2048];
+            snprintf(jsonl_path, sizeof(jsonl_path), "%s/MessageBoard.jsonl", config_dir);
+            snprintf(txt_path, sizeof(txt_path), "%s/MessageBoard.txt", config_dir);
+            struct stat jst;
+            if (stat(jsonl_path, &jst) == 0) {
+                /* JSONL exists — use it */
+                srv->flat_news = mobius_jsonl_news_new(jsonl_path);
+                hl_log_info(srv->logger, "Loaded message board: MessageBoard.jsonl");
+            } else if (stat(txt_path, &jst) == 0) {
+                /* Migrate flat text to JSONL */
+                hl_log_info(srv->logger, "Migrating MessageBoard.txt to JSONL format");
+                if (mobius_migrate_flat_to_jsonl(txt_path, jsonl_path) == 0) {
+                    srv->flat_news = mobius_jsonl_news_new(jsonl_path);
+                    hl_log_info(srv->logger, "Migration complete: MessageBoard.jsonl");
+                } else {
+                    /* Migration failed — fall back to flat text */
+                    srv->flat_news = mobius_flat_news_new(txt_path);
+                    hl_log_error(srv->logger, "JSONL migration failed, using flat text");
+                }
+            } else {
+                /* No message board file — create empty JSONL */
+                srv->flat_news = mobius_jsonl_news_new(jsonl_path);
+            }
+        }
 
-        /* Set threaded news file path and load from disk */
-        snprintf(path, sizeof(path), "%s/ThreadedNews.yaml", config_dir);
-        strncpy(srv->threaded_news->file_path, path, sizeof(srv->threaded_news->file_path) - 1);
-        tn_load(srv->threaded_news);
+        /* Load threaded news — prefer News/ directory (Janus-compatible), fall back to YAML */
+        {
+            char news_dir[2048], yaml_path[2048];
+            snprintf(news_dir, sizeof(news_dir), "%s/News", config_dir);
+            snprintf(yaml_path, sizeof(yaml_path), "%s/ThreadedNews.yaml", config_dir);
+            struct stat nst;
+            if (stat(news_dir, &nst) == 0 && S_ISDIR(nst.st_mode)) {
+                /* News/ directory exists — use directory backend */
+                mobius_threaded_news_free(srv->threaded_news);
+                srv->threaded_news = mobius_dir_news_new(news_dir);
+                hl_log_info(srv->logger, "Loaded threaded news: News/ directory");
+            } else if (stat(yaml_path, &nst) == 0) {
+                /* Migrate YAML to directory */
+                hl_log_info(srv->logger, "Migrating ThreadedNews.yaml to News/ directory");
+                if (mobius_migrate_yaml_to_dir(yaml_path, news_dir) == 0) {
+                    mobius_threaded_news_free(srv->threaded_news);
+                    srv->threaded_news = mobius_dir_news_new(news_dir);
+                    hl_log_info(srv->logger, "Migration complete: News/ directory");
+                } else {
+                    /* Migration failed — fall back to YAML */
+                    strncpy(srv->threaded_news->file_path, yaml_path,
+                            sizeof(srv->threaded_news->file_path) - 1);
+                    tn_load(srv->threaded_news);
+                    hl_log_error(srv->logger, "News migration failed, using YAML");
+                }
+            } else {
+                /* No news files — create empty directory backend */
+                mkdir(news_dir, 0755);
+                mobius_threaded_news_free(srv->threaded_news);
+                srv->threaded_news = mobius_dir_news_new(news_dir);
+            }
+        }
 
         /* Load banner */
         if (srv->config.banner_file[0]) {

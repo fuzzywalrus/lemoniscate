@@ -5,9 +5,20 @@
  */
 
 #include "mobius/flat_news.h"
+#include "mobius/jsonl_message_board.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Check if this is a JSONL backend */
+static int is_jsonl(mobius_flat_news_t *fn)
+{
+    size_t len = strlen(fn->file_path);
+    return (len > 6 && strcmp(fn->file_path + len - 6, ".jsonl") == 0);
+}
+
+/* Forward declaration */
+int mobius_jsonl_prepend(mobius_flat_news_t *fn, const char *data, size_t len);
 
 static char *read_file(const char *path, size_t *out_len)
 {
@@ -76,6 +87,10 @@ const char *mobius_flat_news_data(mobius_flat_news_t *fn, size_t *out_len)
 
 int mobius_flat_news_prepend(mobius_flat_news_t *fn, const char *data, size_t len)
 {
+    /* Route to JSONL handler if applicable */
+    if (is_jsonl(fn))
+        return mobius_jsonl_prepend(fn, data, len);
+
     /* Maps to: Go FlatNews.Write() — prepends new data */
     pthread_mutex_lock(&fn->mu);
 
