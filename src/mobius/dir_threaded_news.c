@@ -393,8 +393,7 @@ int mobius_migrate_yaml_to_dir(const char *yaml_path, const char *news_dir)
     if (!tn) return -1;
 
     strncpy(tn->file_path, yaml_path, sizeof(tn->file_path) - 1);
-    int rc = tn_load(tn);
-    if (rc != 0) {
+    if (tn_load(tn) != 0) {
         mobius_threaded_news_free(tn);
         return -1;
     }
