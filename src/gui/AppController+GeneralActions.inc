@@ -4,37 +4,24 @@
 
     /* Pre-flight validation with clear error messages */
     if (![_processManager hasBinary]) {
-        NSRunAlertPanel(@"Cannot Start Server",
-            @"The server binary was not found inside the application bundle. "
-            @"Please reinstall Lemoniscate.",
-            @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Cannot Start Server"]; [a setInformativeText:@"The server binary was not found inside the application bundle. Please reinstall Lemoniscate."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
     if (_serverPort < 1 || _serverPort > 65535) {
-        NSRunAlertPanel(@"Invalid Port",
-            @"The Hotline port must be between 1 and 65535. "
-            @"The default is 5500.",
-            @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Invalid Port"]; [a setInformativeText:@"The Hotline port must be between 1 and 65535. The default is 5500."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
     NSString *fileRoot = _fileRootField ? [_fileRootField stringValue] : @"";
     if ([fileRoot length] == 0) {
-        NSRunAlertPanel(@"No File Root Set",
-            @"Please set a File Root directory in the server settings. "
-            @"This is the folder that will be shared with connected users.",
-            @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"No File Root Set"]; [a setInformativeText:@"Please set a File Root directory in the server settings. This is the folder that will be shared with connected users."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
     BOOL isDir = NO;
     if (![[NSFileManager defaultManager] fileExistsAtPath:fileRoot isDirectory:&isDir] || !isDir) {
-        NSRunAlertPanel(@"File Root Not Found",
-            [NSString stringWithFormat:
-                @"The File Root directory does not exist:\n\n%@\n\n"
-                @"Please create it or choose a different folder.", fileRoot],
-            @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"File Root Not Found"]; [a setInformativeText:[NSString stringWithFormat:@"The File Root directory does not exist:\n\n%@\n\nPlease create it or choose a different folder.", fileRoot]]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
@@ -67,8 +54,8 @@
     [panel setCanChooseDirectories:YES];
     [panel setAllowsMultipleSelection:NO];
     [panel setTitle:@"Select config directory"];
-    if ([panel runModal] == NSOKButton) {
-        NSString *path = [[panel filenames] objectAtIndex:0];
+    if ([panel runModal] == NSModalResponseOK) {
+        NSString *path = [[[panel URLs] objectAtIndex:0] path];
         [_configDir release];
         _configDir = [path retain];
         [_configDirField setStringValue:_configDir];
@@ -90,9 +77,9 @@
     [panel setCanChooseDirectories:YES];
     [panel setAllowsMultipleSelection:NO];
     [panel setTitle:@"Select files directory"];
-    if ([panel runModal] == NSOKButton) {
+    if ([panel runModal] == NSModalResponseOK) {
         [_fileRootField setStringValue:
-            [[panel filenames] objectAtIndex:0]];
+            [[[panel URLs] objectAtIndex:0] path]];
         [self refreshFilesList:nil];
     }
 }
@@ -105,9 +92,9 @@
     [panel setCanChooseDirectories:NO];
     [panel setAllowsMultipleSelection:NO];
     [panel setTitle:@"Select banner image (JPG or GIF)"];
-    if ([panel runModal] == NSOKButton) {
+    if ([panel runModal] == NSModalResponseOK) {
         [_bannerFileField setStringValue:
-            [[panel filenames] objectAtIndex:0]];
+            [[[panel URLs] objectAtIndex:0] path]];
     }
 }
 
@@ -119,9 +106,9 @@
     [panel setCanChooseDirectories:YES];
     [panel setAllowsMultipleSelection:NO];
     [panel setTitle:@"Select files directory"];
-    if ([panel runModal] == NSOKButton) {
+    if ([panel runModal] == NSModalResponseOK) {
         [_wizardFileRootField setStringValue:
-            [[panel filenames] objectAtIndex:0]];
+            [[[panel URLs] objectAtIndex:0] path]];
     }
 }
 
@@ -133,9 +120,9 @@
     [panel setCanChooseDirectories:NO];
     [panel setAllowsMultipleSelection:NO];
     [panel setTitle:@"Select banner image (JPG or GIF)"];
-    if ([panel runModal] == NSOKButton) {
+    if ([panel runModal] == NSModalResponseOK) {
         [_wizardBannerField setStringValue:
-            [[panel filenames] objectAtIndex:0]];
+            [[[panel URLs] objectAtIndex:0] path]];
     }
 }
 
@@ -158,8 +145,8 @@
     if (!_wizardWindow) {
         _wizardWindow = [[NSWindow alloc]
             initWithContentRect:NSMakeRect(0, 0, 660, 430)
-                      styleMask:(NSTitledWindowMask | NSClosableWindowMask |
-                                 NSMiniaturizableWindowMask)
+                      styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                                 NSWindowStyleMaskMiniaturizable)
                         backing:NSBackingStoreBuffered
                           defer:NO];
         [_wizardWindow setTitle:@"Server Setup Wizard"];
@@ -200,9 +187,9 @@
         [_wizardFinishButton setFrame:NSMakeRect(504, 20, 70, 28)];
         [content addSubview:_wizardFinishButton];
 
-        _wizardFinishStartButton = makeButton(@"Finish & Start", self,
+        _wizardFinishStartButton = makeButton(@"Finish and Start", self,
                                               @selector(wizardFinishAndStart:));
-        [_wizardFinishStartButton setFrame:NSMakeRect(580, 20, 74, 28)];
+        [_wizardFinishStartButton setFrame:NSMakeRect(580, 20, 110, 28)];
         [content addSubview:_wizardFinishStartButton];
 
         _wizardNameField = makeEditField(430);
@@ -215,15 +202,15 @@
         _wizardMaxConnPerIPField = makeEditField(80);
 
         _wizardBonjourCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
-        [_wizardBonjourCheckbox setButtonType:NSSwitchButton];
+        [_wizardBonjourCheckbox setButtonType:NSButtonTypeSwitch];
         [_wizardBonjourCheckbox setTitle:@"Enable Bonjour"];
 
         _wizardTrackerCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
-        [_wizardTrackerCheckbox setButtonType:NSSwitchButton];
+        [_wizardTrackerCheckbox setButtonType:NSButtonTypeSwitch];
         [_wizardTrackerCheckbox setTitle:@"Enable Tracker Registration"];
 
         _wizardPreserveForkCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
-        [_wizardPreserveForkCheckbox setButtonType:NSSwitchButton];
+        [_wizardPreserveForkCheckbox setButtonType:NSButtonTypeSwitch];
         [_wizardPreserveForkCheckbox setTitle:@"Preserve Resource Forks"];
 
         _wizardSummaryTextView = [[NSTextView alloc]
@@ -237,17 +224,18 @@
         _serverNameField ? [_serverNameField stringValue] : (_serverName ? _serverName : @"")];
     [_wizardDescriptionField setStringValue:
         _descriptionField ? [_descriptionField stringValue] : (_serverDescription ? _serverDescription : @"")];
-    [_wizardPortField setIntValue:_portField ? [_portField intValue] : _serverPort];
+    [_wizardPortField setStringValue:[NSString stringWithFormat:@"%d",
+        _portField ? [_portField intValue] : _serverPort]];
     [_wizardFileRootField setStringValue:
         _fileRootField ? [_fileRootField stringValue] : @"Files"];
     [_wizardBannerField setStringValue:
         _bannerFileField ? [_bannerFileField stringValue] : @""];
     [_wizardBonjourCheckbox setState:
-        (_bonjourCheckbox && [_bonjourCheckbox state] == NSOffState) ? NSOffState : NSOnState];
+        (_bonjourCheckbox && [_bonjourCheckbox state] == NSControlStateValueOff) ? NSControlStateValueOff : NSControlStateValueOn];
     [_wizardTrackerCheckbox setState:
-        (_trackerCheckbox && [_trackerCheckbox state] == NSOnState) ? NSOnState : NSOffState];
+        (_trackerCheckbox && [_trackerCheckbox state] == NSControlStateValueOn) ? NSControlStateValueOn : NSControlStateValueOff];
     [_wizardPreserveForkCheckbox setState:
-        (_preserveForkCheckbox && [_preserveForkCheckbox state] == NSOnState) ? NSOnState : NSOffState];
+        (_preserveForkCheckbox && [_preserveForkCheckbox state] == NSControlStateValueOn) ? NSControlStateValueOn : NSControlStateValueOff];
     [_wizardMaxDownloadsField setIntValue:
         _maxDownloadsField ? [_maxDownloadsField intValue] : 0];
     [_wizardMaxDLPerClientField setIntValue:
@@ -343,7 +331,7 @@
         [intro release];
 
         NSTextField *nameLabel = makeLabel(@"Server Name:", 11.0, NO);
-        [nameLabel setAlignment:NSRightTextAlignment];
+        [nameLabel setAlignment:NSTextAlignmentRight];
         [nameLabel setFrame:NSMakeRect(10, 224, 110, 20)];
         [_wizardStepContainer addSubview:nameLabel];
         [nameLabel release];
@@ -351,7 +339,7 @@
         [_wizardStepContainer addSubview:_wizardNameField];
 
         NSTextField *descLabel = makeLabel(@"Description:", 11.0, NO);
-        [descLabel setAlignment:NSRightTextAlignment];
+        [descLabel setAlignment:NSTextAlignmentRight];
         [descLabel setFrame:NSMakeRect(10, 190, 110, 20)];
         [_wizardStepContainer addSubview:descLabel];
         [descLabel release];
@@ -359,7 +347,7 @@
         [_wizardStepContainer addSubview:_wizardDescriptionField];
 
         NSTextField *portLabel = makeLabel(@"Hotline Port:", 11.0, NO);
-        [portLabel setAlignment:NSRightTextAlignment];
+        [portLabel setAlignment:NSTextAlignmentRight];
         [portLabel setFrame:NSMakeRect(10, 156, 110, 20)];
         [_wizardStepContainer addSubview:portLabel];
         [portLabel release];
@@ -377,7 +365,7 @@
         [intro release];
 
         NSTextField *rootLabel = makeLabel(@"File Root:", 11.0, NO);
-        [rootLabel setAlignment:NSRightTextAlignment];
+        [rootLabel setAlignment:NSTextAlignmentRight];
         [rootLabel setFrame:NSMakeRect(10, 224, 110, 20)];
         [_wizardStepContainer addSubview:rootLabel];
         [rootLabel release];
@@ -390,7 +378,7 @@
         [rootBrowse release];
 
         NSTextField *bannerLabel = makeLabel(@"Banner File:", 11.0, NO);
-        [bannerLabel setAlignment:NSRightTextAlignment];
+        [bannerLabel setAlignment:NSTextAlignmentRight];
         [bannerLabel setFrame:NSMakeRect(10, 190, 110, 20)];
         [_wizardStepContainer addSubview:bannerLabel];
         [bannerLabel release];
@@ -424,7 +412,7 @@
         [_wizardStepContainer addSubview:_wizardPreserveForkCheckbox];
 
         NSTextField *maxDL = makeLabel(@"Max Downloads:", 11.0, NO);
-        [maxDL setAlignment:NSRightTextAlignment];
+        [maxDL setAlignment:NSTextAlignmentRight];
         [maxDL setFrame:NSMakeRect(10, 190, 110, 20)];
         [_wizardStepContainer addSubview:maxDL];
         [maxDL release];
@@ -432,7 +420,7 @@
         [_wizardStepContainer addSubview:_wizardMaxDownloadsField];
 
         NSTextField *maxPer = makeLabel(@"Max DL/Client:", 11.0, NO);
-        [maxPer setAlignment:NSRightTextAlignment];
+        [maxPer setAlignment:NSTextAlignmentRight];
         [maxPer setFrame:NSMakeRect(10, 156, 110, 20)];
         [_wizardStepContainer addSubview:maxPer];
         [maxPer release];
@@ -440,7 +428,7 @@
         [_wizardStepContainer addSubview:_wizardMaxDLPerClientField];
 
         NSTextField *maxIP = makeLabel(@"Max Conn/IP:", 11.0, NO);
-        [maxIP setAlignment:NSRightTextAlignment];
+        [maxIP setAlignment:NSTextAlignmentRight];
         [maxIP setFrame:NSMakeRect(10, 122, 110, 20)];
         [_wizardStepContainer addSubview:maxIP];
         [maxIP release];
@@ -466,15 +454,15 @@
             @"Max DL/Client: %d\n"
             @"Max Conn/IP: %d\n\n"
             @"Click Finish to save and close the wizard,\n"
-            @"or Finish & Start to save and launch the server.",
+            @"or Finish and Start to save and launch the server.",
             [_wizardNameField stringValue],
             [_wizardDescriptionField stringValue],
             [_wizardPortField intValue],
             [_wizardFileRootField stringValue],
             [_wizardBannerField stringValue],
-            ([_wizardBonjourCheckbox state] == NSOnState ? @"Enabled" : @"Disabled"),
-            ([_wizardTrackerCheckbox state] == NSOnState ? @"Enabled" : @"Disabled"),
-            ([_wizardPreserveForkCheckbox state] == NSOnState ? @"Enabled" : @"Disabled"),
+            ([_wizardBonjourCheckbox state] == NSControlStateValueOn ? @"Enabled" : @"Disabled"),
+            ([_wizardTrackerCheckbox state] == NSControlStateValueOn ? @"Enabled" : @"Disabled"),
+            ([_wizardPreserveForkCheckbox state] == NSControlStateValueOn ? @"Enabled" : @"Disabled"),
             [_wizardMaxDownloadsField intValue],
             [_wizardMaxDLPerClientField intValue],
             [_wizardMaxConnPerIPField intValue]];
@@ -496,9 +484,7 @@
         NSString *name = trimmedString([_wizardNameField stringValue]);
         if ([name length] == 0) {
             if (showAlert) {
-                NSRunAlertPanel(@"Missing Server Name",
-                                @"Enter a server name before continuing.",
-                                @"OK", nil, nil);
+                { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Missing Server Name"]; [a setInformativeText:@"Enter a server name before continuing."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
             }
             return NO;
         }
@@ -506,9 +492,7 @@
         int port = [_wizardPortField intValue];
         if (port < 1 || port > 65535) {
             if (showAlert) {
-                NSRunAlertPanel(@"Invalid Port",
-                                @"Hotline port must be between 1 and 65535.",
-                                @"OK", nil, nil);
+                { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Invalid Port"]; [a setInformativeText:@"Hotline port must be between 1 and 65535."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
             }
             return NO;
         }
@@ -516,9 +500,7 @@
         NSString *root = trimmedString([_wizardFileRootField stringValue]);
         if ([root length] == 0) {
             if (showAlert) {
-                NSRunAlertPanel(@"Missing File Root",
-                                @"Enter a file root path before continuing.",
-                                @"OK", nil, nil);
+                { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Missing File Root"]; [a setInformativeText:@"Enter a file root path before continuing."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
             }
             return NO;
         }
@@ -527,9 +509,7 @@
             [_wizardMaxDLPerClientField intValue] < 0 ||
             [_wizardMaxConnPerIPField intValue] < 0) {
             if (showAlert) {
-                NSRunAlertPanel(@"Invalid Limits",
-                                @"Limit values cannot be negative.",
-                                @"OK", nil, nil);
+                { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Invalid Limits"]; [a setInformativeText:@"Limit values cannot be negative."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
             }
             return NO;
         }
@@ -548,7 +528,7 @@
 
     if (_serverNameField) [_serverNameField setStringValue:name];
     if (_descriptionField) [_descriptionField setStringValue:desc];
-    if (_portField) [_portField setIntValue:port];
+    if (_portField) [_portField setStringValue:[NSString stringWithFormat:@"%d", port]];
     if (_fileRootField) [_fileRootField setStringValue:fileRoot];
     if (_bannerFileField) [_bannerFileField setStringValue:banner];
     if (_bonjourCheckbox) [_bonjourCheckbox setState:[_wizardBonjourCheckbox state]];
@@ -584,7 +564,7 @@
         float winW = 340, winH = 380;
         _aboutWindow = [[NSWindow alloc]
             initWithContentRect:NSMakeRect(0, 0, winW, winH)
-                      styleMask:(NSTitledWindowMask | NSClosableWindowMask)
+                      styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
                         backing:NSBackingStoreBuffered
                           defer:NO];
         [_aboutWindow setTitle:@"About Lemoniscate"];
@@ -612,7 +592,7 @@
 
         /* Title */
         NSTextField *title = makeLabel(@"Lemoniscate", 22.0, YES);
-        [title setAlignment:NSCenterTextAlignment];
+        [title setAlignment:NSTextAlignmentCenter];
         [title setFrame:NSMakeRect(20, winH - iconSz - 52, winW - 40, 28)];
         [content addSubview:title];
         [title release];
@@ -620,7 +600,7 @@
         /* Subtitle */
         NSTextField *subtitle = makeLabel(
             @"A modern Hotline server for PowerPC OS X", 12.0, NO);
-        [subtitle setAlignment:NSCenterTextAlignment];
+        [subtitle setAlignment:NSTextAlignmentCenter];
         [subtitle setTextColor:[NSColor grayColor]];
         [subtitle setFrame:NSMakeRect(20, winH - iconSz - 72, winW - 40, 18)];
         [content addSubview:subtitle];
@@ -628,7 +608,7 @@
 
         /* Version */
         _aboutVersionLabel = makeLabel(@"", 11.0, NO);
-        [_aboutVersionLabel setAlignment:NSCenterTextAlignment];
+        [_aboutVersionLabel setAlignment:NSTextAlignmentCenter];
         [_aboutVersionLabel setTextColor:[NSColor grayColor]];
         [_aboutVersionLabel setFrame:NSMakeRect(20, winH - iconSz - 92,
                                                  winW - 40, 16)];
@@ -659,7 +639,7 @@
 
         /* Update status */
         _aboutUpdateLabel = makeLabel(@"", 10.0, NO);
-        [_aboutUpdateLabel setAlignment:NSCenterTextAlignment];
+        [_aboutUpdateLabel setAlignment:NSTextAlignmentCenter];
         [_aboutUpdateLabel setTextColor:[NSColor grayColor]];
         [_aboutUpdateLabel setFrame:NSMakeRect(20, 42, winW - 40, 14)];
         [content addSubview:_aboutUpdateLabel];
@@ -710,29 +690,25 @@
 
     NSURL *url = [NSURL URLWithString:urlString];
     if (!url) {
-        NSRunAlertPanel(@"Invalid URL",
-                        @"Could not open requested link.",
-                        @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Invalid URL"]; [a setInformativeText:@"Could not open requested link."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
         return;
     }
 
     if (![[NSWorkspace sharedWorkspace] openURL:url]) {
-        NSRunAlertPanel(@"Open Failed",
-                        @"Unable to open link in the default browser.",
-                        @"OK", nil, nil);
+        { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Open Failed"]; [a setInformativeText:@"Unable to open link in the default browser."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }
     }
 }
 
 - (void)openServerRepository:(id)sender
 {
     (void)sender;
-    [self openProjectURL:@"https://github.com/jhalter/mobius"];
+    [self openProjectURL:@"https://github.com/fuzzywalrus/lemoniscate"];
 }
 
 - (void)openGUIRepository:(id)sender
 {
     (void)sender;
-    [self openProjectURL:@"https://github.com/fuzzywalrus/mobius-macOS-GUI"];
+    [self openProjectURL:@"https://github.com/fuzzywalrus/lemoniscate"];
 }
 
 - (void)openProjectHomepage:(id)sender
@@ -865,9 +841,9 @@ static int pollingIntervalCount = 8;
     [panel setCanChooseDirectories:NO];
     [panel setAllowsMultipleSelection:NO];
     [panel setTitle:@"Select TLS certificate (PEM)"];
-    if ([panel runModal] == NSOKButton) {
+    if ([panel runModal] == NSModalResponseOK) {
         [_tlsCertField setStringValue:
-            [[panel filenames] objectAtIndex:0]];
+            [[[panel URLs] objectAtIndex:0] path]];
     }
 }
 
@@ -879,114 +855,263 @@ static int pollingIntervalCount = 8;
     [panel setCanChooseDirectories:NO];
     [panel setAllowsMultipleSelection:NO];
     [panel setTitle:@"Select TLS private key (PEM)"];
-    if ([panel runModal] == NSOKButton) {
+    if ([panel runModal] == NSModalResponseOK) {
         [_tlsKeyField setStringValue:
-            [[panel filenames] objectAtIndex:0]];
+            [[[panel URLs] objectAtIndex:0] path]];
     }
 }
 
-- (void)generateTLSCert:(id)sender
+- (void)generateSelfSignedCert:(id)sender
 {
     (void)sender;
 
-    if (!_configDir) {
-        NSRunAlertPanel(@"Error",
-            @"No configuration directory set. Start the server first.",
-            @"OK", nil, nil);
+    /* Ask the user for a Common Name and keychain password */
+    NSAlert *prompt = [[NSAlert alloc] init];
+    [prompt setMessageText:@"Generate Self-Signed Certificate"];
+    [prompt setInformativeText:@"Enter the server hostname and a keychain password.\nThe password protects the temporary keychain used for TLS.\n\nThis will create cert.pem, key.pem, and keychain.pass in your config directory."];
+    [prompt addButtonWithTitle:@"Generate"];
+    [prompt addButtonWithTitle:@"Cancel"];
+
+    /* Accessory view with CN field + password field */
+    NSView *accessory = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 62)];
+
+    NSTextField *cnLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 40, 80, 18)];
+    [cnLabel setStringValue:@"Hostname:"];
+    [cnLabel setEditable:NO];
+    [cnLabel setBordered:NO];
+    [cnLabel setDrawsBackground:NO];
+    [cnLabel setFont:[NSFont systemFontOfSize:11.0]];
+    [accessory addSubview:cnLabel];
+    [cnLabel release];
+
+    NSTextField *cnField = [[NSTextField alloc]
+        initWithFrame:NSMakeRect(82, 38, 178, 22)];
+    [cnField setStringValue:_serverName ? _serverName : @"Lemoniscate Server"];
+    [cnField setFont:[NSFont systemFontOfSize:13.0]];
+    [accessory addSubview:cnField];
+
+    NSTextField *pwLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 10, 80, 18)];
+    [pwLabel setStringValue:@"Password:"];
+    [pwLabel setEditable:NO];
+    [pwLabel setBordered:NO];
+    [pwLabel setDrawsBackground:NO];
+    [pwLabel setFont:[NSFont systemFontOfSize:11.0]];
+    [accessory addSubview:pwLabel];
+    [pwLabel release];
+
+    NSSecureTextField *pwField = [[NSSecureTextField alloc]
+        initWithFrame:NSMakeRect(82, 8, 178, 22)];
+    [pwField setFont:[NSFont systemFontOfSize:13.0]];
+    [accessory addSubview:pwField];
+
+    [prompt setAccessoryView:accessory];
+    [accessory release];
+
+    /* Make the CN field first responder */
+    [[prompt window] setInitialFirstResponder:cnField];
+
+    NSModalResponse resp = [prompt runModal];
+    if (resp != NSAlertFirstButtonReturn) {
+        [cnField release];
+        [pwField release];
+        [prompt release];
         return;
     }
 
-    /* Create tls subdirectory in config dir */
-    NSString *tlsDir = [_configDir stringByAppendingPathComponent:@"tls"];
+    NSString *cn = [[cnField stringValue]
+        stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    NSString *kcPassword = [[pwField stringValue]
+        stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    [cnField release];
+    [pwField release];
+    [prompt release];
+
+    if (!cn || [cn length] == 0)
+        cn = @"Lemoniscate Server";
+    if (!kcPassword || [kcPassword length] == 0)
+        kcPassword = @"lemoniscate-default-kc";
+
+    /* Ensure config directory exists */
     NSFileManager *fm = [NSFileManager defaultManager];
-    BOOL isDir = NO;
-    if (![fm fileExistsAtPath:tlsDir isDirectory:&isDir]) {
-        [fm createDirectoryAtPath:tlsDir attributes:[NSDictionary dictionary]];
+    if (![fm fileExistsAtPath:_configDir]) {
+        [fm createDirectoryAtPath:_configDir
+      withIntermediateDirectories:YES
+                       attributes:nil
+                            error:nil];
     }
 
-    NSString *certPath = [tlsDir stringByAppendingPathComponent:@"cert.pem"];
-    NSString *keyPath = [tlsDir stringByAppendingPathComponent:@"key.pem"];
+    NSString *certPath = [_configDir stringByAppendingPathComponent:@"cert.pem"];
+    NSString *keyPath = [_configDir stringByAppendingPathComponent:@"key.pem"];
 
-    /* Check if certs already exist */
+    /* Check for existing files */
     if ([fm fileExistsAtPath:certPath] || [fm fileExistsAtPath:keyPath]) {
-        int result = NSRunAlertPanel(@"Overwrite?",
-            @"TLS certificate files already exist. Generate new ones?",
-            @"Generate", @"Cancel", nil);
-        if (result != NSAlertDefaultReturn) return;
+        NSAlert *overwrite = [[NSAlert alloc] init];
+        [overwrite setMessageText:@"Certificate files already exist"];
+        [overwrite setInformativeText:
+            [NSString stringWithFormat:
+                @"Files already exist in:\n%@\n\nOverwrite them?", _configDir]];
+        [overwrite addButtonWithTitle:@"Overwrite"];
+        [overwrite addButtonWithTitle:@"Cancel"];
+        [overwrite setAlertStyle:NSAlertStyleWarning];
+        NSModalResponse oresp = [overwrite runModal];
+        [overwrite release];
+        if (oresp != NSAlertFirstButtonReturn) return;
     }
 
-    /* Get server name for the CN field */
-    NSString *cn = @"Lemoniscate";
-    if (_serverNameField && [[_serverNameField stringValue] length] > 0) {
-        cn = [_serverNameField stringValue];
+    /* Generate key and certificate in two steps so the private key
+     * uses traditional RSA format (BEGIN RSA PRIVATE KEY) which
+     * SecItemImport on macOS handles reliably. */
+    NSString *subj = [NSString stringWithFormat:@"/CN=%@", cn];
+    NSString *opensslPath = @"/usr/bin/openssl";
+
+    /* Step 1: openssl genrsa -out key.pem 2048 */
+    {
+        NSTask *genrsa = [[NSTask alloc] init];
+        [genrsa setLaunchPath:opensslPath];
+        [genrsa setArguments:[NSArray arrayWithObjects:
+            @"genrsa", @"-out", keyPath, @"2048", nil]];
+        NSPipe *ep = [NSPipe pipe];
+        [genrsa setStandardError:ep];
+        [genrsa setStandardOutput:[NSPipe pipe]];
+
+        @try {
+            [genrsa launch];
+            [genrsa waitUntilExit];
+        } @catch (NSException *e) {
+            NSAlert *err = [[NSAlert alloc] init];
+            [err setMessageText:@"Failed to run openssl genrsa"];
+            [err setInformativeText:[e reason]];
+            [err setAlertStyle:NSAlertStyleCritical];
+            [err runModal];
+            [err release];
+            [genrsa release];
+            return;
+        }
+
+        int s = [genrsa terminationStatus];
+        [genrsa release];
+        if (s != 0) {
+            NSData *ed = [[ep fileHandleForReading] readDataToEndOfFile];
+            NSString *es = [[[NSString alloc] initWithData:ed
+                                                  encoding:NSUTF8StringEncoding] autorelease];
+            NSAlert *err = [[NSAlert alloc] init];
+            [err setMessageText:@"Key generation failed"];
+            [err setInformativeText:es ? es : @"Unknown error"];
+            [err setAlertStyle:NSAlertStyleCritical];
+            [err runModal];
+            [err release];
+            return;
+        }
     }
 
-    /* Use the user's keychain password, or prompt if not set */
-    NSString *keychainPass = _tlsKeychainPassField ? [_tlsKeychainPassField stringValue] : @"";
-    if (!keychainPass || [keychainPass length] == 0) {
-        NSRunAlertPanel(@"Keychain Password Required",
-            @"Please enter a keychain password in the TLS settings before generating a certificate. "
-            @"You will need this password on first server launch.",
-            @"OK", nil, nil);
-        return;
+    /* Step 2: openssl req -x509 -key key.pem -out cert.pem ... */
+    {
+        NSTask *req = [[NSTask alloc] init];
+        [req setLaunchPath:opensslPath];
+        [req setArguments:[NSArray arrayWithObjects:
+            @"req", @"-new", @"-x509",
+            @"-key", keyPath,
+            @"-out", certPath,
+            @"-days", @"3650",
+            @"-subj", subj,
+            nil]];
+        NSPipe *ep = [NSPipe pipe];
+        [req setStandardError:ep];
+        [req setStandardOutput:[NSPipe pipe]];
+
+        @try {
+            [req launch];
+            [req waitUntilExit];
+        } @catch (NSException *e) {
+            NSAlert *err = [[NSAlert alloc] init];
+            [err setMessageText:@"Failed to run openssl req"];
+            [err setInformativeText:[e reason]];
+            [err setAlertStyle:NSAlertStyleCritical];
+            [err runModal];
+            [err release];
+            [req release];
+            return;
+        }
+
+        int s = [req terminationStatus];
+        [req release];
+        if (s != 0) {
+            NSData *ed = [[ep fileHandleForReading] readDataToEndOfFile];
+            NSString *es = [[[NSString alloc] initWithData:ed
+                                                  encoding:NSUTF8StringEncoding] autorelease];
+            NSAlert *err = [[NSAlert alloc] init];
+            [err setMessageText:@"Certificate generation failed"];
+            [err setInformativeText:es ? es : @"Unknown error"];
+            [err setAlertStyle:NSAlertStyleCritical];
+            [err runModal];
+            [err release];
+            return;
+        }
     }
 
-    /* Save the keychain password to file for the server to read */
-    NSString *passPath = [tlsDir stringByAppendingPathComponent:@"keychain.pass"];
-    [keychainPass writeToFile:passPath atomically:YES
-                     encoding:NSUTF8StringEncoding error:nil];
-    [fm changeFileAttributes:[NSDictionary dictionaryWithObject:
-        [NSNumber numberWithUnsignedLong:0600] forKey:NSFilePosixPermissions]
-                      atPath:passPath];
-
-    /* Generate self-signed cert using openssl (ships with Tiger/Leopard) */
-    NSTask *task = [[NSTask alloc] init];
-    [task setLaunchPath:@"/usr/bin/openssl"];
-    [task setArguments:[NSArray arrayWithObjects:
-        @"req", @"-x509",
-        @"-newkey", @"rsa:1024",
-        @"-keyout", keyPath,
-        @"-out", certPath,
-        @"-days", @"3650",
-        @"-nodes",
-        @"-sha1",
-        @"-subj", [NSString stringWithFormat:@"/CN=%@", cn],
-        nil]];
-
-    /* Suppress stderr output */
-    [task setStandardError:[NSPipe pipe]];
-    [task setStandardOutput:[NSPipe pipe]];
-
-    int ok = 1;
-    @try {
-        [task launch];
-        [task waitUntilExit];
-        if ([task terminationStatus] != 0) ok = 0;
-    } @catch (NSException *e) {
-        ok = 0;
+    /* Write keychain password to keychain.pass alongside the cert */
+    {
+        NSString *passPath = [_configDir stringByAppendingPathComponent:@"keychain.pass"];
+        [kcPassword writeToFile:passPath atomically:YES
+                       encoding:NSUTF8StringEncoding error:nil];
     }
-    [task release];
 
-    if (ok && [fm fileExistsAtPath:certPath] && [fm fileExistsAtPath:keyPath]) {
-        [_tlsCertField setStringValue:certPath];
-        [_tlsKeyField setStringValue:keyPath];
-        [_tlsStatusLabel setStringValue:@"Self-signed certificate generated"];
-        [_tlsStatusLabel setTextColor:[NSColor colorWithCalibratedRed:0.0
-                                                               green:0.5
-                                                                blue:0.0
-                                                               alpha:1.0]];
+    /* Auto-fill the TLS fields */
+    [_tlsCertField setStringValue:certPath];
+    [_tlsKeyField setStringValue:keyPath];
 
-        /* Auto-save so the plist + YAML pick up the new cert paths */
-        [self writeConfigToDisk];
+    /* Update status label */
+    [_tlsStatusLabel setStringValue:@"\u2705 Self-signed certificate generated"];
+    [_tlsStatusLabel setTextColor:[NSColor colorWithCalibratedRed:0.2
+                                                            green:0.7
+                                                             blue:0.2
+                                                            alpha:1.0]];
 
-        NSRunAlertPanel(@"TLS Certificate Generated",
-            @"A self-signed certificate has been created and settings saved. "
-            @"Restart the server to enable TLS.",
-            @"OK", nil, nil);
+    NSAlert *done = [[NSAlert alloc] init];
+    [done setMessageText:@"Certificate Generated"];
+    [done setInformativeText:
+        [NSString stringWithFormat:
+            @"Self-signed certificate created:\n\n"
+            @"Certificate: %@\n"
+            @"Private Key: %@\n\n"
+            @"Valid for 10 years. Save settings and restart the server to enable TLS.",
+            certPath, keyPath]];
+    [done addButtonWithTitle:@"OK"];
+    [done runModal];
+    [done release];
+}
+
+- (void)openMnemosyneRegistration:(id)sender
+{
+    (void)sender;
+    [[NSWorkspace sharedWorkspace] openURL:
+        [NSURL URLWithString:@"https://agora.vespernet.net/"]];
+}
+
+- (void)toggleMnemosyneEnable:(id)sender
+{
+    (void)sender;
+    BOOL enabled = (_mnemosyneEnableCheckbox &&
+                    [_mnemosyneEnableCheckbox state] == NSControlStateValueOn);
+
+    if (enabled) {
+        /* Restore saved URL or use default */
+        if (_mnemosyneSavedURL && [_mnemosyneSavedURL length] > 0) {
+            [_mnemosyneURLField setStringValue:_mnemosyneSavedURL];
+        } else if ([[_mnemosyneURLField stringValue] length] == 0) {
+            [_mnemosyneURLField setStringValue:@"http://tracker.vespernet.net:8980"];
+        }
     } else {
-        NSRunAlertPanel(@"Error",
-            @"Failed to generate TLS certificate. "
-            @"Make sure OpenSSL is installed (/usr/bin/openssl).",
-            @"OK", nil, nil);
+        /* Save current URL before clearing */
+        NSString *url = [_mnemosyneURLField stringValue];
+        [url retain];
+        [_mnemosyneSavedURL release];
+        _mnemosyneSavedURL = url;
     }
+
+    [_mnemosyneURLField setEnabled:enabled];
+    [_mnemosyneAPIKeyField setEnabled:enabled];
+    [_mnemosyneIndexFilesCheckbox setEnabled:enabled];
+    [_mnemosyneIndexNewsCheckbox setEnabled:enabled];
+    [_mnemosyneIndexMsgboardCheckbox setEnabled:enabled];
 }

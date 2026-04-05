@@ -81,6 +81,7 @@
         _aboutWindow = nil;
         _aboutVersionLabel = nil;
         _aboutUpdateLabel = nil;
+        _disclosureSections = [[NSMutableArray alloc] init];
 
         /* Load polling interval preference (default 10s) */
         {
@@ -90,7 +91,7 @@
             if (_pollingInterval <= 0) _pollingInterval = 10.0;
         }
 
-        /* Find server binary (supports Lemoniscate + MobiusAdmin names). */
+        /* Find server binary in the application bundle. */
         NSBundle *bundle = [NSBundle mainBundle];
         NSFileManager *fm = [NSFileManager defaultManager];
         NSString *binPath = nil;
@@ -283,23 +284,27 @@
     NSNumber *boolVal;
     boolVal = [dict objectForKey:@"EnableBonjour"];
     if (boolVal && _bonjourCheckbox)
-        [_bonjourCheckbox setState:[boolVal boolValue] ? NSOnState : NSOffState];
+        [_bonjourCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
     boolVal = [dict objectForKey:@"EnableTrackerRegistration"];
     if (boolVal && _trackerCheckbox)
-        [_trackerCheckbox setState:[boolVal boolValue] ? NSOnState : NSOffState];
+        [_trackerCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
     boolVal = [dict objectForKey:@"PreserveResourceForks"];
     if (boolVal && _preserveForkCheckbox)
-        [_preserveForkCheckbox setState:[boolVal boolValue] ? NSOnState : NSOffState];
+        [_preserveForkCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
 
     boolVal = [dict objectForKey:@"EnableHOPE"];
     if (boolVal && _hopeCheckbox)
-        [_hopeCheckbox setState:[boolVal boolValue] ? NSOnState : NSOffState];
+        [_hopeCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
     boolVal = [dict objectForKey:@"HOPELegacyMode"];
     if (boolVal && _hopeLegacyCheckbox)
-        [_hopeLegacyCheckbox setState:[boolVal boolValue] ? NSOnState : NSOffState];
+        [_hopeLegacyCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
     val = [dict objectForKey:@"HOPERequiredPrefix"];
     if (val && _hopePrefixField) [_hopePrefixField setStringValue:val];
+    boolVal = [dict objectForKey:@"E2ERequireTLS"];
+    if (boolVal && _hopeRequireTLSCheckbox)
+        [_hopeRequireTLSCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
 
+    /* TLS (string fields loaded here; port loaded below after numVal decl) */
     val = [dict objectForKey:@"TLSCertFile"];
     if (val && _tlsCertField) [_tlsCertField setStringValue:val];
     val = [dict objectForKey:@"TLSKeyFile"];
@@ -337,8 +342,45 @@
     numVal = [dict objectForKey:@"TLSPort"];
     if (numVal && _tlsPortField)
         [_tlsPortField setStringValue:[NSString stringWithFormat:@"%d", [numVal intValue]]];
-    val = [dict objectForKey:@"TLSKeychainPass"];
-    if (val && _tlsKeychainPassField) [_tlsKeychainPassField setStringValue:val];
+
+    /* Encoding popup */
+    val = [dict objectForKey:@"Encoding"];
+    if (val && _encodingPopup) {
+        if ([val isEqualToString:@"utf-8"])
+            [_encodingPopup selectItemWithTitle:@"UTF-8"];
+        else
+            [_encodingPopup selectItemWithTitle:@"Mac Roman"];
+    }
+
+    /* Mnemosyne */
+    val = [dict objectForKey:@"MnemosyneURL"];
+    if (val && _mnemosyneURLField) [_mnemosyneURLField setStringValue:val];
+    val = [dict objectForKey:@"MnemosyneAPIKey"];
+    if (val && _mnemosyneAPIKeyField) [_mnemosyneAPIKeyField setStringValue:val];
+
+    boolVal = [dict objectForKey:@"MnemosyneIndexFiles"];
+    if (_mnemosyneIndexFilesCheckbox)
+        [_mnemosyneIndexFilesCheckbox setState:
+            (boolVal ? [boolVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff];
+    boolVal = [dict objectForKey:@"MnemosyneIndexNews"];
+    if (_mnemosyneIndexNewsCheckbox)
+        [_mnemosyneIndexNewsCheckbox setState:
+            (boolVal ? [boolVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff];
+    boolVal = [dict objectForKey:@"MnemosyneIndexMsgboard"];
+    if (_mnemosyneIndexMsgboardCheckbox)
+        [_mnemosyneIndexMsgboardCheckbox setState:
+            (boolVal ? [boolVal boolValue] : YES) ? NSControlStateValueOn : NSControlStateValueOff];
+
+    /* Set enable state based on whether URL is non-empty */
+    {
+        NSString *mnURL = [dict objectForKey:@"MnemosyneURL"];
+        BOOL mnEnabled = (mnURL && [mnURL length] > 0);
+        if (_mnemosyneEnableCheckbox) {
+            [_mnemosyneEnableCheckbox setState:
+                mnEnabled ? NSControlStateValueOn : NSControlStateValueOff];
+            [self toggleMnemosyneEnable:nil];
+        }
+    }
 
     if (_filesTableView) [self refreshFilesList:nil];
     if (_accountsTableView) [self refreshAccountsList:nil];
@@ -362,8 +404,8 @@
     NSString *desc = _descriptionField ? [_descriptionField stringValue] : _serverDescription;
     NSString *banner = _bannerFileField ? [_bannerFileField stringValue] : @"";
     NSString *fileRoot = _fileRootField ? [_fileRootField stringValue] : @"";
-    BOOL enableBonjour = _bonjourCheckbox ? ([_bonjourCheckbox state] == NSOnState) : YES;
-    BOOL enableTracker = _trackerCheckbox ? ([_trackerCheckbox state] == NSOnState) : NO;
+    BOOL enableBonjour = _bonjourCheckbox ? ([_bonjourCheckbox state] == NSControlStateValueOn) : YES;
+    BOOL enableTracker = _trackerCheckbox ? ([_trackerCheckbox state] == NSControlStateValueOn) : NO;
     NSString *newsDateFormat = _newsDateFormatPopup ?
         [_newsDateFormatPopup titleOfSelectedItem] : @"Jan02 15:04";
     NSString *newsDelimiter = _newsDelimiterField ?
@@ -372,14 +414,14 @@
         newsDateFormat = @"Jan02 15:04";
     if (!newsDelimiter || [newsDelimiter length] == 0)
         newsDelimiter = @"__________________________________________________________";
-    BOOL preserveForks = _preserveForkCheckbox ? ([_preserveForkCheckbox state] == NSOnState) : NO;
-    BOOL enableHOPE = _hopeCheckbox ? ([_hopeCheckbox state] == NSOnState) : NO;
-    BOOL hopeLegacy = _hopeLegacyCheckbox ? ([_hopeLegacyCheckbox state] == NSOnState) : NO;
+    BOOL preserveForks = _preserveForkCheckbox ? ([_preserveForkCheckbox state] == NSControlStateValueOn) : NO;
+    BOOL enableHOPE = _hopeCheckbox ? ([_hopeCheckbox state] == NSControlStateValueOn) : NO;
+    BOOL hopeLegacy = _hopeLegacyCheckbox ? ([_hopeLegacyCheckbox state] == NSControlStateValueOn) : NO;
     NSString *hopePrefix = _hopePrefixField ? [_hopePrefixField stringValue] : @"[E2E]";
+    BOOL e2eRequireTLS = _hopeRequireTLSCheckbox ? ([_hopeRequireTLSCheckbox state] == NSControlStateValueOn) : NO;
     NSString *tlsCert = _tlsCertField ? [_tlsCertField stringValue] : @"";
     NSString *tlsKey = _tlsKeyField ? [_tlsKeyField stringValue] : @"";
     int tlsPort = _tlsPortField ? [_tlsPortField intValue] : 0;
-    NSString *tlsKeychainPass = _tlsKeychainPassField ? [_tlsKeychainPassField stringValue] : @"";
     int maxDownloads = _maxDownloadsField ? [_maxDownloadsField intValue] : 0;
     int maxDLPerClient = _maxDLPerClientField ? [_maxDLPerClientField intValue] : 0;
     int maxConnPerIP = _maxConnPerIPField ? [_maxConnPerIPField intValue] : 0;
@@ -408,79 +450,46 @@
     [dict setObject:(_trackerItems ? _trackerItems : [NSArray array]) forKey:@"Trackers"];
     [dict setObject:newsDateFormat forKey:@"NewsDateFormat"];
     [dict setObject:newsDelimiter forKey:@"NewsDelimiter"];
-    [dict setObject:@"macintosh" forKey:@"Encoding"];
+    /* Encoding from popup */
+    {
+        NSString *encTitle = _encodingPopup ? [_encodingPopup titleOfSelectedItem] : @"Mac Roman";
+        NSString *encValue = [encTitle isEqualToString:@"UTF-8"] ? @"utf-8" : @"macintosh";
+        [dict setObject:encValue forKey:@"Encoding"];
+    }
     [dict setObject:[NSNumber numberWithBool:enableHOPE] forKey:@"EnableHOPE"];
     [dict setObject:[NSNumber numberWithBool:hopeLegacy] forKey:@"HOPELegacyMode"];
     [dict setObject:(hopePrefix ? hopePrefix : @"[E2E]") forKey:@"HOPERequiredPrefix"];
+    [dict setObject:[NSNumber numberWithBool:e2eRequireTLS] forKey:@"E2ERequireTLS"];
     [dict setObject:(tlsCert ? tlsCert : @"") forKey:@"TLSCertFile"];
     [dict setObject:(tlsKey ? tlsKey : @"") forKey:@"TLSKeyFile"];
     [dict setObject:[NSNumber numberWithInt:tlsPort] forKey:@"TLSPort"];
-    if (tlsKeychainPass && [tlsKeychainPass length] > 0)
-        [dict setObject:tlsKeychainPass forKey:@"TLSKeychainPass"];
+
+    /* Mnemosyne */
+    {
+        BOOL mnEnabled = _mnemosyneEnableCheckbox &&
+            [_mnemosyneEnableCheckbox state] == NSControlStateValueOn;
+        NSString *mnURL = mnEnabled && _mnemosyneURLField ?
+            [_mnemosyneURLField stringValue] : @"";
+        NSString *mnKey = _mnemosyneAPIKeyField ?
+            [_mnemosyneAPIKeyField stringValue] : @"";
+        BOOL mnFiles = _mnemosyneIndexFilesCheckbox ?
+            ([_mnemosyneIndexFilesCheckbox state] == NSControlStateValueOn) : YES;
+        BOOL mnNews = _mnemosyneIndexNewsCheckbox ?
+            ([_mnemosyneIndexNewsCheckbox state] == NSControlStateValueOn) : YES;
+        BOOL mnMsgboard = _mnemosyneIndexMsgboardCheckbox ?
+            ([_mnemosyneIndexMsgboardCheckbox state] == NSControlStateValueOn) : YES;
+
+        [dict setObject:(mnURL ? mnURL : @"") forKey:@"MnemosyneURL"];
+        [dict setObject:(mnKey ? mnKey : @"") forKey:@"MnemosyneAPIKey"];
+        [dict setObject:[NSNumber numberWithBool:mnFiles] forKey:@"MnemosyneIndexFiles"];
+        [dict setObject:[NSNumber numberWithBool:mnNews] forKey:@"MnemosyneIndexNews"];
+        [dict setObject:[NSNumber numberWithBool:mnMsgboard] forKey:@"MnemosyneIndexMsgboard"];
+    }
 
     /* Write to ~/Library/Preferences/com.lemoniscate.server.plist */
     NSString *plistPath = [NSHomeDirectory()
         stringByAppendingPathComponent:@"Library/Preferences/com.lemoniscate.server.plist"];
     [dict writeToFile:plistPath atomically:YES];
-
-    /* Also write config.yaml into the config directory so the server binary
-     * can read it. The server reads YAML, not plists. */
-    if (_configDir) {
-        NSMutableString *yaml = [NSMutableString string];
-        [yaml appendFormat:@"Name: %@\n", name];
-        [yaml appendFormat:@"Description: %@\n", desc];
-        [yaml appendFormat:@"FileRoot: %@\n", fileRoot];
-        [yaml appendFormat:@"BannerFile: %@\n", banner];
-        [yaml appendString:@"Encoding: macintosh\n"];
-        [yaml appendFormat:@"EnableBonjour: %@\n", enableBonjour ? @"true" : @"false"];
-        [yaml appendFormat:@"EnableTrackerRegistration: %@\n", enableTracker ? @"true" : @"false"];
-        [yaml appendFormat:@"PreserveResourceForks: %@\n", preserveForks ? @"true" : @"false"];
-        [yaml appendFormat:@"EnableHOPE: %@\n", enableHOPE ? @"true" : @"false"];
-        if (maxDownloads > 0)
-            [yaml appendFormat:@"MaxDownloads: %d\n", maxDownloads];
-        if (maxDLPerClient > 0)
-            [yaml appendFormat:@"MaxDownloadsPerClient: %d\n", maxDLPerClient];
-        if (maxConnPerIP > 0)
-            [yaml appendFormat:@"MaxConnectionsPerIP: %d\n", maxConnPerIP];
-        if (tlsCert && [tlsCert length] > 0)
-            [yaml appendFormat:@"TLSCertFile: %@\n", tlsCert];
-        if (tlsKey && [tlsKey length] > 0)
-            [yaml appendFormat:@"TLSKeyFile: %@\n", tlsKey];
-        if (tlsPort > 0)
-            [yaml appendFormat:@"TLSPort: %d\n", tlsPort];
-        [yaml appendFormat:@"NewsDateFormat: %@\n", newsDateFormat];
-        [yaml appendFormat:@"NewsDelimiter: %@\n", newsDelimiter];
-        if (_trackerItems && [_trackerItems count] > 0) {
-            [yaml appendString:@"Trackers:\n"];
-            unsigned ti;
-            for (ti = 0; ti < [_trackerItems count]; ti++) {
-                [yaml appendFormat:@"  - %@\n", [_trackerItems objectAtIndex:ti]];
-            }
-        }
-        if (_ignoreFileItems && [_ignoreFileItems count] > 0) {
-            [yaml appendString:@"IgnoreFiles:\n"];
-            unsigned ii;
-            for (ii = 0; ii < [_ignoreFileItems count]; ii++) {
-                [yaml appendFormat:@"  - %@\n", [_ignoreFileItems objectAtIndex:ii]];
-            }
-        }
-
-        NSString *yamlPath = [_configDir stringByAppendingPathComponent:@"config.yaml"];
-        [yaml writeToFile:yamlPath atomically:YES
-                 encoding:NSUTF8StringEncoding error:nil];
-
-        /* Write keychain.pass for the server's TLS keychain */
-        if (tlsKeychainPass && [tlsKeychainPass length] > 0 && tlsCert && [tlsCert length] > 0) {
-            NSString *tlsDir = [tlsCert stringByDeletingLastPathComponent];
-            NSString *passFile = [tlsDir stringByAppendingPathComponent:@"keychain.pass"];
-            [tlsKeychainPass writeToFile:passFile atomically:YES
-                                encoding:NSUTF8StringEncoding error:nil];
-            NSFileManager *fmgr = [NSFileManager defaultManager];
-            [fmgr changeFileAttributes:[NSDictionary dictionaryWithObject:
-                [NSNumber numberWithUnsignedLong:0600] forKey:NSFilePosixPermissions]
-                                atPath:passFile];
-        }
-    }
 }
 
 /* Create directory and all intermediate parents (Tiger compatible) */
@@ -493,7 +502,7 @@ static void createDirectoryWithParents(NSFileManager *fm, NSString *path)
     if (parent && [parent length] > 1) {
         createDirectoryWithParents(fm, parent);
     }
-    [fm createDirectoryAtPath:path attributes:[NSDictionary dictionary]];
+    [fm createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:NULL];
 }
 
 - (void)ensureConfigScaffolding
@@ -506,12 +515,12 @@ static void createDirectoryWithParents(NSFileManager *fm, NSString *path)
 
     NSString *filesDir = [_configDir stringByAppendingPathComponent:@"Files"];
     if (![fm fileExistsAtPath:filesDir isDirectory:&isDir]) {
-        [fm createDirectoryAtPath:filesDir attributes:[NSDictionary dictionary]];
+        [fm createDirectoryAtPath:filesDir withIntermediateDirectories:YES attributes:nil error:NULL];
     }
 
     NSString *usersDir = [_configDir stringByAppendingPathComponent:@"Users"];
     if (![fm fileExistsAtPath:usersDir isDirectory:&isDir]) {
-        [fm createDirectoryAtPath:usersDir attributes:[NSDictionary dictionary]];
+        [fm createDirectoryAtPath:usersDir withIntermediateDirectories:YES attributes:nil error:NULL];
     }
 
     NSString *agreement = [_configDir stringByAppendingPathComponent:@"Agreement.txt"];
@@ -540,7 +549,7 @@ static void createDirectoryWithParents(NSFileManager *fm, NSString *path)
         NSString *bundleBanner = [[NSBundle mainBundle]
             pathForResource:@"default-banner" ofType:@"jpg"];
         if (bundleBanner) {
-            [fm copyPath:bundleBanner toPath:bannerDest handler:nil];
+            [fm copyItemAtPath:bundleBanner toPath:bannerDest error:NULL];
         }
     }
 

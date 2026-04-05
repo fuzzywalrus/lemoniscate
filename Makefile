@@ -5,24 +5,35 @@
 # On modern macOS for development/testing: CC = cc
 
 CC ?= cc
+
+# Auto-detect Tiger/PPC vs modern macOS
+IS_TIGER := $(shell test -d /usr/local/lib -a ! -d /opt/homebrew && echo yes)
+
+ifeq ($(IS_TIGER),yes)
+  # Tiger/Leopard PPC: gcc-4.0, /usr/local for libs
+  CC = gcc-4.0
+  EXTRA_INCLUDES = -I/usr/local/include
+  YAML_LDFLAGS = /usr/local/lib/libyaml.a
+  TIGER_FLAGS = -mmacosx-version-min=10.4
+else
+  # Modern macOS for development/testing
+  EXTRA_INCLUDES = -I/opt/homebrew/include
+  YAML_LDFLAGS = /opt/homebrew/lib/libyaml.a
+  TIGER_FLAGS =
+endif
+
 CFLAGS = -std=c99 -Wall -Wextra -pedantic -O2 \
          -I./include \
-         -I/opt/homebrew/include \
+         $(EXTRA_INCLUDES) \
+         $(TIGER_FLAGS) \
          -DTARGET_OS_MAC=1
-
-YAML_LDFLAGS = /opt/homebrew/lib/libyaml.a
 
 # Obj-C flags (no -std=c99 - Obj-C uses its own standard)
 OBJCFLAGS = -Wall -Wextra -O2 \
             -I./include \
-            -I/opt/homebrew/include \
+            $(EXTRA_INCLUDES) \
+            $(TIGER_FLAGS) \
             -DTARGET_OS_MAC=1
-
-# Tiger-specific flags (uncomment on Tiger):
-# CC = gcc-4.0
-# CFLAGS += -mmacosx-version-min=10.4 -I/usr/local/include
-# OBJCFLAGS += -mmacosx-version-min=10.4 -I/usr/local/include
-# YAML_LDFLAGS = /usr/local/lib/libyaml.a
 
 LDFLAGS = -framework CoreFoundation \
           -framework Foundation \
@@ -42,14 +53,23 @@ LDFLAGS += -framework Security
 
 # --- Source files ---
 
-# Phase 1: C wire format library
+# Platform-specific sources (macOS/PPC: kqueue, SecTransport, CommonCrypto, CF encoding)
+PLATFORM_SRCS = \
+	src/hotline/platform/event_kqueue.c \
+	src/hotline/platform/tls_sectransport.c \
+	src/hotline/platform/crypto_commoncrypto.c \
+	src/hotline/platform/encoding_cf.c
+
+PLATFORM_OBJS = $(PLATFORM_SRCS:.c=.o)
+
+# Phase 1: C wire format library (+ HTTP client for Mnemosyne)
 HOTLINE_C_SRCS = \
+	src/hotline/http_client.c \
 	src/hotline/field.c \
 	src/hotline/transaction.c \
 	src/hotline/handshake.c \
 	src/hotline/user.c \
 	src/hotline/time_conv.c \
-	src/hotline/encoding.c \
 	src/hotline/file_resume_data.c \
 	src/hotline/config.c \
 	src/hotline/logger.c \
@@ -70,8 +90,7 @@ HOTLINE_C_SRCS = \
 	src/hotline/bonjour.c \
 	src/hotline/tracker.c \
 	src/hotline/password.c \
-	src/hotline/hope.c \
-	src/hotline/tls.c
+	src/hotline/hope.c
 
 HOTLINE_C_OBJS = $(HOTLINE_C_SRCS:.c=.o)
 
@@ -82,7 +101,7 @@ HOTLINE_OBJC_SRCS = \
 HOTLINE_OBJC_OBJS = $(HOTLINE_OBJC_SRCS:.m=.o)
 
 # All hotline library objects
-HOTLINE_OBJS = $(HOTLINE_C_OBJS) $(HOTLINE_OBJC_OBJS)
+HOTLINE_OBJS = $(HOTLINE_C_OBJS) $(PLATFORM_OBJS) $(HOTLINE_OBJC_OBJS)
 
 # Phase 4: Server application (persistence layer)
 MOBIUS_SRCS = \
@@ -94,7 +113,11 @@ MOBIUS_SRCS = \
 	src/mobius/threaded_news_yaml.c \
 	src/mobius/transaction_handlers.c \
 	src/mobius/logger_impl.c \
-	src/mobius/config_plist.c
+	src/mobius/config_plist.c \
+	src/mobius/json_builder.c \
+	src/mobius/mnemosyne_sync.c \
+	src/mobius/dir_threaded_news.c \
+	src/mobius/jsonl_message_board.c
 
 MOBIUS_OBJS = $(MOBIUS_SRCS:.c=.o)
 
@@ -139,7 +162,7 @@ libhotline.a: $(HOTLINE_OBJS)
 	@echo "Built libhotline.a (C wire format + Obj-C client)"
 
 # Server binary
-lemoniscate: $(HOTLINE_C_OBJS) $(MOBIUS_OBJS) src/main.o
+lemoniscate: $(HOTLINE_C_OBJS) $(PLATFORM_OBJS) $(MOBIUS_OBJS) src/main.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(YAML_LDFLAGS)
 	@echo "Built lemoniscate server"
 
@@ -150,7 +173,7 @@ $(SERVER_COMPAT_BIN): lemoniscate
 	@echo "Built $(SERVER_COMPAT_BIN) compatibility binary"
 
 # Phase 1 wire format tests (C only, no Foundation needed)
-test-wire: $(TEST_C_OBJS) $(HOTLINE_C_OBJS)
+test-wire: $(TEST_C_OBJS) $(HOTLINE_C_OBJS) $(PLATFORM_OBJS)
 	$(CC) $(CFLAGS) -o test_runner $^ -framework CoreFoundation -framework Security -lpthread -lcrypto
 	./test_runner
 
@@ -206,7 +229,7 @@ app: lemoniscate $(SERVER_COMPAT_BIN) gui
 	@echo "  GUI binary:    $(APP_MACOS)/Lemoniscate"
 
 clean:
-	rm -f $(HOTLINE_OBJS) $(MOBIUS_OBJS) $(TEST_C_OBJS) $(TEST_OBJC_OBJS) \
+	rm -f $(HOTLINE_OBJS) $(PLATFORM_OBJS) $(MOBIUS_OBJS) $(TEST_C_OBJS) $(TEST_OBJC_OBJS) \
 	      $(GUI_OBJC_OBJS) \
 	      libhotline.a lemoniscate $(SERVER_COMPAT_BIN) lemoniscate-gui test_runner test_client src/main.o
 	rm -rf $(APP_BUNDLE)

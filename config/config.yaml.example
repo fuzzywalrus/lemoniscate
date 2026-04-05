@@ -1,0 +1,152 @@
+# Lemoniscate Server Configuration
+# Copy this file to config.yaml and adjust as needed.
+# All settings are optional — defaults are shown in comments.
+
+# ─── Server Identity ───────────────────────────────────────
+
+# Server name displayed to clients and trackers.
+Name: My Hotline Server
+
+# Server description shown in tracker listings.
+Description: A Hotline server powered by Lemoniscate
+
+# ─── Files ─────────────────────────────────────────────────
+
+# Root directory for shared files. Relative paths are resolved
+# against the config directory.
+# Default: Files
+FileRoot: Files
+
+# Server banner image (JPEG or GIF). Displayed to clients on connect.
+# Leave empty to disable.
+# BannerFile: banner.jpg
+
+# Preserve Macintosh resource forks when storing uploaded files.
+# Enable this if serving files to classic Mac OS clients.
+# Default: false
+PreserveResourceForks: false
+
+# ─── Text Encoding ─────────────────────────────────────────
+
+# Text encoding for Hotline protocol strings.
+#   macintosh  — MacRoman (correct for classic Mac OS clients)
+#   utf-8      — UTF-8 (for modern clients only)
+# Default: macintosh
+Encoding: macintosh
+
+# ─── Tracker Registration ──────────────────────────────────
+
+# Register this server with Hotline tracker servers.
+# Default: false
+EnableTrackerRegistration: false
+
+# List of tracker addresses. Format: "host:port" or "host:port:password"
+# Default port is 5499 if omitted.
+Trackers:
+  # - hltracker.example.com:5499
+  # - private-tracker.example.com:5499:mypassword
+
+# ─── Bonjour / mDNS ───────────────────────────────────────
+
+# Advertise this server on the local network via Bonjour (macOS only).
+# Automatically disabled on Linux.
+# Default: true
+EnableBonjour: true
+
+# ─── Connection Limits ─────────────────────────────────────
+
+# Maximum simultaneous file downloads (0 = unlimited).
+# Default: 0
+MaxDownloads: 0
+
+# Maximum simultaneous downloads per client (0 = unlimited).
+# Default: 0
+MaxDownloadsPerClient: 0
+
+# Maximum connections from a single IP address (0 = unlimited).
+# Default: 0
+MaxConnectionsPerIP: 0
+
+# ─── TLS Encryption ───────────────────────────────────────
+
+# TLS encrypts the entire connection at the transport level.
+# Clients connect to a separate TLS port (default: base port + 100).
+# Requires a PEM certificate and private key.
+
+# Path to PEM certificate file.
+# TLSCertFile: /path/to/cert.pem
+
+# Path to PEM private key file.
+# TLSKeyFile: /path/to/key.pem
+
+# TLS listening port. Default: base port + 100 (5600 for port 5500).
+# TLSPort: 5600
+
+# ─── HOPE Secure Login ────────────────────────────────────
+
+# HOPE (Hotline One-time Password Extension) provides MAC-based
+# authentication and optional RC4 transport encryption.
+# Clients that support HOPE will negotiate it automatically.
+
+# Enable HOPE secure login support.
+# Default: false
+EnableHOPE: false
+
+# Allow legacy HOPE algorithms (INVERSE, bare SHA1, bare MD5).
+# When false (strict mode), only HMAC-SHA1 and HMAC-MD5 are accepted.
+# Enable this only for compatibility with very old clients.
+# Default: false
+HOPELegacyMode: false
+
+# ─── End-to-End Encryption ────────────────────────────────
+
+# Files and folders whose names start with this prefix require
+# an encrypted connection (HOPE transport encryption) to access.
+# Leave empty to disable this restriction.
+# HOPERequiredPrefix: E2E-
+
+# Require TLS (not just HOPE) for end-to-end encrypted file transfers.
+# Only applies when HOPERequiredPrefix is set.
+# Default: false
+# E2ERequireTLS: false
+
+# ─── Mnemosyne Search Integration ────────────────────────
+
+# Mnemosyne is a Hotline content indexing service that makes your
+# server's files and news articles discoverable and searchable by
+# clients across the Hotline community.
+#
+# When enabled, Lemoniscate automatically syncs content to a
+# Mnemosyne instance via HTTP POST:
+#   - Heartbeat every 5 minutes (server name, description, counts)
+#   - Full chunked sync of file listings and news on startup
+#   - Incremental sync when files are uploaded/deleted or news posted
+#   - Periodic drift detection every 15 minutes
+#   - Automatic deregistration on graceful shutdown
+#
+# To use Mnemosyne:
+#   1. Register at https://agora.vespernet.net/login
+#   2. Add your server to obtain an msv_-prefixed server API key
+#   3. Configure the url and api_key below
+#
+# If Mnemosyne becomes unreachable, sync suspends automatically
+# after 5 failures with exponential backoff, then resumes when
+# the next heartbeat succeeds. Normal server operation is never
+# affected.
+#
+# Note: Message board sync is not yet supported (the flat
+# MessageBoard.txt format lacks structured post data).
+
+# Mnemosyne:
+#   # URL of the Mnemosyne instance (HTTP only, no trailing slash).
+#   # The default VesperNet instance is tracker.vespernet.net:8980
+#   url: http://tracker.vespernet.net:8980
+#
+#   # Server API key (must start with msv_). Required if url is set.
+#   api_key: msv_your_server_key_here
+#
+#   # Index file listings. Default: true
+#   index_files: true
+#
+#   # Index threaded news articles. Default: true
+#   index_news: true

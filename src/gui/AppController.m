@@ -1,8 +1,7 @@
 /*
  * AppController.m - Lemoniscate Server Admin GUI
  *
- * Maps to: MobiusAdmin AppState + ContentView + ServerControlView +
- *          SettingsFormView + LogView
+ * Lemoniscate Server Admin — helpers and layout constants
  *
  * Tiger Obj-C 1.0. All UI built programmatically.
  * Layout: HSplitView with scrollable settings left, tab view right.
@@ -113,7 +112,7 @@ static NSButton *makeButton(NSString *title, id target, SEL action)
     NSButton *btn = [[NSButton alloc]
         initWithFrame:NSMakeRect(0, 0, 80, 28)];
     [btn setTitle:title];
-    [btn setBezelStyle:NSRoundedBezelStyle];
+    [btn setBezelStyle:NSBezelStyleRounded];
     [btn setTarget:target];
     [btn setAction:action];
     [btn sizeToFit];
@@ -129,7 +128,7 @@ static float addRow(NSView *parent, NSString *labelText,
                     NSTextField *field, float y, float fieldWidth)
 {
     NSTextField *label = makeLabel(labelText, 11.0, NO);
-    [label setAlignment:NSRightTextAlignment];
+    [label setAlignment:NSTextAlignmentRight];
     [label setFrame:NSMakeRect(6, y + 3, LABEL_WIDTH - 12, 17)];
     [parent addSubview:label];
     [label release];
@@ -147,7 +146,7 @@ static float addRowWithButton(NSView *parent, NSString *labelText,
                                float y, float fieldWidth)
 {
     NSTextField *label = makeLabel(labelText, 11.0, NO);
-    [label setAlignment:NSRightTextAlignment];
+    [label setAlignment:NSTextAlignmentRight];
     [label setFrame:NSMakeRect(6, y + 3, LABEL_WIDTH - 12, 17)];
     [parent addSubview:label];
     [label release];
@@ -171,25 +170,57 @@ static float addRowWithButton(NSView *parent, NSString *labelText,
     return y + ROW_HEIGHT;
 }
 
-/* Add a checkbox row. Returns next y. */
-static float addCheckbox(NSView *parent, NSButton *checkbox,
-                          float y)
+/* ===== Disclosure section helpers ===== */
+
+#define DISC_INDENT       21
+#define DISC_HEADER_H     22
+#define DISC_CONTENT_PAD   8
+#define HINT_HEIGHT       14
+#define HINT_GAP           2
+
+/* Add a checkbox with an inline (?) help button on the same row.
+ * The help button shows a popover with explanatory text when clicked. */
+static float addCheckboxWithHelp(NSView *parent, NSButton *checkbox,
+                                  float y, NSString *helpText, id target)
 {
-    [checkbox setFrame:NSMakeRect(LABEL_WIDTH - 4, y, 200, 18)];
     [checkbox setFont:[NSFont systemFontOfSize:11.0]];
+    [checkbox sizeToFit];
+    NSRect cbf = [checkbox frame];
+    float cbW = cbf.size.width + 4;
+    if (cbW < 180) cbW = 180;
+    [checkbox setFrame:NSMakeRect(LABEL_WIDTH - 4, y, cbW, 18)];
     [parent addSubview:checkbox];
+
+    float rightX = [parent frame].size.width - 21 - ROW_RIGHT_PAD;
+    NSButton *btn = [[NSButton alloc]
+        initWithFrame:NSMakeRect(rightX, y - 2, 21, 21)];
+    [btn setBezelStyle:NSBezelStyleHelpButton];
+    [btn setTitle:@""];
+    [btn setToolTip:helpText];
+    [btn setTarget:target];
+    [btn setAction:@selector(showHelpPopover:)];
+    /* setAccessibilityLabel: is 10.10+ — skip on Tiger */
+    [parent addSubview:btn];
+    [btn release];
+
     return y + 24;
 }
 
-/* Create a section box. */
-static NSBox *makeSection(NSString *title, float x, float y,
-                           float w, float h)
+
+/* Create a disclosure header button with triangle + bold title.
+ * tag is used to identify the section index. */
+static NSButton *makeDisclosureHeader(NSString *title, id target, int tag)
 {
-    NSBox *box = [[NSBox alloc]
-        initWithFrame:NSMakeRect(x, y, w, h)];
-    [box setTitle:title];
-    [box setTitleFont:[NSFont boldSystemFontOfSize:11.0]];
-    return box;
+    NSButton *btn = [[NSButton alloc] initWithFrame:NSMakeRect(0, 0, 400, DISC_HEADER_H)];
+    [btn setButtonType:NSButtonTypeMomentaryChange];
+    [btn setBordered:NO];
+    [btn setTitle:[NSString stringWithFormat:@"\u25BC  %@", title]]; /* ▼ expanded */
+    [btn setAlignment:NSTextAlignmentLeft];
+    [btn setFont:[NSFont boldSystemFontOfSize:12.0]];
+    [btn setTarget:target];
+    [btn setAction:@selector(toggleDisclosure:)];
+    [btn setTag:tag];
+    return btn;
 }
 
 static NSString *trimmedString(NSString *s)
@@ -208,13 +239,6 @@ static NSString *yamlUnquote(NSString *value)
         return [v substringWithRange:NSMakeRange(1, [v length] - 2)];
     }
     return v;
-}
-
-static BOOL yamlBoolValue(NSString *value)
-{
-    NSString *v = [[trimmedString(value) lowercaseString] stringByTrimmingCharactersInSet:
-        [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    return [v isEqualToString:@"true"] || [v isEqualToString:@"yes"] || [v isEqualToString:@"1"];
 }
 
 static int leadingSpaces(NSString *s)
@@ -242,26 +266,6 @@ static NSString *yamlQuoted(NSString *s)
                           options:0
                             range:NSMakeRange(0, [m length])];
     return [NSString stringWithFormat:@"\"%@\"", m];
-}
-
-static void parseInlineYAMLArray(NSString *value, NSMutableArray *outItems)
-{
-    if (!value || !outItems) return;
-    NSString *v = trimmedString(value);
-    if (![v hasPrefix:@"["] || ![v hasSuffix:@"]"]) return;
-    if ([v length] < 2) return;
-
-    NSString *inner = trimmedString([v substringWithRange:
-        NSMakeRange(1, [v length] - 2)]);
-    if ([inner length] == 0) return;
-
-    NSArray *parts = [inner componentsSeparatedByString:@","];
-    unsigned i;
-    for (i = 0; i < [parts count]; i++) {
-        NSString *item = yamlUnquote(trimmedString([parts objectAtIndex:i]));
-        if ([item length] == 0) continue;
-        if (![outItems containsObject:item]) [outItems addObject:item];
-    }
 }
 
 static NSString *humanFileSize(unsigned long long size)
