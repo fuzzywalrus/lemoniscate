@@ -1,7 +1,7 @@
 /*
  * AppController.h - Lemoniscate Server Admin GUI
  *
- * Maps to: MobiusAdmin AppState.swift + ContentView.swift
+ * Lemoniscate Server Admin — programmatic AppKit UI
  *
  * Tiger-compatible Obj-C 1.0:
  * - Programmatic UI (no XIB/NIB)
@@ -17,7 +17,13 @@
 #import "TigerCompat.h"
 #import "ProcessManager.h"
 
+/* NSApplicationDelegate and NSSplitViewDelegate are 10.6+ formal protocols.
+ * On Tiger/Leopard they exist as informal protocols (categories on NSObject). */
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= 1060
+@interface AppController : NSObject <NSApplicationDelegate, NSSplitViewDelegate>
+#else
 @interface AppController : NSObject
+#endif
 {
     /* Process management */
     ProcessManager *_processManager;
@@ -34,6 +40,13 @@
 
     /* Left panel: settings */
     NSScrollView *_settingsScrollView;
+    NSView *_settingsDocView;
+    float _settingsDocWidth;
+    float _settingsSecWidth;
+    float _settingsFieldWidth;
+
+    /* Disclosure section state (collapsed = content hidden) */
+    NSMutableArray *_disclosureSections;  /* array of NSMutableDictionary */
 
     /* General section */
     NSTextField *_serverNameField;
@@ -74,6 +87,7 @@
     NSButton *_hopeCheckbox;
     NSButton *_hopeLegacyCheckbox;
     NSTextField *_hopePrefixField;
+    NSButton *_hopeRequireTLSCheckbox;
 
     /* TLS Encryption section */
     NSTextField *_tlsCertField;
@@ -83,7 +97,15 @@
     NSTextField *_tlsPortField;
     NSTextField *_tlsStatusLabel;
     NSButton *_generateTLSCertButton;
-    NSSecureTextField *_tlsKeychainPassField;
+
+    /* Mnemosyne Search section */
+    NSButton *_mnemosyneEnableCheckbox;
+    NSTextField *_mnemosyneURLField;
+    NSTextField *_mnemosyneAPIKeyField;
+    NSButton *_mnemosyneIndexFilesCheckbox;
+    NSButton *_mnemosyneIndexNewsCheckbox;
+    NSButton *_mnemosyneIndexMsgboardCheckbox;
+    NSString *_mnemosyneSavedURL;
 
     /* Monitoring section */
     NSPopUpButton *_pollingRatePopup;
@@ -92,6 +114,9 @@
     /* News settings section */
     NSPopUpButton *_newsDateFormatPopup;
     NSTextField *_newsDelimiterField;
+
+    /* Encoding */
+    NSPopUpButton *_encodingPopup;
 
     /* Right panel: tab view */
     NSTabView *_tabView;
@@ -320,7 +345,12 @@
 - (void)pollingRateChanged:(id)sender;
 - (void)chooseTLSCert:(id)sender;
 - (void)chooseTLSKey:(id)sender;
-- (void)generateTLSCert:(id)sender;
+- (void)generateSelfSignedCert:(id)sender;
+- (void)openMnemosyneRegistration:(id)sender;
+- (void)toggleMnemosyneEnable:(id)sender;
+- (void)toggleDisclosure:(id)sender;
+- (void)relayoutSettings;
+- (void)showHelpPopover:(id)sender;
 
 @end
 

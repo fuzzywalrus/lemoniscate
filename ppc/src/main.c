@@ -21,6 +21,7 @@
 #include "mobius/ban_file.h"
 #include "mobius/logger_impl.h"
 #include "mobius/ban_file.h"
+#include "mobius/mnemosyne_sync.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -309,7 +310,7 @@ int main(int argc, char **argv)
     }
 
     if (show_version) {
-        printf("lemoniscate 0.1.4\n");
+        printf("lemoniscate 0.1.5\n");
         return 0;
     }
 
@@ -528,6 +529,19 @@ int main(int argc, char **argv)
     signal(SIGHUP, reload_handler);
     signal(SIGPIPE, SIG_IGN);
 
+    /* Initialize Mnemosyne sync if configured */
+    mn_sync_t mnemosyne_sync;
+    memset(&mnemosyne_sync, 0, sizeof(mnemosyne_sync));
+    if (srv->config.mnemosyne_url[0] != '\0') {
+        mn_sync_init(&mnemosyne_sync, srv);
+        if (mn_sync_enabled(&mnemosyne_sync)) {
+            srv->mnemosyne_sync = &mnemosyne_sync;
+            hl_log_info(srv->logger, "Mnemosyne sync initialized: %s",
+                        srv->config.mnemosyne_url);
+            /* Initial full sync after a short delay (first heartbeat triggers it) */
+        }
+    }
+
     hl_log_info(srv->logger, "Lemoniscate starting on port %d", port);
 
     /* Bonjour registration */
@@ -564,6 +578,12 @@ int main(int argc, char **argv)
     (void)do_reload; /* Suppress unused warning */
 
     /* Cleanup */
+    if (srv->mnemosyne_sync) {
+        mn_deregister((mn_sync_t *)srv->mnemosyne_sync);
+        mn_sync_cleanup((mn_sync_t *)srv->mnemosyne_sync);
+        srv->mnemosyne_sync = NULL;
+    }
+
     if (bonjour) {
         hl_bonjour_unregister(bonjour);
     }

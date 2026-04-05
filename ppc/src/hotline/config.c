@@ -16,4 +16,9 @@ void hl_config_init(hl_config_t *cfg)
     cfg->max_downloads = 0;           /* 0 = unlimited */
     cfg->max_downloads_per_client = 0;
     cfg->max_connections_per_ip = 0;
+
+    /* Mnemosyne: index all content types by default (when URL configured) */
+    cfg->mnemosyne_index_files = 1;
+    cfg->mnemosyne_index_news = 1;
+    cfg->mnemosyne_index_msgboard = 1;
 }

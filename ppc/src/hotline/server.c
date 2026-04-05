@@ -21,6 +21,7 @@
 #include "hotline/file_path.h"
 #include "hotline/hope.h"
 #include "mobius/transaction_handlers.h"
+#include "mobius/mnemosyne_sync.h"
 #include <openssl/sha.h> /* SHA_DIGEST_LENGTH for HOPE key derivation */
 
 #include <sys/event.h>
@@ -44,6 +45,11 @@
 #define HL_USER_IDLE_SECONDS   300   /* seconds before user is marked away */
 #define HL_IDLE_CHECK_INTERVAL  10   /* seconds between idle checks */
 #define HL_DEFAULT_PORT       5500
+
+/* Timer IDs for kqueue EVFILT_TIMER (must not collide with fd values) */
+#define HL_TIMER_IDLE_CHECK     1   /* existing idle/tracker timer */
+#define HL_TIMER_MN_HEARTBEAT   2   /* Mnemosyne heartbeat (300s) */
+#define HL_TIMER_MN_PERIODIC    3   /* Mnemosyne drift detection (900s) */
 
 /* --- Helpers: read/write with EINTR handling --- */
 
@@ -1814,7 +1820,7 @@ int hl_server_listen_and_serve(hl_server_t *srv)
         return -1;
     }
 
-    struct kevent changes[6];
+    struct kevent changes[10];
     int nchanges = 0;
 
     EV_SET(&changes[nchanges++], srv->listen_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
@@ -1823,8 +1829,26 @@ int hl_server_listen_and_serve(hl_server_t *srv)
         EV_SET(&changes[nchanges++], srv->tls_listen_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
     if (srv->tls_transfer_fd >= 0)
         EV_SET(&changes[nchanges++], srv->tls_transfer_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-    EV_SET(&changes[nchanges++], 1, EVFILT_TIMER, EV_ADD, 0,
+    EV_SET(&changes[nchanges++], HL_TIMER_IDLE_CHECK, EVFILT_TIMER, EV_ADD, 0,
            HL_IDLE_CHECK_INTERVAL * 1000, NULL);
+
+    /* Mnemosyne timers — register separately after main batch */
+    mn_sync_t *mn = (mn_sync_t *)srv->mnemosyne_sync;
+    if (mn && mn_sync_enabled(mn)) {
+        struct kevent mn_changes[2];
+        /* Heartbeat every 5 minutes (300s) */
+        EV_SET(&mn_changes[0], HL_TIMER_MN_HEARTBEAT, EVFILT_TIMER, EV_ADD, 0,
+               300 * 1000, NULL);
+        /* Periodic drift detection every 15 minutes (900s) */
+        EV_SET(&mn_changes[1], HL_TIMER_MN_PERIODIC, EVFILT_TIMER, EV_ADD, 0,
+               900 * 1000, NULL);
+        if (kevent(kq, mn_changes, 2, NULL, 0, NULL) < 0) {
+            hl_log_error(srv->logger, "Mnemosyne timer registration failed: %s",
+                         strerror(errno));
+        } else {
+            hl_log_info(srv->logger, "Mnemosyne sync timers registered");
+        }
+    }
 
     if (kevent(kq, changes, nchanges, NULL, 0, NULL) < 0) {
         hl_log_error(srv->logger, "kevent() register failed: %s", strerror(errno));
@@ -1852,7 +1876,30 @@ int hl_server_listen_and_serve(hl_server_t *srv)
         for (i = 0; i < nev; i++) {
             struct kevent *ev = &events[i];
 
-            if (ev->filter == EVFILT_TIMER) {
+            if (ev->filter == EVFILT_TIMER &&
+                (int)ev->ident == HL_TIMER_MN_HEARTBEAT) {
+                /* Mnemosyne heartbeat timer */
+                mn_sync_t *mns = (mn_sync_t *)srv->mnemosyne_sync;
+                if (mns && mn_sync_enabled(mns)) {
+                    /* On first heartbeat, trigger initial full sync */
+                    if (!mns->startup_delay_done) {
+                        mns->startup_delay_done = 1;
+                        hl_log_info(srv->logger, "Mnemosyne: initial full sync");
+                        mn_start_full_sync(mns);
+                    }
+                    mn_send_heartbeat(mns);
+                    mn_drain_incremental_queue(mns);
+                }
+            }
+            else if (ev->filter == EVFILT_TIMER &&
+                     (int)ev->ident == HL_TIMER_MN_PERIODIC) {
+                /* Mnemosyne periodic drift detection */
+                mn_sync_t *mns = (mn_sync_t *)srv->mnemosyne_sync;
+                if (mns && mn_sync_enabled(mns)) {
+                    mn_periodic_check(mns);
+                }
+            }
+            else if (ev->filter == EVFILT_TIMER) {
                 /* Idle check — maps to Go keepaliveHandler() */
                 int count = 0;
                 hl_client_conn_t **clients = srv->client_mgr->vt->list(
