@@ -156,6 +156,13 @@ int mobius_load_config_plist(hl_config_t *cfg, const char *plist_path)
                             cfg->trackers, HL_CONFIG_MAX_TRACKERS,
                             &cfg->tracker_count);
 
+    /* Mnemosyne sync config */
+    plist_get_string(dict, "MnemosyneURL", cfg->mnemosyne_url, HL_CONFIG_MNEMOSYNE_URL_MAX);
+    plist_get_string(dict, "MnemosyneAPIKey", cfg->mnemosyne_api_key, HL_CONFIG_MNEMOSYNE_KEY_MAX);
+    plist_get_bool(dict, "MnemosyneIndexFiles", &cfg->mnemosyne_index_files);
+    plist_get_bool(dict, "MnemosyneIndexNews", &cfg->mnemosyne_index_news);
+    plist_get_bool(dict, "MnemosyneIndexMsgboard", &cfg->mnemosyne_index_msgboard);
+
     CFRelease(plist);
     return 0;
 }

@@ -1,14 +1,24 @@
-# Lemoniscate - A modern Hotline Server for 10.4/10.5 Macs
+# Lemoniscate - A modern Hotline Server for 10.4/10.5 Macs, macOS 10.11 - Current and Linux
 
 
-A native C and Objective-C implementation of the Hotline protocol for Mac OS X 10.4 Tiger and 10.5 Leopard on PowerPC. This project is a ground-up port of [Mobius](https://github.com/jhalter/mobius), a modern Hotline server and client written in Go by Jeff Halter.
+A native C and Objective-C implementation of the 1.9 Hotline protocol with extended modern features for Mac OS X 10.4 Tiger and 10.5 Leopard on PowerPC and macOS 10.11 with a GUI and setup wizard.  The Linux version is CLI only.  This project is a ground-up port of [Mobius](https://github.com/jhalter/mobius), a modern Hotline server and client written in Go by Jeff Halter.
 
-![Lemoniscate](docs/images/lemoniscate.png)
+![Lemoniscate](docs/images/lemoniscate-256.png)
 
 
 ## What is this?
 
-This is a from-scratch (well, Agentic) rewrite of the Mobius Hotline server and client in C and Objective-C, targeting the PowerPC Macs that Hotline was originally built for. The goal is a native, lightweight binary that runs on PPC Macs (10.4 and 10.5). 
+![Lemoniscate](https://hotlinenavigator.com/lemoniscate-screenshot.png)
+
+
+This started as a from-scratch (well, Agentic) rewrite of the Mobius Hotline server and client in C and Objective-C, targeting the PowerPC Macs that Hotline was originally built for. The goal is a native, lightweight binary that runs on PPC Macs (10.4 and 10.5).  
+
+Since then it has evolved into an advanced Hotline Server, meant to be user friendly for regular people with a setup wizard, ability to create TLS certificates for encryption with a click click of the mouse, and sports support for modern features, like HOPE encrypted logins for pure end-to-end encryption and mnemosyne search support. 
+
+With PowerPC OS X as the original target, Lemoniscate is extremely lightweight. Using generally under 50~ MB of RAM on both retro and modern systems. 
+
+![Lemoniscate](https://hotlinenavigator.com/lemoniscate-modern-screenshot.png)
+
 
 See the releases for the latest version!
 
@@ -32,60 +42,8 @@ The codebase is split into two layers that mirror the Go package structure:
 - `include/mobius/` and `src/mobius/` -- Server application: transaction handlers, YAML-based persistence (accounts, bans, threaded news), configuration loading, and runtime server behavior.
 - `src/gui/` -- Native AppKit admin GUI (`lemoniscate-gui`) that launches and supervises `lemoniscate`.
 - `docs/` -- Operator and implementation documentation.
+- [`modern branch`](https://github.com/fuzzywalrus/lemoniscate/tree/modern) - Currently where the modern branhc lives
 
-## Quickstart to rolling your own (CLI server)
-
-### 1) Build
-
-On modern macOS:
-
-```bash
-make all
-```
-
-### 2) Initialize config directory
-
-```bash
-./lemoniscate --init -c ./config
-```
-
-This creates:
-- `config/config.yaml`
-- `config/Users/*.yaml` (including `admin` and `guest`)
-- `config/Agreement.txt`
-- `config/MessageBoard.txt`
-- `config/Banlist.yaml`
-- `config/Files/`
-
-### 3) Start server
-
-```bash
-./lemoniscate -p 5500 -c ./config
-```
-
-Clients connect on port `5500` (file transfers use `5501`).
-
-## Quickstart (GUI)
-
-### 1) Build GUI and app bundle
-
-```bash
-make gui
-make app
-```
-
-### 2) Launch app bundle
-
-```bash
-open Lemoniscate.app
-```
-
-The app launches `Lemoniscate.app/Contents/MacOS/lemoniscate-server` through `NSTask`.
-
-Important caveats:
-- `make app` checks that `lemoniscate` and `lemoniscate-gui` have matching CPU architectures.
-- Use `APP_SKIP_ARCH_CHECK=1 make app` only when intentionally bypassing that safety check.
-- The GUI creates the config directory if missing, but does not scaffold full default files; run `--init` first for a complete setup.
 
 ## Feature status
 
@@ -205,6 +163,62 @@ Dependencies:
 - AppKit (for GUI)
 - pthreads (ships with Tiger)
 - libyaml (via Tigerbrew or source build)
+
+
+## Building for non-macOS/ OS X - Quickstart to rolling your own (CLI server)
+
+### 1) Build
+
+On modern macOS:
+
+```bash
+make all
+```
+
+### 2) Initialize config directory
+
+```bash
+./lemoniscate --init -c ./config
+```
+
+This creates:
+- `config/config.yaml`
+- `config/Users/*.yaml` (including `admin` and `guest`)
+- `config/Agreement.txt`
+- `config/MessageBoard.txt`
+- `config/Banlist.yaml`
+- `config/Files/`
+
+### 3) Start server
+
+```bash
+./lemoniscate -p 5500 -c ./config
+```
+
+Clients connect on port `5500` (file transfers use `5501`).
+
+## Quickstart (GUI)
+
+### 1) Build GUI and app bundle
+
+```bash
+make gui
+make app
+```
+
+### 2) Launch app bundle
+
+```bash
+open Lemoniscate.app
+```
+
+The app launches `Lemoniscate.app/Contents/MacOS/lemoniscate-server` through `NSTask`.
+
+Important caveats:
+- `make app` checks that `lemoniscate` and `lemoniscate-gui` have matching CPU architectures.
+- Use `APP_SKIP_ARCH_CHECK=1 make app` only when intentionally bypassing that safety check.
+- The GUI creates the config directory if missing, but does not scaffold full default files; run `--init` first for a complete setup.
+
 
 ## Documentation
 

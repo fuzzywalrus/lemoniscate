@@ -73,6 +73,8 @@ typedef struct hl_server {
      * On Tiger, CoreFoundation handles the conversion. */
     int                 use_mac_roman;       /* 1 = MacRoman, 0 = UTF-8 */
 
+    void               *mnemosyne_sync;      /* mn_sync_t* (opaque to avoid circular include) */
+
     volatile int        shutdown;            /* Go: context cancellation */
 
     int                 listen_fd;           /* Main protocol listener */

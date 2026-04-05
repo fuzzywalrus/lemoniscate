@@ -1,8 +1,6 @@
-# GUI Feature Parity Audit: Lemoniscate vs MobiusAdmin SwiftUI Reference
+# GUI Feature Audit: Lemoniscate Admin
 
 Audit date: 2026-03-19
-
-Reference project: `/Users/greggant/Development/mobius-macOS-GUI`
 
 Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 
@@ -66,6 +64,23 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 
 - [x] News date format selector
 - [x] News delimiter editor
+
+### Security (HOPE)
+
+- [x] Enable HOPE toggle
+- [x] Legacy mode toggle
+- [x] E2E prefix field
+- [x] Require TLS for E2E toggle
+- [x] Help popovers on all options
+
+### TLS Encryption
+
+- [x] Certificate file picker
+- [x] Private key file picker
+- [x] TLS port field
+- [x] Status hint label
+- [x] Generate self-signed certificate button
+- [x] Help popover
 
 ### Limits
 
@@ -157,6 +172,16 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 - [x] Update check UI
 - [x] Update download link
 - [x] Project links (GUI/server/homepage)
+
+---
+
+## UI Enhancements
+
+- [x] Collapsible disclosure sections (all settings)
+- [x] Apple-standard (?) help buttons with popovers
+- [x] Tooltips on all controls
+- [x] Right-aligned help buttons
+- [x] Consistent 21px indented content layout
 
 ---
 

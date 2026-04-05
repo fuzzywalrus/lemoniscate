@@ -57,6 +57,8 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
     int in_mapping = 0;
     char current_key[128] = {0};
     int parsing_trackers = 0;
+    int parsing_mnemosyne = 0;
+    char mnemosyne_key[128] = {0};
     int done = 0;
 
     while (!done) {
@@ -68,10 +70,18 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
 
         switch (event.type) {
         case YAML_MAPPING_START_EVENT:
+            if (in_mapping && strcmp(current_key, "Mnemosyne") == 0) {
+                parsing_mnemosyne = 1;
+                current_key[0] = '\0';
+            }
             in_mapping = 1;
             break;
 
         case YAML_MAPPING_END_EVENT:
+            if (parsing_mnemosyne) {
+                parsing_mnemosyne = 0;
+                mnemosyne_key[0] = '\0';
+            }
             in_mapping = 0;
             break;
 
@@ -83,6 +93,24 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
                     strncpy(cfg->trackers[cfg->tracker_count], val,
                             HL_CONFIG_TRACKER_LEN - 1);
                     cfg->tracker_count++;
+                }
+            } else if (parsing_mnemosyne) {
+                /* Inside Mnemosyne mapping */
+                const char *val = (const char *)event.data.scalar.value;
+                if (mnemosyne_key[0] == '\0') {
+                    strncpy(mnemosyne_key, val, sizeof(mnemosyne_key) - 1);
+                } else {
+                    if (strcmp(mnemosyne_key, "url") == 0)
+                        strncpy(cfg->mnemosyne_url, val, HL_CONFIG_MNEMOSYNE_URL_MAX - 1);
+                    else if (strcmp(mnemosyne_key, "api_key") == 0)
+                        strncpy(cfg->mnemosyne_api_key, val, HL_CONFIG_MNEMOSYNE_KEY_MAX - 1);
+                    else if (strcmp(mnemosyne_key, "index_files") == 0)
+                        cfg->mnemosyne_index_files = yaml_parse_bool(val);
+                    else if (strcmp(mnemosyne_key, "index_news") == 0)
+                        cfg->mnemosyne_index_news = yaml_parse_bool(val);
+                    else if (strcmp(mnemosyne_key, "index_msgboard") == 0)
+                        cfg->mnemosyne_index_msgboard = yaml_parse_bool(val);
+                    mnemosyne_key[0] = '\0';
                 }
             } else if (in_mapping && current_key[0] == '\0') {
                 /* This is a key */

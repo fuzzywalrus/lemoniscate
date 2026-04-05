@@ -9,15 +9,17 @@
  */
 
 #include "mobius/threaded_news_yaml.h"
+#include "mobius/dir_threaded_news.h"
 #include "hotline/types.h"
 #include "hotline/time_conv.h"
+#include <yaml.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <sys/stat.h>
 
 /* Wire format constants */
-static const uint8_t NEWS_BUNDLE[2]   = {0x00, 0x02};
 static const uint8_t NEWS_CATEGORY[2] = {0x00, 0x03};
 static const char NEWS_FLAVOR[] = "text/plain";
 
@@ -48,14 +50,15 @@ void mobius_threaded_news_free(mobius_threaded_news_t *tn)
     free(tn);
 }
 
-/* Escape YAML special chars in a string value */
+/* Escape YAML special chars in a string value.
+ * \r (Hotline wire format) is written as \n (YAML) so it round-trips. */
 static void yaml_write_escaped(FILE *f, const char *s, size_t len)
 {
     size_t i;
     fputc('"', f);
     for (i = 0; i < len; i++) {
         if (s[i] == '"') fputs("\\\"", f);
-        else if (s[i] == '\n') fputs("\\n", f);
+        else if (s[i] == '\n' || s[i] == '\r') fputs("\\n", f);
         else if (s[i] == '\\') fputs("\\\\", f);
         else fputc(s[i], f);
     }
@@ -65,6 +68,12 @@ static void yaml_write_escaped(FILE *f, const char *s, size_t len)
 int tn_save(mobius_threaded_news_t *tn)
 {
     if (!tn || tn->file_path[0] == '\0') return -1;
+
+    /* Route to directory backend if file_path is a directory */
+    struct stat st;
+    if (stat(tn->file_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        return tn_dir_save(tn);
+    }
 
     pthread_mutex_lock(&tn->mu);
 
@@ -109,10 +118,13 @@ int tn_save(mobius_threaded_news_t *tn)
                 fprintf(f, "        Poster: ");
                 yaml_write_escaped(f, art->poster, strlen(art->poster));
                 fprintf(f, "\n");
+                fprintf(f, "        Date: [%u, %u, %u, %u, %u, %u, %u, %u]\n",
+                        art->date[0], art->date[1], art->date[2], art->date[3],
+                        art->date[4], art->date[5], art->date[6], art->date[7]);
+                fprintf(f, "        ParentArt: [0, 0, 0, %u]\n", art->parent_id);
                 fprintf(f, "        Body: ");
                 yaml_write_escaped(f, art->data, art->data_len);
                 fprintf(f, "\n");
-                fprintf(f, "        ParentID: %u\n", art->parent_id);
             }
         }
     }
@@ -122,111 +134,274 @@ int tn_save(mobius_threaded_news_t *tn)
     return 0;
 }
 
+/*
+ * Sanitize a buffer so it contains only valid UTF-8.
+ * Invalid bytes are replaced with '?' to keep libyaml happy.
+ * Operates in-place and returns the (unchanged) length.
+ */
+static size_t sanitize_utf8(unsigned char *buf, size_t len)
+{
+    size_t i = 0;
+    while (i < len) {
+        unsigned char c = buf[i];
+        int expect; /* number of continuation bytes */
+
+        if (c < 0x80) { i++; continue; }                /* ASCII */
+        else if ((c & 0xE0) == 0xC0) expect = 1;        /* 110xxxxx */
+        else if ((c & 0xF0) == 0xE0) expect = 2;        /* 1110xxxx */
+        else if ((c & 0xF8) == 0xF0) expect = 3;        /* 11110xxx */
+        else { buf[i] = '?'; i++; continue; }           /* bad leader */
+
+        /* Check that we have enough continuation bytes (10xxxxxx) */
+        int ok = 1;
+        int j;
+        for (j = 1; j <= expect; j++) {
+            if (i + (size_t)j >= len || (buf[i + j] & 0xC0) != 0x80) {
+                ok = 0;
+                break;
+            }
+        }
+        if (ok) {
+            i += 1 + (size_t)expect;
+        } else {
+            buf[i] = '?';
+            i++;
+        }
+    }
+    return len;
+}
+
+/*
+ * Read an entire file into a malloc'd buffer.
+ * Returns NULL on error. Caller must free.
+ */
+static unsigned char *read_file_to_buf(const char *path, size_t *out_len)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (sz <= 0) { fclose(f); return NULL; }
+
+    unsigned char *buf = (unsigned char *)malloc((size_t)sz);
+    if (!buf) { fclose(f); return NULL; }
+
+    size_t nread = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+
+    *out_len = nread;
+    return buf;
+}
+
+/*
+ * tn_load — Load threaded news from YAML using libyaml event parser.
+ *
+ * Reads the file into memory and sanitizes invalid UTF-8 bytes before
+ * parsing (libyaml rejects the entire file on any encoding error).
+ * Handles plain, quoted, and block scalar Data fields correctly.
+ */
 int tn_load(mobius_threaded_news_t *tn)
 {
     if (!tn || tn->file_path[0] == '\0') return -1;
 
-    FILE *f = fopen(tn->file_path, "r");
-    if (!f) return -1;
+    size_t buf_len = 0;
+    unsigned char *buf = read_file_to_buf(tn->file_path, &buf_len);
+    if (!buf) return -1;
 
-    /* Read entire file */
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (fsize <= 0 || fsize > 1048576) { fclose(f); return -1; }
+    sanitize_utf8(buf, buf_len);
 
-    char *buf = (char *)malloc((size_t)fsize + 1);
-    if (!buf) { fclose(f); return -1; }
-    fread(buf, 1, (size_t)fsize, f);
-    buf[fsize] = '\0';
-    fclose(f);
+    yaml_parser_t parser;
+    yaml_event_t event;
 
-    /* Skip if empty */
-    if (strstr(buf, "Categories: {}") || fsize < 20) {
-        free(buf);
-        return 0;
-    }
+    if (!yaml_parser_initialize(&parser)) { free(buf); return -1; }
+    yaml_parser_set_input_string(&parser, buf, buf_len);
 
-    /* Simple line-by-line YAML parser matching our save format */
     pthread_mutex_lock(&tn->mu);
-    tn->category_count = 0; /* Reset — will rebuild from file */
+    tn->category_count = 0;
 
+    int depth = 0;
+    int in_categories = 0;
+    int in_articles = 0;
     tn_category_t *cur_cat = NULL;
     tn_article_t *cur_art = NULL;
+    int done = 0;
 
-    char *line = strtok(buf, "\n");
-    while (line) {
-        int indent = 0;
-        while (line[indent] == ' ') indent++;
-        char *trimmed = line + indent;
+    char keys[8][256];
+    memset(keys, 0, sizeof(keys));
 
-        if (indent == 2 && trimmed[0] == '"') {
-            /* Category key — just a marker, Name is on next line */
-            if (tn->category_count < TN_MAX_CATEGORIES) {
-                cur_cat = &tn->categories[tn->category_count];
-                memset(cur_cat, 0, sizeof(*cur_cat));
-                memcpy(cur_cat->type, "\x00\x03", 2); /* default to category */
-                cur_cat->next_article_id = 1;
-                tn->category_count++;
-                cur_art = NULL;
+    while (!done) {
+        if (!yaml_parser_parse(&parser, &event)) break;
+
+        switch (event.type) {
+        case YAML_MAPPING_START_EVENT:
+            depth++;
+            break;
+
+        case YAML_MAPPING_END_EVENT:
+            if (depth <= 3) cur_art = NULL;
+            if (depth <= 2) { cur_cat = NULL; in_articles = 0; }
+            if (depth <= 1) in_categories = 0;
+            depth--;
+            if (depth >= 0 && depth < 8) keys[depth][0] = '\0';
+            break;
+
+        case YAML_SCALAR_EVENT: {
+            const char *val = (const char *)event.data.scalar.value;
+            size_t vlen = event.data.scalar.length;
+            int d = depth < 8 ? depth : 7;
+
+            if (keys[d][0] == '\0') {
+                /* This is a key */
+                strncpy(keys[d], val, sizeof(keys[d]) - 1);
+
+                if (d == 1 && strcmp(val, "Categories") == 0)
+                    in_categories = 1;
+                else if (d == 2 && in_categories &&
+                         strcmp(val, "SubCats") != 0) {
+                    if (tn->category_count < TN_MAX_CATEGORIES) {
+                        cur_cat = &tn->categories[tn->category_count];
+                        memset(cur_cat, 0, sizeof(*cur_cat));
+                        memcpy(cur_cat->type, "\x00\x03", 2);
+                        cur_cat->next_article_id = 1;
+                        strncpy(cur_cat->name, val, TN_MAX_NAME_LEN - 1);
+                        tn->category_count++;
+                        cur_art = NULL;
+                        in_articles = 0;
+                    }
+                }
+                else if (d == 3 && strcmp(val, "Articles") == 0)
+                    in_articles = 1;
+                else if (d == 4 && in_articles && cur_cat &&
+                         val[0] >= '0' && val[0] <= '9') {
+                    if (cur_cat->article_count < TN_MAX_ARTICLES) {
+                        cur_art = &cur_cat->articles[cur_cat->article_count];
+                        memset(cur_art, 0, sizeof(*cur_art));
+                        cur_art->active = 1;
+                        cur_art->id = (uint32_t)atoi(val);
+                        if (cur_art->id >= cur_cat->next_article_id)
+                            cur_cat->next_article_id = cur_art->id + 1;
+                        cur_cat->article_count++;
+                    }
+                }
+            } else {
+                /* This is a value */
+                const char *k = keys[d];
+
+                if (cur_art) {
+                    if (strcmp(k, "Title") == 0) {
+                        if (vlen >= TN_MAX_TITLE_LEN) vlen = TN_MAX_TITLE_LEN - 1;
+                        memcpy(cur_art->title, val, vlen);
+                        cur_art->title[vlen] = '\0';
+                    } else if (strcmp(k, "Poster") == 0) {
+                        if (vlen >= TN_MAX_POSTER_LEN) vlen = TN_MAX_POSTER_LEN - 1;
+                        memcpy(cur_art->poster, val, vlen);
+                        cur_art->poster[vlen] = '\0';
+                    } else if (strcmp(k, "Data") == 0 || strcmp(k, "Body") == 0) {
+                        /* libyaml resolves block scalars and quoted strings.
+                         * Convert \n to \r for Hotline wire format. */
+                        size_t dpos = 0;
+                        size_t si;
+                        for (si = 0; si < vlen && dpos < TN_MAX_DATA_LEN - 1; si++) {
+                            if (val[si] == '\n')
+                                cur_art->data[dpos++] = '\r';
+                            else
+                                cur_art->data[dpos++] = val[si];
+                        }
+                        cur_art->data[dpos] = '\0';
+                        cur_art->data_len = (uint16_t)dpos;
+                    } else if (strcmp(k, "ParentID") == 0) {
+                        cur_art->parent_id = (uint32_t)atoi(val);
+                    }
+                } else if (cur_cat) {
+                    if (strcmp(k, "Name") == 0)
+                        strncpy(cur_cat->name, val, TN_MAX_NAME_LEN - 1);
+                }
+                keys[d][0] = '\0';
             }
-        } else if (indent == 4 && cur_cat) {
-            if (strncmp(trimmed, "Name: ", 6) == 0) {
-                char *val = trimmed + 6;
-                if (val[0] == '"') val++;
-                size_t vlen = strlen(val);
-                if (vlen > 0 && val[vlen-1] == '"') vlen--;
-                if (vlen >= TN_MAX_NAME_LEN) vlen = TN_MAX_NAME_LEN - 1;
-                memcpy(cur_cat->name, val, vlen);
-                cur_cat->name[vlen] = '\0';
-            } else if (strncmp(trimmed, "Type: ", 6) == 0) {
-                if (strstr(trimmed, "bundle"))
-                    memcpy(cur_cat->type, "\x00\x02", 2);
-            }
-        } else if (indent == 6 && cur_cat && trimmed[0] == '"') {
-            /* Article ID */
-            if (cur_cat->article_count < TN_MAX_ARTICLES) {
-                cur_art = &cur_cat->articles[cur_cat->article_count];
-                memset(cur_art, 0, sizeof(*cur_art));
-                cur_art->active = 1;
-                cur_art->id = (uint32_t)atoi(trimmed + 1);
-                if (cur_art->id >= cur_cat->next_article_id)
-                    cur_cat->next_article_id = cur_art->id + 1;
-                cur_cat->article_count++;
-            }
-        } else if (indent == 8 && cur_art) {
-            if (strncmp(trimmed, "Title: ", 7) == 0) {
-                char *val = trimmed + 7;
-                if (val[0] == '"') val++;
-                size_t vlen = strlen(val);
-                if (vlen > 0 && val[vlen-1] == '"') vlen--;
-                if (vlen >= TN_MAX_TITLE_LEN) vlen = TN_MAX_TITLE_LEN - 1;
-                memcpy(cur_art->title, val, vlen);
-            } else if (strncmp(trimmed, "Poster: ", 8) == 0) {
-                char *val = trimmed + 8;
-                if (val[0] == '"') val++;
-                size_t vlen = strlen(val);
-                if (vlen > 0 && val[vlen-1] == '"') vlen--;
-                if (vlen >= TN_MAX_POSTER_LEN) vlen = TN_MAX_POSTER_LEN - 1;
-                memcpy(cur_art->poster, val, vlen);
-            } else if (strncmp(trimmed, "Body: ", 6) == 0) {
-                char *val = trimmed + 6;
-                if (val[0] == '"') val++;
-                size_t vlen = strlen(val);
-                if (vlen > 0 && val[vlen-1] == '"') vlen--;
-                if (vlen > TN_MAX_DATA_LEN) vlen = TN_MAX_DATA_LEN;
-                memcpy(cur_art->data, val, vlen);
-                cur_art->data_len = (uint16_t)vlen;
-            } else if (strncmp(trimmed, "ParentID: ", 10) == 0) {
-                cur_art->parent_id = (uint32_t)atoi(trimmed + 10);
-            }
+            break;
         }
 
-        line = strtok(NULL, "\n");
+        case YAML_SEQUENCE_START_EVENT: {
+            int d = depth < 8 ? depth : 7;
+            const char *k = keys[d];
+
+            if (cur_art && strcmp(k, "Date") == 0) {
+                int idx = 0;
+                yaml_event_delete(&event);
+                while (idx < 8) {
+                    if (!yaml_parser_parse(&parser, &event)) break;
+                    if (event.type == YAML_SCALAR_EVENT)
+                        cur_art->date[idx++] = (uint8_t)atoi((const char *)event.data.scalar.value);
+                    else if (event.type == YAML_SEQUENCE_END_EVENT)
+                        break;
+                    yaml_event_delete(&event);
+                }
+                if (event.type != YAML_SEQUENCE_END_EVENT) {
+                    yaml_event_delete(&event);
+                    while (yaml_parser_parse(&parser, &event) && event.type != YAML_SEQUENCE_END_EVENT)
+                        yaml_event_delete(&event);
+                }
+                keys[d][0] = '\0';
+            } else if (cur_art && (strcmp(k, "ParentArt") == 0 || strcmp(k, "FirstChildArtArt") == 0 || strcmp(k, "FirstChildArt") == 0)) {
+                int last_val = 0;
+                yaml_event_delete(&event);
+                while (1) {
+                    if (!yaml_parser_parse(&parser, &event)) break;
+                    if (event.type == YAML_SCALAR_EVENT)
+                        last_val = atoi((const char *)event.data.scalar.value);
+                    else if (event.type == YAML_SEQUENCE_END_EVENT)
+                        break;
+                    yaml_event_delete(&event);
+                }
+                if (strcmp(k, "ParentArt") == 0)
+                    cur_art->parent_id = (uint32_t)last_val;
+                keys[d][0] = '\0';
+            } else if (cur_cat && strcmp(k, "Type") == 0) {
+                int type_vals[2] = {0, 3};
+                int idx = 0;
+                yaml_event_delete(&event);
+                while (1) {
+                    if (!yaml_parser_parse(&parser, &event)) break;
+                    if (event.type == YAML_SCALAR_EVENT && idx < 2)
+                        type_vals[idx++] = atoi((const char *)event.data.scalar.value);
+                    else if (event.type == YAML_SEQUENCE_END_EVENT)
+                        break;
+                    yaml_event_delete(&event);
+                }
+                cur_cat->type[0] = (uint8_t)type_vals[0];
+                cur_cat->type[1] = (uint8_t)type_vals[1];
+                keys[d][0] = '\0';
+            } else {
+                /* Skip unknown sequences */
+                keys[d][0] = '\0';
+                yaml_event_delete(&event);
+                while (1) {
+                    if (!yaml_parser_parse(&parser, &event)) break;
+                    if (event.type == YAML_SEQUENCE_END_EVENT) break;
+                    yaml_event_delete(&event);
+                }
+            }
+            break;
+        }
+
+        case YAML_STREAM_END_EVENT:
+            done = 1;
+            break;
+
+        default:
+            break;
+        }
+
+        yaml_event_delete(&event);
     }
 
-    pthread_mutex_unlock(&tn->mu);
+    yaml_parser_delete(&parser);
     free(buf);
+
+    pthread_mutex_unlock(&tn->mu);
     return 0;
 }
 

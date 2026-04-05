@@ -7,6 +7,7 @@
  */
 
 #include "mobius/transaction_handlers.h"
+#include "mobius/mnemosyne_sync.h"
 #include "mobius/flat_news.h"
 #include "hotline/field.h"
 #include "hotline/user.h"

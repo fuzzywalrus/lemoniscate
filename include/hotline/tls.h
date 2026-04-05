@@ -1,18 +1,16 @@
 /*
- * tls.h - TLS transport abstraction (SecureTransport)
+ * tls.h - TLS transport abstraction
  *
  * Provides a connection wrapper that routes I/O through either
- * plain BSD sockets or SecureTransport SSL, and a server-side
- * TLS context for accepting TLS connections.
+ * plain BSD sockets or TLS, and a server-side TLS context for
+ * accepting TLS connections.
  *
- * Tiger 10.4 compatibility:
- *   Uses SSLNewContext/SSLDisposeContext (not SSLCreateContext which is 10.8+).
- *   Uses SecKeychainItemImport (not SecItemImport which is 10.7+).
+ * macOS/Tiger: SecureTransport backend (tls_sectransport.c)
+ *   Uses SSLNewContext/SSLDisposeContext (not SSLCreateContext, 10.8+).
+ *   Uses SecKeychainItemImport (not SecItemImport, 10.7+).
  *   Uses SecIdentitySearchCreate (not SecIdentityCreateWithCertificate, 10.5+).
- *   All APIs used here are available in the Tiger 10.4 Security framework.
  *
- * Maps to: Go crypto/tls usage in hotline/server.go
- * Remove this file and tls.c if TLS support is dropped.
+ * Linux: OpenSSL backend (tls_openssl.c)
  */
 
 #ifndef HOTLINE_TLS_H
@@ -21,31 +19,19 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <sys/types.h> /* ssize_t */
-
-#ifdef __APPLE__
-#include <Security/Security.h>
-#include <Security/SecureTransport.h>
-#endif
+#include "hotline/platform/platform_tls.h"
 
 /* --- Connection wrapper --- */
 
 typedef struct hl_tls_conn {
-    int fd;                    /* underlying socket (kept for kqueue) */
-#ifdef __APPLE__
-    SSLContextRef ssl_ctx;     /* NULL for plain connections */
-#else
-    void *ssl_ctx;
-#endif
+    int fd;                    /* underlying socket (kept for event loop) */
+    HL_TLS_CONN_FIELDS         /* platform-specific: SSLContextRef or SSL* */
 } hl_tls_conn_t;
 
 /* --- Server-side TLS context --- */
 
 typedef struct {
-#ifdef __APPLE__
-    CFArrayRef identity_certs; /* SecIdentity + optional chain certs */
-#else
-    void *identity_certs;
-#endif
+    HL_TLS_CTX_FIELDS          /* platform-specific: CFArrayRef or SSL_CTX* */
     int enabled;               /* 1 if cert+key loaded successfully */
 } hl_tls_server_ctx_t;
 
