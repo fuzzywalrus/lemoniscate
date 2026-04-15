@@ -687,7 +687,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_hopeCheckbox setTitle:@"Enable HOPE Encryption"];
         [_hopeCheckbox setState:NSControlStateValueOff];
         iy = addCheckboxWithHelp(c, _hopeCheckbox, iy,
-            @"HOPE replaces plaintext password login with a challenge-response MAC handshake. After authentication, the transaction channel (chat, commands, file listings) is encrypted with RC4 stream cipher. File transfers use a separate connection and are NOT encrypted by HOPE alone.", self);
+            @"HOPE replaces plaintext password login with a challenge-response MAC handshake. When the client supports it, the connection is upgraded to ChaCha20-Poly1305 AEAD encryption (including file transfers). Legacy clients fall back to RC4 stream encryption for the command channel only.", self);
 
         _hopeLegacyCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
         [_hopeLegacyCheckbox setButtonType:NSButtonTypeSwitch];
@@ -695,6 +695,23 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_hopeLegacyCheckbox setState:NSControlStateValueOff];
         iy = addCheckboxWithHelp(c, _hopeLegacyCheckbox, iy,
             @"Allows older Hotline clients that only support weak authentication methods (INVERSE, bare MD5, bare SHA1) to connect. These algorithms provide minimal security and should only be enabled for backwards compatibility.", self);
+
+        {
+            NSTextField *cpLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(6, iy + 3, LABEL_WIDTH - 12, 17)];
+            [cpLabel setStringValue:@"Cipher Policy:"];
+            [cpLabel setBezeled:NO]; [cpLabel setDrawsBackground:NO]; [cpLabel setEditable:NO]; [cpLabel setSelectable:NO];
+            [cpLabel setFont:[NSFont systemFontOfSize:11]];
+            [c addSubview:cpLabel]; [cpLabel release];
+            _hopeCipherPolicyPopup = [[NSPopUpButton alloc]
+                initWithFrame:NSMakeRect(LABEL_WIDTH - 4, iy, 200, 22) pullsDown:NO];
+            [_hopeCipherPolicyPopup addItemWithTitle:@"Prefer AEAD (recommended)"];
+            [_hopeCipherPolicyPopup addItemWithTitle:@"Require AEAD"];
+            [_hopeCipherPolicyPopup addItemWithTitle:@"RC4 Only"];
+            [_hopeCipherPolicyPopup selectItemAtIndex:0];
+            [_hopeCipherPolicyPopup setToolTip:@"Controls which cipher is negotiated with HOPE clients. AEAD (ChaCha20-Poly1305) provides authenticated encryption including file transfers. RC4 Only uses legacy stream encryption."];
+            [c addSubview:_hopeCipherPolicyPopup];
+            iy += ROW_HEIGHT;
+        }
 
         _hopePrefixField = makeEditField(120);
         [_hopePrefixField setStringValue:@"[E2E]"];
@@ -720,6 +737,13 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_hopeRequireTLSCheckbox setState:NSControlStateValueOff];
         iy = addCheckboxWithHelp(c, _hopeRequireTLSCheckbox, iy,
             @"When enabled, clients must connect via TLS to see E2E-prefixed content. This ensures that file transfers (which use a separate TCP connection) are also encrypted, not just the HOPE transaction channel.", self);
+
+        _hopeRequireAEADCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_hopeRequireAEADCheckbox setButtonType:NSButtonTypeSwitch];
+        [_hopeRequireAEADCheckbox setTitle:@"Require AEAD for E2E content"];
+        [_hopeRequireAEADCheckbox setState:NSControlStateValueOff];
+        iy = addCheckboxWithHelp(c, _hopeRequireAEADCheckbox, iy,
+            @"When enabled, only clients using ChaCha20-Poly1305 AEAD encryption can access E2E-prefixed content. This guarantees file transfers are also encrypted (RC4 HOPE does not encrypt file transfers).", self);
 
         float contentH = iy;
         [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
@@ -1434,14 +1458,23 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_accountPasswordStatusLabel setTextColor:[NSColor grayColor]];
     [ec addSubview:_accountPasswordStatusLabel];
 
+    _acctRequireEncryptionCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+    [_acctRequireEncryptionCheckbox setButtonType:NSButtonTypeSwitch];
+    [_acctRequireEncryptionCheckbox setTitle:@"Require Encryption for File Transfers"];
+    [_acctRequireEncryptionCheckbox setFont:[NSFont systemFontOfSize:11]];
+    [_acctRequireEncryptionCheckbox setState:NSControlStateValueOff];
+    [_acctRequireEncryptionCheckbox sizeToFit];
+    [_acctRequireEncryptionCheckbox setFrame:NSMakeRect(84, 318, 306, 18)];
+    [ec addSubview:_acctRequireEncryptionCheckbox];
+
     l = makeLabel(@"Templates and permissions map directly to YAML Access keys.", 10.0, NO);
     [l setTextColor:[NSColor grayColor]];
-    [l setFrame:NSMakeRect(84, 318, 306, 14)];
+    [l setFrame:NSMakeRect(84, 300, 306, 14)];
     [ec addSubview:l];
     [l release];
 
     _accountPermissionsScrollView = [[NSScrollView alloc]
-        initWithFrame:NSMakeRect(10, 8, 386, 304)];
+        initWithFrame:NSMakeRect(10, 8, 386, 286)];
     [_accountPermissionsScrollView setHasVerticalScroller:YES];
     [_accountPermissionsScrollView setBorderType:NSBezelBorder];
     [_accountPermissionsScrollView setAutoresizingMask:

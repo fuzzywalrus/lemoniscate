@@ -17,6 +17,8 @@ void hl_config_init(hl_config_t *cfg)
     cfg->max_downloads_per_client = 0;
     cfg->max_connections_per_ip = 0;
     strncpy(cfg->hope_required_prefix, "[E2E]", sizeof(cfg->hope_required_prefix) - 1);
+    strncpy(cfg->hope_cipher_policy, "prefer-aead", sizeof(cfg->hope_cipher_policy) - 1);
+    cfg->e2e_require_aead = 0;
 
     /* Mnemosyne defaults: enabled per-content-type when URL is set */
     cfg->mnemosyne_index_files = 1;

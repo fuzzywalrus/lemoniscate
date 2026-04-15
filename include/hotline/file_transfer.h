@@ -44,6 +44,8 @@ typedef struct {
     hl_file_resume_data_t   *resume_data;  /* NULL if not resuming */
     hl_client_conn_t        *client_conn;
     int                      active;
+    int                      ft_aead;          /* 1 = AEAD-encrypted transfer */
+    uint8_t                  ft_base_key[32];  /* AEAD file transfer base key */
 } hl_file_transfer_t;
 
 /* FileTransferMgr */
