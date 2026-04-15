@@ -38,7 +38,8 @@ static const hl_field_type_t FIELD_HOPE_CLIENT_COMPRESS = {0x0E, 0xCA}; /* 3786 
 /* --- MAC algorithm identifiers --- */
 
 typedef enum {
-    HL_HOPE_MAC_HMAC_SHA1 = 0,
+    HL_HOPE_MAC_HMAC_SHA256 = 0,
+    HL_HOPE_MAC_HMAC_SHA1,
     HL_HOPE_MAC_SHA1,
     HL_HOPE_MAC_HMAC_MD5,
     HL_HOPE_MAC_MD5,
@@ -70,22 +71,38 @@ typedef enum {
     HOPE_PHASE_BODY_REST     /* decrypting remaining body bytes */
 } hl_hope_decrypt_phase_t;
 
+/* --- AEAD (ChaCha20-Poly1305) cipher state --- */
+
+typedef struct {
+    uint8_t  encode_key[32];   /* server -> client (HKDF-expanded) */
+    uint8_t  decode_key[32];   /* client -> server (HKDF-expanded) */
+    uint64_t send_counter;     /* nonce counter for outbound frames */
+    uint64_t recv_counter;     /* nonce counter for inbound frames */
+    uint8_t  ft_base_key[32];  /* file transfer base key */
+    int      ft_base_key_set;  /* 1 if ft_base_key is valid */
+} hl_hope_aead_state_t;
+
 /* --- Per-connection HOPE state --- */
 
 typedef struct hl_hope_state {
-    int                     active;          /* 1 = transport encryption on */
+    int                     active;          /* 1 = RC4 transport encryption on */
+    int                     aead_active;     /* 1 = AEAD transport encryption on */
     hl_hope_mac_alg_t       mac_alg;         /* negotiated MAC algorithm */
     uint8_t                 session_key[64]; /* per-connection session key */
 
+    /* RC4 stream cipher state */
     hl_hope_cipher_t        encrypt;         /* server -> client */
     hl_hope_cipher_t        decrypt;         /* client -> server */
 
-    /* Incremental decryption state machine for kqueue partial reads */
+    /* Incremental decryption state machine for kqueue partial reads (RC4) */
     hl_hope_decrypt_phase_t decrypt_phase;
     size_t                  decrypt_offset;     /* bytes in read_buf already decrypted */
     size_t                  current_body_len;   /* body len from current transaction header */
     size_t                  body_rest_remaining; /* bytes left to decrypt in BODY_REST phase */
     uint8_t                 rotation_count;     /* extracted from current header */
+
+    /* AEAD (ChaCha20-Poly1305) state */
+    hl_hope_aead_state_t    aead;
 } hl_hope_state_t;
 
 /* --- RC4 primitives --- */
@@ -113,12 +130,46 @@ void hl_hope_mac(hl_hope_mac_alg_t alg,
                  const uint8_t *key, size_t key_len,
                  uint8_t *out, size_t *out_len);
 
+/* --- HKDF-SHA256 key derivation (RFC 5869) --- */
+
+/*
+ * HKDF-SHA256 extract-then-expand.
+ *
+ * Derives `out_len` bytes of key material from input key material (ikm)
+ * using salt and info parameters per RFC 5869.
+ *
+ * out_len MUST be <= 32 (one HMAC-SHA256 block). For HOPE AEAD key
+ * derivation, out_len is always 32.
+ */
+void hl_hkdf_sha256(const uint8_t *ikm, size_t ikm_len,
+                    const uint8_t *salt, size_t salt_len,
+                    const uint8_t *info, size_t info_len,
+                    uint8_t *out, size_t out_len);
+
+/* --- Cipher policy --- */
+
+typedef enum {
+    HL_HOPE_CIPHER_PREFER_AEAD,  /* default: AEAD if client supports, else RC4 */
+    HL_HOPE_CIPHER_REQUIRE_AEAD, /* reject RC4-only HOPE clients */
+    HL_HOPE_CIPHER_RC4_ONLY      /* existing behavior, for testing */
+} hl_hope_cipher_policy_t;
+
+/* Negotiated cipher mode (returned by hl_hope_build_negotiation_reply) */
+typedef enum {
+    HL_HOPE_CIPHER_MODE_NONE,    /* no transport encryption (INVERSE auth-only) */
+    HL_HOPE_CIPHER_MODE_RC4,     /* RC4 stream encryption */
+    HL_HOPE_CIPHER_MODE_AEAD     /* ChaCha20-Poly1305 AEAD */
+} hl_hope_cipher_mode_t;
+
+/* Parse cipher policy from config string. Returns PREFER_AEAD for unknown values. */
+hl_hope_cipher_policy_t hl_hope_parse_cipher_policy(const char *str);
+
 /* --- HOPE security policy --- */
 
 /*
  * Check if an algorithm is allowed under the given security policy.
  *
- * Strict mode (legacy_mode=0): only HMAC-SHA1 and HMAC-MD5 are allowed.
+ * Strict mode (legacy_mode=0): only HMAC-SHA256, HMAC-SHA1, and HMAC-MD5 are allowed.
  *   Rejects INVERSE (auth bypass), bare SHA1 (length-extension), bare MD5.
  * Legacy mode (legacy_mode=1): all algorithms allowed per original spec.
  *
@@ -141,20 +192,24 @@ int hl_hope_detect_probe(const hl_transaction_t *login_tran);
  * strongest mutual MAC algorithm, generates a 64-byte session key
  * (IP + port + random), and populates `reply` with HOPE fields.
  *
- * In strict mode (legacy_mode=0), rejects INVERSE and bare hashes.
- * Returns -1 if no acceptable algorithm can be negotiated.
+ * cipher_policy controls whether CHACHA20-POLY1305 AEAD is offered:
+ *   PREFER_AEAD: use AEAD if client supports, else RC4
+ *   REQUIRE_AEAD: reject if client doesn't support AEAD
+ *   RC4_ONLY: ignore AEAD in client's cipher list
  *
- * `state` is populated with session_key and mac_alg on success.
- * Caller must hl_transaction_free(reply) after sending.
+ * On success, *out_cipher_mode is set to the negotiated cipher mode.
+ * `state` is populated with session_key and mac_alg.
  *
- * Returns 0 on success, -1 on error or strict-mode rejection.
+ * Returns 0 on success, -1 on error or negotiation rejection.
  */
 int hl_hope_build_negotiation_reply(hl_hope_state_t *state,
                                     const hl_transaction_t *probe,
                                     hl_transaction_t *reply,
                                     const char *server_ip,
                                     uint16_t server_port,
-                                    int legacy_mode);
+                                    int legacy_mode,
+                                    hl_hope_cipher_policy_t cipher_policy,
+                                    hl_hope_cipher_mode_t *out_cipher_mode);
 
 /*
  * Verify HOPE-authenticated login credentials.
@@ -189,7 +244,116 @@ int hl_hope_verify_login(hl_hope_state_t *state,
 int hl_hope_derive_keys(hl_hope_state_t *state, const char *password);
 
 /*
- * Encrypt an outbound transaction buffer in-place.
+ * Derive AEAD transport encryption keys and file transfer base key.
+ *
+ * Key derivation:
+ *   password_mac = MAC(password, session_key)
+ *   encode_key   = MAC(password, password_mac)
+ *   decode_key   = MAC(password, encode_key)
+ *   encode_key_256 = HKDF-SHA256(encode_key, session_key, "hope-chacha-encode")
+ *   decode_key_256 = HKDF-SHA256(decode_key, session_key, "hope-chacha-decode")
+ *   ft_base_key    = HKDF-SHA256(encode_key_256 || decode_key_256, session_key, "hope-file-transfer")
+ *
+ * Sets state->aead with the expanded keys and zeroed counters.
+ * Returns 0 on success, -1 on error (e.g. INVERSE MAC).
+ */
+int hl_hope_aead_derive_keys(hl_hope_state_t *state, const char *password);
+
+/*
+ * Derive a per-transfer key for AEAD-encrypted HTXF file transfers.
+ *
+ * transfer_key = HKDF-SHA256(ft_base_key, ref_number(4 bytes BE), "hope-ft-ref")
+ *
+ * ref_num is the 4-byte big-endian HTXF reference number.
+ * Writes 32 bytes to out_key. Returns 0 on success, -1 if ft_base_key not set.
+ */
+int hl_hope_aead_derive_transfer_key(const hl_hope_state_t *state,
+                                     const uint8_t ref_num[4],
+                                     uint8_t out_key[32]);
+
+/* --- AEAD transport functions --- */
+
+/*
+ * Encrypt a serialized transaction into an AEAD frame.
+ *
+ * Input: `tx_buf` contains a serialized transaction (header + body), `tx_len` bytes.
+ * Output: `out_buf` receives the AEAD frame: 4-byte BE length + ciphertext + 16-byte tag.
+ * `out_buf` must hold at least `tx_len + 4 + 16` bytes.
+ *
+ * Returns total bytes written to out_buf, or -1 on error.
+ * Increments state->aead.send_counter.
+ */
+int hl_hope_aead_encrypt_transaction(hl_hope_state_t *state,
+                                     const uint8_t *tx_buf, size_t tx_len,
+                                     uint8_t *out_buf, size_t out_buf_size);
+
+/*
+ * Scan read_buf for a complete AEAD frame.
+ *
+ * Returns the total frame size (4 + ciphertext_len) if a complete frame
+ * is available starting at buf[0], or 0 if more data is needed.
+ * Returns -1 if the frame length exceeds max_frame_size.
+ */
+int hl_hope_aead_scan_frame(const uint8_t *buf, size_t buf_len,
+                            size_t max_frame_size);
+
+/*
+ * Decrypt an AEAD frame in-place.
+ *
+ * `buf` points to the start of a complete AEAD frame (4-byte length prefix +
+ * ciphertext + tag). `frame_len` is the total frame size (from scan_frame).
+ *
+ * On success, writes decrypted plaintext to `out_buf` (must hold frame_len - 4 - 16 bytes),
+ * sets *out_len to the plaintext length, and increments state->aead.recv_counter.
+ * Returns 0 on success, -1 on tag verification failure.
+ */
+int hl_hope_aead_decrypt_frame(hl_hope_state_t *state,
+                               const uint8_t *buf, size_t frame_len,
+                               uint8_t *out_buf, size_t *out_len);
+
+/* --- AEAD stream reader for file transfers --- */
+
+/*
+ * Buffered AEAD stream reader for file transfer uploads.
+ *
+ * Reads AEAD frames from the underlying connection, decrypts them,
+ * and buffers the plaintext so callers can read arbitrary byte ranges
+ * as if reading from a plain stream.
+ */
+typedef struct {
+    struct hl_tls_conn *conn;       /* underlying transfer connection */
+    uint8_t             key[32];    /* per-transfer AEAD key */
+    uint64_t            recv_counter;
+    uint8_t            *buffer;     /* decrypted plaintext buffer */
+    size_t              buffer_len; /* bytes in buffer */
+    size_t              buffer_off; /* read cursor offset */
+} hl_aead_stream_reader_t;
+
+/* Initialize an AEAD stream reader. Does not allocate — caller provides the struct. */
+void hl_aead_reader_init(hl_aead_stream_reader_t *r,
+                         struct hl_tls_conn *conn,
+                         const uint8_t key[32]);
+
+/* Free internal buffer. Does NOT close the connection. */
+void hl_aead_reader_free(hl_aead_stream_reader_t *r);
+
+/*
+ * Read exactly `len` bytes from the AEAD stream.
+ * Reads and decrypts AEAD frames as needed to fill the request.
+ * Returns 0 on success, -1 on error (connection closed, tag failure, etc.)
+ */
+int hl_aead_reader_read_full(hl_aead_stream_reader_t *r,
+                             uint8_t *out, size_t len);
+
+/*
+ * Read up to `len` bytes from the AEAD stream.
+ * Returns bytes read (>0), 0 on EOF, -1 on error.
+ */
+ssize_t hl_aead_reader_read(hl_aead_stream_reader_t *r,
+                            uint8_t *out, size_t len);
+
+/*
+ * Encrypt an outbound transaction buffer in-place (RC4).
  *
  * buf must contain a serialized transaction (header + body).
  * Encrypts header (20 bytes), then body, using the encrypt cipher.

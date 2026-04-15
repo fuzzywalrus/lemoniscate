@@ -2166,6 +2166,9 @@ static int handle_download_file(hl_client_conn_t *cc, const hl_transaction_t *re
     if (!hl_client_conn_authorize(cc, ACCESS_DOWNLOAD_FILE))
         return reply_err(cc, req, "You are not allowed to download files.", out, out_count);
 
+    if (cc->account && cc->account->require_encryption && !hl_client_is_encrypted(cc))
+        return reply_err(cc, req, "This account requires an encrypted connection for file transfers.", out, out_count);
+
     hl_server_t *srv = cc->server;
 
     /* Build full file path */
@@ -2237,6 +2240,10 @@ static int handle_download_file(hl_client_conn_t *cc, const hl_transaction_t *re
     ft->type = HL_XFER_FILE_DOWNLOAD;
     ft->client_conn = cc;
     ft->active = 1;
+    if (cc->hope && cc->hope->aead_active && cc->hope->aead.ft_base_key_set) {
+        ft->ft_aead = 1;
+        memcpy(ft->ft_base_key, cc->hope->aead.ft_base_key, 32);
+    }
     ft->resume_data = resume;
 
     /* Store file root and path info for the transfer handler */
@@ -2297,6 +2304,9 @@ static int handle_upload_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     if (!hl_client_conn_authorize(cc, ACCESS_UPLOAD_FILE))
         return reply_err(cc, req, "You are not allowed to upload files.", out, out_count);
 
+    if (cc->account && cc->account->require_encryption && !hl_client_is_encrypted(cc))
+        return reply_err(cc, req, "This account requires an encrypted connection for file transfers.", out, out_count);
+
     hl_server_t *srv = cc->server;
 
     /* Build destination directory path */
@@ -2356,6 +2366,10 @@ static int handle_upload_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     ft->type = HL_XFER_FILE_UPLOAD;
     ft->client_conn = cc;
     ft->active = 1;
+    if (cc->hope && cc->hope->aead_active && cc->hope->aead.ft_base_key_set) {
+        ft->ft_aead = 1;
+        memcpy(ft->ft_base_key, cc->hope->aead.ft_base_key, 32);
+    }
     strncpy(ft->file_root, full_path, sizeof(ft->file_root) - 1);
 
     /* Store transfer size from request if provided */
@@ -2426,6 +2440,10 @@ static int handle_download_folder(hl_client_conn_t *cc, const hl_transaction_t *
     ft->type = HL_XFER_FOLDER_DOWNLOAD;
     ft->client_conn = cc;
     ft->active = 1;
+    if (cc->hope && cc->hope->aead_active && cc->hope->aead.ft_base_key_set) {
+        ft->ft_aead = 1;
+        memcpy(ft->ft_base_key, cc->hope->aead.ft_base_key, 32);
+    }
     strncpy(ft->file_root, full_path, sizeof(ft->file_root) - 1);
     memcpy(ft->transfer_size, total_size, 4);
     memcpy(ft->folder_item_count, item_count, 2);
@@ -2508,6 +2526,10 @@ static int handle_upload_folder(hl_client_conn_t *cc, const hl_transaction_t *re
     ft->type = HL_XFER_FOLDER_UPLOAD;
     ft->client_conn = cc;
     ft->active = 1;
+    if (cc->hope && cc->hope->aead_active && cc->hope->aead.ft_base_key_set) {
+        ft->ft_aead = 1;
+        memcpy(ft->ft_base_key, cc->hope->aead.ft_base_key, 32);
+    }
     strncpy(ft->file_root, full_path, sizeof(ft->file_root) - 1);
 
     if (f_count && f_count->data_len >= 2)
@@ -2553,6 +2575,10 @@ static int handle_download_banner(hl_client_conn_t *cc, const hl_transaction_t *
     ft->type = HL_XFER_BANNER_DOWNLOAD;
     ft->client_conn = cc;
     ft->active = 1;
+    if (cc->hope && cc->hope->aead_active && cc->hope->aead.ft_base_key_set) {
+        ft->ft_aead = 1;
+        memcpy(ft->ft_base_key, cc->hope->aead.ft_base_key, 32);
+    }
     hl_write_u32(ft->transfer_size, (uint32_t)srv->banner_len);
 
     /* Add to transfer manager (assigns random ref_num) */

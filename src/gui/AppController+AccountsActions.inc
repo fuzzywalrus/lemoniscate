@@ -222,6 +222,10 @@
     if ([fileRoot length] > 0) {
         [yaml appendFormat:@"FileRoot: %@\n", fileRoot];
     }
+    if (_acctRequireEncryptionCheckbox &&
+        [_acctRequireEncryptionCheckbox state] == NSControlStateValueOn) {
+        [yaml appendString:@"RequireEncryption: true\n"];
+    }
 
     if (![yaml writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]) {
         { NSAlert *a = [[NSAlert alloc] init]; [a setMessageText:@"Save Failed"]; [a setInformativeText:@"Could not write account file."]; [a addButtonWithTitle:@"OK"]; [a runModal]; [a release]; }

@@ -13,6 +13,7 @@
 #include "hotline/tls.h"
 #include "hotline/handshake.h"
 #include "hotline/hope.h"
+#include "hotline/chacha20poly1305.h"
 #include "hotline/field.h"
 #include "hotline/user.h"
 #include "hotline/password.h"
@@ -117,19 +118,45 @@ static int send_transaction_to_client(hl_client_conn_t *cc, hl_transaction_t *t)
     int written = hl_transaction_serialize(t, buf, wire_size);
     if (written < 0) { free(buf); return -1; }
 
-    /* Encrypt if HOPE transport is active */
-    if (cc->hope && cc->hope->active &&
-        cc->hope->mac_alg != HL_HOPE_MAC_INVERSE) {
-        hl_hope_encrypt_transaction(cc->hope, buf, (size_t)written);
+    int rc;
+
+    if (cc->hope && cc->hope->aead_active) {
+        /* AEAD: seal into length-prefixed frame */
+        size_t frame_size = 4 + (size_t)written + HL_POLY1305_TAG_SIZE;
+        uint8_t *frame_buf = (uint8_t *)malloc(frame_size);
+        if (!frame_buf) { free(buf); return -1; }
+
+        uint64_t counter_before = cc->hope->aead.send_counter;
+        int frame_written = hl_hope_aead_encrypt_transaction(
+            cc->hope, buf, (size_t)written, frame_buf, frame_size);
+        free(buf);
+
+        if (frame_written < 0) { free(frame_buf); return -1; }
+
+        hl_log_debug(cc->logger, "[HOPE-AEAD-W] Sealed frame: %d bytes plaintext -> %d bytes frame (counter=%llu)",
+                     written, frame_written, (unsigned long long)counter_before);
+
+        if (cc->conn) {
+            rc = hl_conn_write_all(cc->conn, frame_buf, (size_t)frame_written);
+        } else {
+            rc = write_all(cc->fd, frame_buf, (size_t)frame_written);
+        }
+        free(frame_buf);
+    } else {
+        /* RC4 or plaintext */
+        if (cc->hope && cc->hope->active &&
+            cc->hope->mac_alg != HL_HOPE_MAC_INVERSE) {
+            hl_hope_encrypt_transaction(cc->hope, buf, (size_t)written);
+        }
+
+        if (cc->conn) {
+            rc = hl_conn_write_all(cc->conn, buf, (size_t)written);
+        } else {
+            rc = write_all(cc->fd, buf, (size_t)written);
+        }
+        free(buf);
     }
 
-    int rc;
-    if (cc->conn) {
-        rc = hl_conn_write_all(cc->conn, buf, (size_t)written);
-    } else {
-        rc = write_all(cc->fd, buf, (size_t)written);
-    }
-    free(buf);
     return rc;
 }
 
@@ -422,14 +449,120 @@ static void process_client_data(hl_server_t *srv, hl_client_conn_t *cc, hl_event
     }
     cc->read_buf_len += (size_t)n;
 
-    /* HOPE: decrypt newly received data incrementally */
+    /* AEAD clients: frame-based decryption (cannot decrypt partial frames) */
+    if (cc->hope && cc->hope->aead_active) {
+        while (cc->read_buf_len > 0) {
+            int frame_result = hl_hope_aead_scan_frame(
+                cc->read_buf, cc->read_buf_len, sizeof(cc->read_buf));
+
+            if (frame_result == 0) break; /* need more data */
+
+            if (frame_result < 0) {
+                hl_log_error(srv->logger,
+                    "AEAD frame too large or invalid from client %d (buf_len=%zu), disconnecting",
+                    hl_read_u16(cc->id), cc->read_buf_len);
+                disconnect_client(srv, cc, evloop);
+                return;
+            }
+
+            size_t frame_len = (size_t)frame_result;
+
+            /* Decrypt frame into temporary buffer */
+            uint8_t decrypt_buf[65536];
+            size_t plaintext_len = 0;
+            uint64_t counter_before = cc->hope->aead.recv_counter;
+            if (hl_hope_aead_decrypt_frame(cc->hope,
+                    cc->read_buf, frame_len,
+                    decrypt_buf, &plaintext_len) != 0) {
+                hl_log_error(srv->logger,
+                    "AEAD tag verification failed from client %d (frame_len=%zu, counter=%llu), disconnecting",
+                    hl_read_u16(cc->id), frame_len, (unsigned long long)counter_before);
+                disconnect_client(srv, cc, evloop);
+                return;
+            }
+
+            hl_log_debug(srv->logger,
+                "[HOPE-AEAD-R] Opened frame: %zu bytes -> %zu bytes plaintext (counter=%llu) from client %d",
+                frame_len, plaintext_len, (unsigned long long)counter_before, hl_read_u16(cc->id));
+
+            /* Consume frame from read_buf */
+            if (frame_len < cc->read_buf_len) {
+                memmove(cc->read_buf, cc->read_buf + frame_len,
+                        cc->read_buf_len - frame_len);
+            }
+            cc->read_buf_len -= frame_len;
+
+            /* Parse and dispatch the decrypted transaction */
+            hl_transaction_t t;
+            if (hl_transaction_deserialize(&t, decrypt_buf, plaintext_len) < 0) {
+                hl_log_error(srv->logger,
+                    "Transaction parse error after AEAD decrypt for client %d",
+                    hl_read_u16(cc->id));
+                continue;
+            }
+
+            /* Dispatch to handler (same code path as below) */
+            uint16_t type_code = hl_type_to_u16(t.type);
+            hl_handler_func_t handler = (type_code < HL_HANDLER_TABLE_SIZE)
+                ? srv->handlers[type_code] : NULL;
+
+            if (handler) {
+                hl_log_debug(srv->logger, "Handling %s from client %d (AEAD)",
+                            hl_transaction_type_name(t.type), hl_read_u16(cc->id));
+
+                if (!hl_type_eq(t.type, TRAN_KEEP_ALIVE)) {
+                    pthread_rwlock_wrlock(&cc->mu);
+                    cc->idle_time = 0;
+                    if (hl_user_flags_is_set(cc->flags, HL_USER_FLAG_AWAY)) {
+                        hl_user_flags_set(cc->flags, HL_USER_FLAG_AWAY, 0);
+                        broadcast_notify_change_user(srv, cc);
+                    }
+                    pthread_rwlock_unlock(&cc->mu);
+                }
+
+                hl_transaction_t *responses = NULL;
+                int resp_count = 0;
+                handler(cc, &t, &responses, &resp_count);
+
+                if (responses && resp_count > 0) {
+                    int r;
+                    for (r = 0; r < resp_count; r++) {
+                        hl_transaction_t *resp = &responses[r];
+                        hl_client_id_t target_id;
+                        memcpy(target_id, resp->client_id, 2);
+
+                        if (target_id[0] == 0 && target_id[1] == 0) {
+                            hl_server_send_to_client(cc, resp);
+                        } else {
+                            hl_client_conn_t *target = srv->client_mgr->vt->get(
+                                srv->client_mgr, target_id);
+                            if (target) {
+                                send_transaction_to_client(target, resp);
+                            }
+                        }
+                        hl_transaction_free(resp);
+                    }
+                    free(responses);
+                }
+            } else {
+                hl_log_info(srv->logger, "Unhandled transaction %s (%d) from client %d (AEAD)",
+                           hl_transaction_type_name(t.type), type_code,
+                           hl_read_u16(cc->id));
+            }
+
+            hl_transaction_free(&t);
+        }
+        return; /* AEAD path handled — don't fall through to RC4/plaintext */
+    }
+
+    /* RC4 HOPE: decrypt newly received data incrementally */
     if (cc->hope && cc->hope->active &&
         cc->hope->mac_alg != HL_HOPE_MAC_INVERSE) {
         hl_hope_decrypt_incremental(cc->hope, cc->read_buf, cc->read_buf_len);
     }
 
     /* Scan for complete transactions and dispatch.
-     * For HOPE clients, only scan up to the decrypted boundary. */
+     * For HOPE RC4 clients, only scan up to the decrypted boundary. */
     size_t scan_limit = cc->read_buf_len;
     if (cc->hope && cc->hope->active &&
         cc->hope->mac_alg != HL_HOPE_MAC_INVERSE) {
@@ -633,15 +766,31 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
 
         /* Build and send HOPE negotiation reply */
         hl_transaction_t hope_reply;
+        hl_hope_cipher_mode_t negotiated_cipher_mode = HL_HOPE_CIPHER_MODE_NONE;
+        hl_hope_cipher_policy_t cipher_policy = hl_hope_parse_cipher_policy(
+            srv->config.hope_cipher_policy);
         if (hl_hope_build_negotiation_reply(hope, &login_tran, &hope_reply,
                                             ip_str, (uint16_t)srv->port,
-                                            srv->config.hope_legacy_mode) < 0) {
-            hl_log_info(srv->logger, "HOPE: no acceptable algorithms from %s", ip_str);
+                                            srv->config.hope_legacy_mode,
+                                            cipher_policy,
+                                            &negotiated_cipher_mode) < 0) {
+            hl_log_info(srv->logger, "HOPE: no acceptable algorithms from %s (policy=%s)",
+                        ip_str, srv->config.hope_cipher_policy);
             free(hope);
             hl_transaction_free(&login_tran);
             hl_conn_close(conn);
             return;
         }
+
+        hl_log_info(srv->logger,
+            "HOPE negotiation: mac=%d, cipher_mode=%s, policy=%s, session_key[0..3]=%02x%02x%02x%02x from %s",
+            (int)hope->mac_alg,
+            negotiated_cipher_mode == HL_HOPE_CIPHER_MODE_AEAD ? "AEAD" :
+            negotiated_cipher_mode == HL_HOPE_CIPHER_MODE_RC4 ? "RC4" : "NONE",
+            srv->config.hope_cipher_policy,
+            hope->session_key[0], hope->session_key[1],
+            hope->session_key[2], hope->session_key[3],
+            ip_str);
 
         send_transaction_via_conn(conn, &hope_reply);
         hl_transaction_free(&hope_reply);
@@ -701,8 +850,21 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
             hl_log_info(srv->logger, "HOPE login verified: %s from %s",
                         hope_acct->login, ip_str);
 
-            /* Derive transport encryption keys */
-            hl_hope_derive_keys(hope, hope_acct->password);
+            /* Derive transport encryption keys based on negotiated cipher */
+            if (negotiated_cipher_mode == HL_HOPE_CIPHER_MODE_AEAD) {
+                hl_hope_aead_derive_keys(hope, hope_acct->password);
+                hl_log_info(srv->logger,
+                    "HOPE AEAD keys derived: encode[0..3]=%02x%02x%02x%02x, decode[0..3]=%02x%02x%02x%02x, ft_base[0..3]=%02x%02x%02x%02x",
+                    hope->aead.encode_key[0], hope->aead.encode_key[1],
+                    hope->aead.encode_key[2], hope->aead.encode_key[3],
+                    hope->aead.decode_key[0], hope->aead.decode_key[1],
+                    hope->aead.decode_key[2], hope->aead.decode_key[3],
+                    hope->aead.ft_base_key[0], hope->aead.ft_base_key[1],
+                    hope->aead.ft_base_key[2], hope->aead.ft_base_key[3]);
+            } else {
+                hl_hope_derive_keys(hope, hope_acct->password);
+                hl_log_info(srv->logger, "HOPE RC4 keys derived for %s", hope_acct->login);
+            }
             is_hope = 1;
         } else {
             hl_log_info(srv->logger, "HOPE login failed from %s", ip_str);
@@ -919,12 +1081,20 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
 
     /* Activate HOPE transport encryption BEFORE sending login reply.
      * Per Janus interop: the login reply and all subsequent transactions
-     * are sent encrypted. The client activates its RC4 reader immediately
+     * are sent encrypted. The client activates its reader immediately
      * after sending step 3, so it expects the reply to be encrypted. */
     if (cc->hope && cc->hope->mac_alg != HL_HOPE_MAC_INVERSE) {
-        cc->hope->active = 1;
-        hl_log_info(srv->logger, "HOPE transport encryption activated for %s",
-                    cc->remote_addr);
+        if (cc->hope->aead.ft_base_key_set) {
+            /* AEAD keys were derived — activate AEAD transport */
+            cc->hope->aead_active = 1;
+            hl_log_info(srv->logger, "HOPE AEAD transport encryption activated for %s (ChaCha20-Poly1305)",
+                        cc->remote_addr);
+        } else {
+            /* RC4 transport */
+            cc->hope->active = 1;
+            hl_log_info(srv->logger, "HOPE transport encryption activated for %s (RC4)",
+                        cc->remote_addr);
+        }
     }
 
     /* Send login reply sequence — maps to Go login response in server.go:593-615
@@ -1211,6 +1381,44 @@ static int send_folder_recursive(hl_server_t *srv, hl_tls_conn_t *conn,
     return 0;
 }
 
+/* Write data through AEAD framing for encrypted file transfers.
+ * Seals `data` into a length-prefixed AEAD frame and writes it.
+ * Uses server->client direction (0x00). */
+static int aead_write_frame(hl_tls_conn_t *conn, const uint8_t key[32],
+                            uint64_t *counter, const uint8_t *data, size_t data_len)
+{
+    size_t frame_size = 4 + data_len + HL_POLY1305_TAG_SIZE;
+    uint8_t *frame = (uint8_t *)malloc(frame_size);
+    if (!frame) return -1;
+
+    /* Build nonce: direction 0x00 (server->client) + counter */
+    uint8_t nonce[12];
+    memset(nonce, 0, 12);
+    nonce[4]  = (uint8_t)(*counter >> 56);
+    nonce[5]  = (uint8_t)(*counter >> 48);
+    nonce[6]  = (uint8_t)(*counter >> 40);
+    nonce[7]  = (uint8_t)(*counter >> 32);
+    nonce[8]  = (uint8_t)(*counter >> 24);
+    nonce[9]  = (uint8_t)(*counter >> 16);
+    nonce[10] = (uint8_t)(*counter >> 8);
+    nonce[11] = (uint8_t)(*counter);
+
+    uint8_t *ct = frame + 4;
+    uint8_t *tag = ct + data_len;
+    hl_chacha20_poly1305_encrypt(key, nonce, data, data_len, ct, tag);
+
+    uint32_t payload = (uint32_t)(data_len + HL_POLY1305_TAG_SIZE);
+    frame[0] = (uint8_t)(payload >> 24);
+    frame[1] = (uint8_t)(payload >> 16);
+    frame[2] = (uint8_t)(payload >> 8);
+    frame[3] = (uint8_t)(payload);
+
+    int rc = hl_conn_write_all(conn, frame, frame_size);
+    free(frame);
+    (*counter)++;
+    return rc;
+}
+
 static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
                                              hl_tls_conn_t *xfer_conn)
 {
@@ -1249,11 +1457,50 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
         return;
     }
 
+    /* Derive per-transfer AEAD key if this is an AEAD transfer */
+    uint8_t xfer_key[32];
+    int xfer_aead = 0;
+    uint64_t xfer_send_counter = 0;
+    uint64_t xfer_recv_counter = 0;
+    (void)xfer_recv_counter; /* Used when AEAD upload decryption is implemented */
+
+    if (ft->ft_aead) {
+        hl_hkdf_sha256(ft->ft_base_key, 32,
+                       hdr.reference_number, 4,
+                       (const uint8_t *)"hope-ft-ref", 11,
+                       xfer_key, 32);
+        xfer_aead = 1;
+        hl_log_info(srv->logger, "AEAD file transfer key derived for ref %02x%02x%02x%02x",
+                    hdr.reference_number[0], hdr.reference_number[1],
+                    hdr.reference_number[2], hdr.reference_number[3]);
+    }
+
     /* Handle banner download — send raw banner data */
     if (ft->type == HL_XFER_BANNER_DOWNLOAD) {
         if (srv->banner && srv->banner_len > 0) {
-            hl_conn_write_all(conn, srv->banner, srv->banner_len);
-            hl_log_info(srv->logger, "Banner sent (%zu bytes)", srv->banner_len);
+            if (xfer_aead) {
+                /* Seal banner into AEAD frame */
+                size_t frame_size = 4 + srv->banner_len + HL_POLY1305_TAG_SIZE;
+                uint8_t *frame = (uint8_t *)malloc(frame_size);
+                if (frame) {
+                    uint8_t nonce[12];
+                    memset(nonce, 0, 12); /* direction 0x00 (server->client), counter 0 */
+                    uint8_t *ct = frame + 4;
+                    uint8_t *tag = ct + srv->banner_len;
+                    hl_chacha20_poly1305_encrypt(xfer_key, nonce,
+                        srv->banner, srv->banner_len, ct, tag);
+                    uint32_t payload = (uint32_t)(srv->banner_len + HL_POLY1305_TAG_SIZE);
+                    frame[0] = (uint8_t)(payload >> 24);
+                    frame[1] = (uint8_t)(payload >> 16);
+                    frame[2] = (uint8_t)(payload >> 8);
+                    frame[3] = (uint8_t)(payload);
+                    hl_conn_write_all(conn, frame, frame_size);
+                    free(frame);
+                }
+            } else {
+                hl_conn_write_all(conn, srv->banner, srv->banner_len);
+            }
+            hl_log_info(srv->logger, "Banner sent (%zu bytes, aead=%d)", srv->banner_len, xfer_aead);
         }
         /* Remove completed transfer (ft points into manager array — do NOT free) */
         srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
@@ -1334,10 +1581,25 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
         hl_write_u32(data_fork_hdr + 12, file_size);
 
         /* Send FILP headers (always sent, even for resume) */
-        hl_conn_write_all(conn, filp_hdr, 24);
-        hl_conn_write_all(conn, info_fork_hdr, 16);
-        hl_conn_write_all(conn, info_data, info_data_size);
-        hl_conn_write_all(conn, data_fork_hdr, 16);
+        if (xfer_aead) {
+            /* Concatenate all FILP metadata into one frame */
+            size_t meta_len = 24 + 16 + info_data_size + 16;
+            uint8_t *meta = (uint8_t *)malloc(meta_len);
+            if (meta) {
+                size_t mpos = 0;
+                memcpy(meta + mpos, filp_hdr, 24); mpos += 24;
+                memcpy(meta + mpos, info_fork_hdr, 16); mpos += 16;
+                memcpy(meta + mpos, info_data, info_data_size); mpos += info_data_size;
+                memcpy(meta + mpos, data_fork_hdr, 16); mpos += 16;
+                aead_write_frame(conn, xfer_key, &xfer_send_counter, meta, mpos);
+                free(meta);
+            }
+        } else {
+            hl_conn_write_all(conn, filp_hdr, 24);
+            hl_conn_write_all(conn, info_fork_hdr, 16);
+            hl_conn_write_all(conn, info_data, info_data_size);
+            hl_conn_write_all(conn, data_fork_hdr, 16);
+        }
 
         /* Seek past already-transferred bytes for resume */
         if (data_offset > 0) {
@@ -1349,14 +1611,20 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
         size_t total_sent = 0;
         size_t n;
         while ((n = fread(fbuf, 1, sizeof(fbuf), f)) > 0) {
-            if (hl_conn_write_all(conn, fbuf, n) < 0) break;
+            int wrc;
+            if (xfer_aead) {
+                wrc = aead_write_frame(conn, xfer_key, &xfer_send_counter, fbuf, n);
+            } else {
+                wrc = hl_conn_write_all(conn, fbuf, n);
+            }
+            if (wrc < 0) break;
             total_sent += n;
         }
         fclose(f);
 
-        hl_log_info(srv->logger, "File sent: %s (%zu bytes%s + FILP headers)",
+        hl_log_info(srv->logger, "File sent: %s (%zu bytes%s + FILP headers, aead=%d)",
                     ft->file_root, total_sent,
-                    resuming ? ", resumed" : "");
+                    resuming ? ", resumed" : "", xfer_aead);
 
         srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
                                          hdr.reference_number);
@@ -1366,20 +1634,35 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
 
     /* Handle file upload — receive FILP-wrapped data from client */
     if (ft->type == HL_XFER_FILE_UPLOAD) {
+        /* Set up AEAD stream reader if this is an encrypted transfer */
+        hl_aead_stream_reader_t aead_reader;
+        int use_aead_reader = 0;
+        if (xfer_aead) {
+            hl_aead_reader_init(&aead_reader, conn, xfer_key);
+            use_aead_reader = 1;
+            hl_log_info(srv->logger, "Upload: AEAD stream reader initialized");
+        }
+
+        /* Macros to abstract reads through plain or AEAD path */
+        #define UPLOAD_READ_FULL(buf, len) \
+            (use_aead_reader ? hl_aead_reader_read_full(&aead_reader, (buf), (len)) \
+                             : hl_conn_read_full(conn, (buf), (len)))
+
         /* Step 1: Read FILP header (24 bytes) */
         uint8_t filp_hdr[HL_FLAT_FILE_HEADER_SIZE];
-        if (hl_conn_read_full(conn, filp_hdr, HL_FLAT_FILE_HEADER_SIZE) < 0) {
-            hl_log_error(srv->logger, "Upload: failed to read FILP header");
+        if (UPLOAD_READ_FULL(filp_hdr, HL_FLAT_FILE_HEADER_SIZE) < 0) {
+            hl_log_error(srv->logger, "Upload: failed to read FILP header (aead=%d)", xfer_aead);
             goto upload_cleanup;
         }
         if (memcmp(filp_hdr, "FILP", 4) != 0) {
-            hl_log_error(srv->logger, "Upload: invalid FILP magic");
+            hl_log_error(srv->logger, "Upload: invalid FILP magic (got %02x%02x%02x%02x, aead=%d)",
+                        filp_hdr[0], filp_hdr[1], filp_hdr[2], filp_hdr[3], xfer_aead);
             goto upload_cleanup;
         }
 
         /* Step 2: Read INFO fork header (16 bytes) to get info data size */
         uint8_t info_hdr[HL_FORK_HEADER_SIZE];
-        if (hl_conn_read_full(conn, info_hdr, HL_FORK_HEADER_SIZE) < 0) {
+        if (UPLOAD_READ_FULL(info_hdr, HL_FORK_HEADER_SIZE) < 0) {
             hl_log_error(srv->logger, "Upload: failed to read INFO fork header");
             goto upload_cleanup;
         }
@@ -1393,7 +1676,7 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
         if (info_data_size > 0) {
             uint8_t *info_buf = (uint8_t *)malloc(info_data_size);
             if (!info_buf) goto upload_cleanup;
-            if (hl_conn_read_full(conn, info_buf, info_data_size) < 0) {
+            if (UPLOAD_READ_FULL(info_buf, info_data_size) < 0) {
                 free(info_buf);
                 hl_log_error(srv->logger, "Upload: failed to read INFO fork data");
                 goto upload_cleanup;
@@ -1403,7 +1686,7 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
 
         /* Step 4: Read DATA fork header (16 bytes) to get file size */
         uint8_t data_hdr[HL_FORK_HEADER_SIZE];
-        if (hl_conn_read_full(conn, data_hdr, HL_FORK_HEADER_SIZE) < 0) {
+        if (UPLOAD_READ_FULL(data_hdr, HL_FORK_HEADER_SIZE) < 0) {
             hl_log_error(srv->logger, "Upload: failed to read DATA fork header");
             goto upload_cleanup;
         }
@@ -1428,10 +1711,16 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
 
         while (remaining > 0) {
             size_t chunk = remaining < sizeof(fbuf) ? remaining : sizeof(fbuf);
-            ssize_t r = hl_conn_read(conn, fbuf, chunk);
+            ssize_t r;
+            if (use_aead_reader) {
+                r = hl_aead_reader_read(&aead_reader, fbuf, chunk);
+            } else {
+                r = hl_conn_read(conn, fbuf, chunk);
+            }
             if (r < 0) {
-                if (errno == EINTR) continue;
-                hl_log_error(srv->logger, "Upload: read error: %s", strerror(errno));
+                if (!use_aead_reader && errno == EINTR) continue;
+                hl_log_error(srv->logger, "Upload: read error%s",
+                            use_aead_reader ? " (AEAD)" : "");
                 write_error = 1;
                 break;
             }
@@ -1448,6 +1737,8 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
             remaining -= (uint32_t)r;
             total_received += (size_t)r;
         }
+
+        #undef UPLOAD_READ_FULL
         close(out_fd);
 
         if (write_error) {
@@ -1480,6 +1771,7 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
         }
 
 upload_cleanup:
+        if (use_aead_reader) hl_aead_reader_free(&aead_reader);
         srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
                                          hdr.reference_number);
         hl_conn_close(conn);
