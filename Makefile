@@ -112,6 +112,7 @@ HOTLINE_COMMON_SRCS = \
 	src/hotline/tracker.c \
 	src/hotline/password.c \
 	src/hotline/hope.c \
+	src/hotline/chacha20poly1305.c \
 	src/hotline/http_client.c
 
 # Combined C sources: common + platform
@@ -214,6 +215,16 @@ test-mnemosyne: test/test_mnemosyne.o $(HOTLINE_C_OBJS) $(MOBIUS_OBJS)
 test-threaded-news: test/test_threaded_news.o $(HOTLINE_C_OBJS) $(MOBIUS_OBJS)
 	$(CC) $(CFLAGS) -o test_threaded_news $^ $(LDFLAGS) $(YAML_LDFLAGS)
 	./test_threaded_news
+
+# ChaCha20-Poly1305 AEAD tests
+test-chacha20: test/test_chacha20poly1305.o src/hotline/chacha20poly1305.o
+	$(CC) $(CFLAGS) -o test_chacha20poly1305 $^
+	./test_chacha20poly1305
+
+# HOPE AEAD unit tests (HMAC-SHA256, HKDF, nonce, frame scan, key derivation)
+test-hope-aead: test/test_hope_aead.o $(HOTLINE_C_OBJS) $(MOBIUS_OBJS)
+	$(CC) $(CFLAGS) -o test_hope_aead $^ $(LDFLAGS) $(YAML_LDFLAGS)
+	./test_hope_aead
 
 # Mnemosyne live integration tests (requires MSV_API_KEY env var)
 test-mnemosyne-live: test/test_mnemosyne_live.o $(HOTLINE_C_OBJS) $(MOBIUS_OBJS)

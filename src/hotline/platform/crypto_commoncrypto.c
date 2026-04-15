@@ -1,7 +1,7 @@
 /*
  * crypto_commoncrypto.c - macOS crypto backend using CommonCrypto
  *
- * Implements platform_crypto.h API for SHA-1 and MD5 hashing.
+ * Implements platform_crypto.h API for SHA-1, SHA-256, and MD5 hashing.
  * This file is only compiled on macOS (Darwin).
  */
 
@@ -40,6 +40,39 @@ void hl_sha1(const void *data, size_t len, uint8_t out[HL_SHA1_DIGEST_LENGTH])
     CC_SHA1_Init(&ctx);
     CC_SHA1_Update(&ctx, data, (CC_LONG)len);
     CC_SHA1_Final(out, &ctx);
+}
+
+/* --- SHA-256 --- */
+
+struct hl_sha256_ctx {
+    CC_SHA256_CTX cc;
+};
+
+hl_sha256_ctx_t *hl_sha256_init(void)
+{
+    hl_sha256_ctx_t *ctx = malloc(sizeof(*ctx));
+    if (!ctx) return NULL;
+    CC_SHA256_Init(&ctx->cc);
+    return ctx;
+}
+
+void hl_sha256_update(hl_sha256_ctx_t *ctx, const void *data, size_t len)
+{
+    CC_SHA256_Update(&ctx->cc, data, (CC_LONG)len);
+}
+
+void hl_sha256_final(hl_sha256_ctx_t *ctx, uint8_t out[HL_SHA256_DIGEST_LENGTH])
+{
+    CC_SHA256_Final(out, &ctx->cc);
+    free(ctx);
+}
+
+void hl_sha256(const void *data, size_t len, uint8_t out[HL_SHA256_DIGEST_LENGTH])
+{
+    CC_SHA256_CTX ctx;
+    CC_SHA256_Init(&ctx);
+    CC_SHA256_Update(&ctx, data, (CC_LONG)len);
+    CC_SHA256_Final(out, &ctx);
 }
 
 /* --- MD5 --- */
