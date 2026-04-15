@@ -38,6 +38,8 @@ typedef struct {
     int  hope_legacy_mode;                       /* HOPELegacyMode: allow INVERSE + bare MD5/SHA1 */
     char hope_required_prefix[32];               /* HOPERequiredPrefix: name prefix for E2E-only content */
     int  e2e_require_tls;                        /* E2ERequireTLS: require TLS for E2E file transfers */
+    char hope_cipher_policy[16];                 /* HOPECipherPolicy: prefer-aead|require-aead|rc4-only */
+    int  e2e_require_aead;                       /* E2ERequireAEAD: require AEAD for E2E content access */
     char tls_cert_path[HL_CONFIG_PATH_MAX];      /* TLSCertFile: path to PEM certificate  */
     char tls_key_path[HL_CONFIG_PATH_MAX];       /* TLSKeyFile: path to PEM private key   */
     int  tls_port;                                /* TLSPort: TLS base port (0 = disabled) */

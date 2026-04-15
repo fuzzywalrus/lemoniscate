@@ -82,6 +82,8 @@
     NSButton *_hopeLegacyCheckbox;
     NSTextField *_hopePrefixField;
     NSButton *_hopeRequireTLSCheckbox;
+    NSPopUpButton *_hopeCipherPolicyPopup;
+    NSButton *_hopeRequireAEADCheckbox;
 
     /* TLS Encryption section */
     NSTextField *_tlsCertField;
@@ -159,6 +161,7 @@
     NSButton *_accountDeleteButton;
     NSButton *_accountSaveButton;
     NSMutableSet *_accountAccessKeys;
+    NSButton *_acctRequireEncryptionCheckbox;
     NSString *_selectedAccountLogin;
     NSString *_selectedAccountPassword;
 
@@ -266,6 +269,9 @@
     NSTextField *_wizardMaxDLPerClientField;
     NSTextField *_wizardMaxConnPerIPField;
     NSTextView *_wizardSummaryTextView;
+    NSButton *_wizardHopeCheckbox;
+    NSTextField *_wizardE2EPrefixField;
+    NSButton *_wizardRequireEncryptionCheckbox;
     int _wizardStepIndex;
     BOOL _wizardPresented;
 

@@ -163,7 +163,7 @@
             initWithFrame:NSMakeRect(16, 368, 628, 16)];
         [_wizardProgress setIndeterminate:NO];
         [_wizardProgress setMinValue:0.0];
-        [_wizardProgress setMaxValue:4.0];
+        [_wizardProgress setMaxValue:5.0];
         [_wizardProgress setDoubleValue:1.0];
         [content addSubview:_wizardProgress];
 
@@ -218,6 +218,19 @@
         [_wizardSummaryTextView setEditable:NO];
         [_wizardSummaryTextView setSelectable:YES];
         [_wizardSummaryTextView setFont:[NSFont userFixedPitchFontOfSize:11.0]];
+
+        _wizardHopeCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_wizardHopeCheckbox setButtonType:NSButtonTypeSwitch];
+        [_wizardHopeCheckbox setTitle:@"Enable encryption (recommended)"];
+        [_wizardHopeCheckbox setState:NSControlStateValueOn];
+
+        _wizardE2EPrefixField = makeEditField(120);
+        [_wizardE2EPrefixField setStringValue:@"[E2E]"];
+
+        _wizardRequireEncryptionCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_wizardRequireEncryptionCheckbox setButtonType:NSButtonTypeSwitch];
+        [_wizardRequireEncryptionCheckbox setTitle:@"Require encryption for admin account file transfers"];
+        [_wizardRequireEncryptionCheckbox setState:NSControlStateValueOff];
     }
 
     [_wizardNameField setStringValue:
@@ -263,7 +276,7 @@
 {
     (void)sender;
     if (![self validateWizardStep:YES]) return;
-    if (_wizardStepIndex >= 3) return;
+    if (_wizardStepIndex >= 4) return;
     _wizardStepIndex++;
     [self rebuildWizardStepUI];
 }
@@ -308,19 +321,20 @@
 
     [_wizardProgress setDoubleValue:(double)(_wizardStepIndex + 1)];
     [_wizardBackButton setEnabled:(_wizardStepIndex > 0)];
-    [_wizardNextButton setHidden:(_wizardStepIndex >= 3)];
-    [_wizardFinishButton setHidden:(_wizardStepIndex < 3)];
-    [_wizardFinishStartButton setHidden:(_wizardStepIndex < 3)];
+    [_wizardNextButton setHidden:(_wizardStepIndex >= 4)];
+    [_wizardFinishButton setHidden:(_wizardStepIndex < 4)];
+    [_wizardFinishStartButton setHidden:(_wizardStepIndex < 4)];
 
     NSString *title = @"";
     switch (_wizardStepIndex) {
         case 0: title = @"Identity & Network"; break;
         case 1: title = @"Paths & Registration"; break;
         case 2: title = @"Limits & File Behavior"; break;
+        case 3: title = @"Encryption"; break;
         default: title = @"Summary"; break;
     }
     [_wizardStepLabel setStringValue:
-        [NSString stringWithFormat:@"Step %d of 4: %@", _wizardStepIndex + 1, title]];
+        [NSString stringWithFormat:@"Step %d of 5: %@", _wizardStepIndex + 1, title]];
 
     if (_wizardStepIndex == 0) {
         NSTextField *intro = makeLabel(
@@ -440,7 +454,56 @@
         [hint setFrame:NSMakeRect(126, 98, 240, 16)];
         [_wizardStepContainer addSubview:hint];
         [hint release];
+    } else if (_wizardStepIndex == 3) {
+        /* ===== Encryption step ===== */
+        NSTextField *heading = makeLabel(@"End-to-End Encryption", 14.0, YES);
+        [heading setFrame:NSMakeRect(10, 262, 560, 20)];
+        [_wizardStepContainer addSubview:heading];
+        [heading release];
+
+        NSTextField *body = makeLabel(
+            @"Lemoniscate can encrypt all communication between clients and this "
+            @"server, including chat messages, file listings, and file transfers.\n\n"
+            @"When encryption is enabled, modern Hotline clients like Navigator will "
+            @"automatically negotiate a secure connection. Older clients that don't "
+            @"support encryption can still connect \u2014 they just won't be able to "
+            @"see content in encrypted-only areas.",
+            11.0, NO);
+        [body setFrame:NSMakeRect(10, 162, 600, 92)];
+        [_wizardStepContainer addSubview:body];
+        [body release];
+
+        [_wizardHopeCheckbox setFrame:NSMakeRect(10, 134, 400, 18)];
+        [_wizardStepContainer addSubview:_wizardHopeCheckbox];
+
+        NSTextField *prefixLabel = makeLabel(@"Encrypted-Only Prefix:", 11.0, NO);
+        [prefixLabel setAlignment:NSTextAlignmentRight];
+        [prefixLabel setFrame:NSMakeRect(10, 104, 150, 20)];
+        [_wizardStepContainer addSubview:prefixLabel];
+        [prefixLabel release];
+        [_wizardE2EPrefixField setFrame:NSMakeRect(166, 102, 120, 22)];
+        [_wizardStepContainer addSubview:_wizardE2EPrefixField];
+
+        NSTextField *prefixHint = makeLabel(
+            @"Folders starting with this prefix are only visible to encrypted clients.",
+            10.0, NO);
+        [prefixHint setTextColor:[NSColor grayColor]];
+        [prefixHint setFrame:NSMakeRect(166, 82, 440, 16)];
+        [_wizardStepContainer addSubview:prefixHint];
+        [prefixHint release];
+
+        [_wizardRequireEncryptionCheckbox setFrame:NSMakeRect(10, 56, 500, 18)];
+        [_wizardStepContainer addSubview:_wizardRequireEncryptionCheckbox];
+
+        NSTextField *tlsNote = makeLabel(
+            @"TLS encryption for Hotline 1.9+ clients can be configured in Settings at any time.",
+            10.0, NO);
+        [tlsNote setTextColor:[NSColor grayColor]];
+        [tlsNote setFrame:NSMakeRect(10, 20, 600, 16)];
+        [_wizardStepContainer addSubview:tlsNote];
+        [tlsNote release];
     } else {
+        /* ===== Summary step ===== */
         NSString *summary = [NSString stringWithFormat:
             @"Name: %@\n"
             @"Description: %@\n"
@@ -452,7 +515,10 @@
             @"Preserve Resource Forks: %@\n"
             @"Max Downloads: %d\n"
             @"Max DL/Client: %d\n"
-            @"Max Conn/IP: %d\n\n"
+            @"Max Conn/IP: %d\n"
+            @"Encryption: %@\n"
+            @"E2E Prefix: %@\n"
+            @"Admin Requires Encryption: %@\n\n"
             @"Click Finish to save and close the wizard,\n"
             @"or Finish and Start to save and launch the server.",
             [_wizardNameField stringValue],
@@ -465,7 +531,10 @@
             ([_wizardPreserveForkCheckbox state] == NSControlStateValueOn ? @"Enabled" : @"Disabled"),
             [_wizardMaxDownloadsField intValue],
             [_wizardMaxDLPerClientField intValue],
-            [_wizardMaxConnPerIPField intValue]];
+            [_wizardMaxConnPerIPField intValue],
+            ([_wizardHopeCheckbox state] == NSControlStateValueOn ? @"Enabled" : @"Disabled"),
+            [_wizardE2EPrefixField stringValue],
+            ([_wizardRequireEncryptionCheckbox state] == NSControlStateValueOn ? @"Yes" : @"No")];
         [_wizardSummaryTextView setString:summary];
 
         NSScrollView *sv = [[NSScrollView alloc]
@@ -546,10 +615,32 @@
         [_maxConnPerIPField setIntValue:[_wizardMaxConnPerIPField intValue]];
     }
 
+    /* Encryption settings from wizard */
+    if (_hopeCheckbox) [_hopeCheckbox setState:[_wizardHopeCheckbox state]];
+    if (_hopePrefixField) [_hopePrefixField setStringValue:[_wizardE2EPrefixField stringValue]];
+
     [self saveSettings:nil];
     [self ensureConfigScaffolding];
     [self writeConfigToDisk];
     [self updateServerUI];
+
+    /* Set require_encryption on admin account if wizard checkbox is on */
+    if (_wizardRequireEncryptionCheckbox &&
+        [_wizardRequireEncryptionCheckbox state] == NSControlStateValueOn) {
+        NSString *usersDir = [_configDir stringByAppendingPathComponent:@"Users"];
+        NSString *adminPath = [usersDir stringByAppendingPathComponent:@"admin.yaml"];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        if ([fm fileExistsAtPath:adminPath]) {
+            NSString *yaml = [NSString stringWithContentsOfFile:adminPath
+                                                       encoding:NSUTF8StringEncoding
+                                                          error:nil];
+            if (yaml && [yaml rangeOfString:@"RequireEncryption"].location == NSNotFound) {
+                NSString *updated = [yaml stringByAppendingString:@"RequireEncryption: true\n"];
+                [updated writeToFile:adminPath atomically:YES
+                            encoding:NSUTF8StringEncoding error:nil];
+            }
+        }
+    }
 
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
     [d setBool:YES forKey:@"setupWizardCompleted"];

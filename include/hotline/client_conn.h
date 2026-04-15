@@ -31,6 +31,7 @@ typedef struct {
     char               password[128];   /* bcrypt hash */
     hl_access_bitmap_t access;
     char               file_root[1024]; /* Optional per-account file root */
+    int                require_encryption; /* Require HOPE encryption for file transfers */
 } hl_account_t;
 
 /* AccountManager vtable */

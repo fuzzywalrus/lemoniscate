@@ -50,6 +50,7 @@
     NSString *name = login ? login : @"";
     NSString *password = @"";
     NSString *fileRoot = @"";
+    BOOL requireEncryption = NO;
     NSString *usersDir = [_configDir stringByAppendingPathComponent:@"Users"];
     NSString *path = [usersDir stringByAppendingPathComponent:
         [NSString stringWithFormat:@"%@.yaml", login ? login : @""]];
@@ -103,6 +104,8 @@
                 password = val;
             } else if ([key isEqualToString:@"FileRoot"]) {
                 fileRoot = val;
+            } else if ([key isEqualToString:@"RequireEncryption"]) {
+                requireEncryption = ([val isEqualToString:@"true"] || [val isEqualToString:@"1"]);
             }
         }
     }
@@ -114,6 +117,7 @@
         password, @"password",
         fileRoot, @"fileRoot",
         access, @"access",
+        [NSNumber numberWithBool:requireEncryption], @"requireEncryption",
         nil];
 }
 
@@ -260,6 +264,9 @@
     [_accountFileRootField setStringValue:(fileRoot ? fileRoot : @"")];
     [_accountDeleteButton setEnabled:YES];
 
+    NSNumber *reqEnc = [acct objectForKey:@"requireEncryption"];
+    [_acctRequireEncryptionCheckbox setState:(reqEnc && [reqEnc boolValue]) ? NSControlStateValueOn : NSControlStateValueOff];
+
     [_accountAccessKeys removeAllObjects];
     if (access) [_accountAccessKeys unionSet:access];
     [self updateAccountTemplateFromAccessKeys];
@@ -279,6 +286,7 @@
     [_accountNameField setStringValue:@""];
     [_accountFileRootField setStringValue:@""];
     [_accountDeleteButton setEnabled:NO];
+    [_acctRequireEncryptionCheckbox setState:NSControlStateValueOff];
 
     [_accountAccessKeys removeAllObjects];
     [_accountAccessKeys unionSet:[self guestAccessTemplate]];
