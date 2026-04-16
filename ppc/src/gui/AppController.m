@@ -122,6 +122,59 @@ static NSButton *makeButton(NSString *title, id target, SEL action)
     return btn;
 }
 
+static NSSize helpButtonSize(void)
+{
+    static BOOL cached = NO;
+    static NSSize size = { 24.0f, 24.0f };
+
+    if (!cached) {
+        NSButton *btn = [[NSButton alloc]
+            initWithFrame:NSMakeRect(0, 0, 24, 24)];
+        [btn setBezelStyle:NSBezelStyleHelpButton];
+        [btn setTitle:@""];
+        [btn sizeToFit];
+        size = [btn frame].size;
+        if (size.width < 24.0f) size.width = 24.0f;
+        if (size.height < 24.0f) size.height = 24.0f;
+        [btn release];
+        cached = YES;
+    }
+
+    return size;
+}
+
+static NSButton *makeHelpButton(NSString *helpText, id target)
+{
+    NSSize size = helpButtonSize();
+    NSButton *btn = [[NSButton alloc]
+        initWithFrame:NSMakeRect(0, 0, size.width, size.height)];
+    [btn setBezelStyle:NSBezelStyleHelpButton];
+    [btn setTitle:@""];
+    [btn setToolTip:helpText];
+    [btn setTarget:target];
+    [btn setAction:@selector(showHelpPopover:)];
+    [btn sizeToFit];
+
+    NSRect f = [btn frame];
+    if (f.size.width < size.width) f.size.width = size.width;
+    if (f.size.height < size.height) f.size.height = size.height;
+    [btn setFrame:f];
+    return btn;
+}
+
+static void addRightAlignedHelpButton(NSView *parent, float rowY,
+                                      float rowHeight, NSString *helpText,
+                                      id target)
+{
+    NSButton *btn = makeHelpButton(helpText, target);
+    NSRect bf = [btn frame];
+    bf.origin.x = [parent frame].size.width - bf.size.width - ROW_RIGHT_PAD;
+    bf.origin.y = rowY + ((rowHeight - bf.size.height) / 2.0f);
+    [btn setFrame:bf];
+    [parent addSubview:btn];
+    [btn release];
+}
+
 /* Add a right-aligned label + text field row inside an NSBox content view.
  * Returns next y position. */
 static float addRow(NSView *parent, NSString *labelText,
@@ -191,19 +244,15 @@ static float addCheckboxWithHelp(NSView *parent, NSButton *checkbox,
     [checkbox setFrame:NSMakeRect(LABEL_WIDTH - 4, y, cbW, 18)];
     [parent addSubview:checkbox];
 
-    float rightX = [parent frame].size.width - 21 - ROW_RIGHT_PAD;
-    NSButton *btn = [[NSButton alloc]
-        initWithFrame:NSMakeRect(rightX, y - 2, 21, 21)];
-    [btn setBezelStyle:NSBezelStyleHelpButton];
-    [btn setTitle:@""];
-    [btn setToolTip:helpText];
-    [btn setTarget:target];
-    [btn setAction:@selector(showHelpPopover:)];
-    /* setAccessibilityLabel: is 10.10+ — skip on Tiger */
-    [parent addSubview:btn];
-    [btn release];
+    addRightAlignedHelpButton(parent, y, 18.0f, helpText, target);
 
-    return y + 24;
+    {
+        float nextY = y + 24.0f;
+        NSSize helpSize = helpButtonSize();
+        if (nextY < y + helpSize.height + 3.0f)
+            nextY = y + helpSize.height + 3.0f;
+        return nextY;
+    }
 }
 
 

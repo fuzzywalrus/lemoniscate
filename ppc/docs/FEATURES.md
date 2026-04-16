@@ -75,10 +75,11 @@
 ## Security
 
 - HOPE challenge-response authentication (no plaintext passwords on the wire)
-- HOPE RC4 transport encryption for chat, commands, and file listings
+- HOPE AEAD transport encryption for chat, commands, file listings, and file transfers on modern clients
+- Legacy RC4-only HOPE fallback for older clients
 - TLS/SSL encryption on a dedicated port (default 5600)
 - E2E content gating — files with a configurable prefix hidden from non-encrypted clients
-- Optional TLS requirement for E2E file transfers
+- Optional AEAD or TLS requirement for E2E content
 - Self-signed TLS certificate generation from the GUI
 - Legacy mode for backwards compatibility with older HOPE clients
 

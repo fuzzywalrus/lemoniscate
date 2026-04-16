@@ -1,7 +1,5 @@
 /*
  * client_conn.h - Per-client connection state
- *
- * Maps to: hotline/client_conn.go
  */
 
 #ifndef HOTLINE_CLIENT_CONN_H
@@ -13,10 +11,10 @@
 #include "hotline/transaction.h"
 #include "hotline/logger.h"
 #include <pthread.h>
-#include <openssl/rc4.h>
 
 /* Forward declarations */
 struct hl_server;
+struct hl_hope_state;
 struct hl_tls_conn;
 
 /* Ensure hl_client_conn_t typedef exists (may already be forward-declared
@@ -26,16 +24,17 @@ struct hl_tls_conn;
 typedef struct hl_client_conn hl_client_conn_t;
 #endif
 
-/* Account info — maps to Go Account struct (subset needed for auth) */
+/* Account info (subset needed for auth) */
 typedef struct {
     char               login[128];
     char               name[128];
     char               password[128];   /* bcrypt hash */
     hl_access_bitmap_t access;
     char               file_root[1024]; /* Optional per-account file root */
+    int                require_encryption; /* Require HOPE encryption for file transfers */
 } hl_account_t;
 
-/* AccountManager vtable — maps to Go AccountManager interface */
+/* AccountManager vtable */
 typedef struct hl_account_mgr hl_account_mgr_t;
 typedef struct {
     hl_account_t *(*get)(hl_account_mgr_t *self, const char *login);
@@ -49,7 +48,7 @@ struct hl_account_mgr {
     const hl_account_mgr_vtable_t *vt;
 };
 
-/* BanMgr vtable — maps to Go BanMgr interface */
+/* BanMgr vtable */
 typedef struct hl_ban_mgr hl_ban_mgr_t;
 typedef struct {
     int (*is_banned)(hl_ban_mgr_t *self, const char *ip);
@@ -64,7 +63,6 @@ struct hl_ban_mgr {
 
 /*
  * hl_client_conn_t - Per-connection state
- * Maps to: Go ClientConn struct
  *
  * This struct is referenced by client_manager.h via forward declaration.
  * The 'id' field MUST be the first meaningful field after the fd for
@@ -92,28 +90,18 @@ struct hl_client_conn {
 
     hl_logger_t        *logger;          /* Go: Logger *slog.Logger */
 
-    /* HOPE state — set during login if HOPE handshake succeeds.
-     * When hope_active=0, all fields below are unused. Safe to remove
-     * this block if HOPE support is dropped. */
-    int                 hope_active;     /* 1 if HOPE auth was used */
-    int                 hope_mac_algo;   /* Negotiated MAC algorithm ID */
-    uint8_t             hope_session_key[64]; /* 64-byte session key */
-    int                 hope_encrypted;  /* 1 if transport encryption active */
-    RC4_KEY             hope_rc4_encode; /* Outbound cipher state */
-    RC4_KEY             hope_rc4_decode; /* Inbound cipher state */
-
-    int                 large_file_mode; /* 1 = 64-bit file sizes (default on) */
-
     /* Read buffer for transaction scanning */
     uint8_t             read_buf[65536];
     size_t              read_buf_len;
+
+    struct hl_hope_state *hope;          /* HOPE state (NULL for non-HOPE clients) */
+    int                 large_file_mode; /* 1 = 64-bit file sizes negotiated */
 
     pthread_rwlock_t    mu;              /* Go: mu sync.RWMutex */
 };
 
 /*
  * hl_client_conn_new - Allocate and initialize a client connection.
- * Maps to: Go code in handleNewConnection that builds ClientConn
  */
 hl_client_conn_t *hl_client_conn_new(int fd, const char *remote_addr,
                                      struct hl_server *server);
@@ -123,13 +111,11 @@ void hl_client_conn_free(hl_client_conn_t *cc);
 
 /*
  * hl_client_conn_authorize - Check if client has a specific permission.
- * Maps to: Go ClientConn.Authorize()
  */
 int hl_client_conn_authorize(const hl_client_conn_t *cc, int access_bit);
 
 /*
  * hl_client_conn_new_reply - Create a reply transaction.
- * Maps to: Go ClientConn.NewReply()
  * Caller must hl_transaction_free() the result.
  */
 int hl_client_conn_new_reply(hl_client_conn_t *cc, const hl_transaction_t *request,
@@ -138,7 +124,6 @@ int hl_client_conn_new_reply(hl_client_conn_t *cc, const hl_transaction_t *reque
 
 /*
  * hl_client_conn_new_err_reply - Create an error reply.
- * Maps to: Go ClientConn.NewErrReply()
  */
 int hl_client_conn_new_err_reply(hl_client_conn_t *cc, const hl_transaction_t *request,
                                  hl_transaction_t *reply, const char *err_msg);
