@@ -220,22 +220,15 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 - (void)showHelpPopover:(id)sender
 {
     NSButton *btn = (NSButton *)sender;
-    NSString *text = [btn accessibilityLabel];
+    NSString *text = [btn toolTip];
     if (!text || [text length] == 0) return;
 
-    /* Build a text field to display in the popover */
-    NSTextField *label = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 240, 20)];
-    [label setStringValue:text];
-    [label setBezeled:NO];
     /* Tiger compat: use an alert panel instead of NSPopover (10.7+) */
-    (void)label;
     NSAlert *helpAlert = [[[NSAlert alloc] init] autorelease];
-    [helpAlert setMessageText:[btn toolTip] ? [btn toolTip] : @"Help"];
-    [helpAlert setInformativeText:[label stringValue]];
+    [helpAlert setMessageText:@"Help"];
+    [helpAlert setInformativeText:text];
     [helpAlert setAlertStyle:NSAlertStyleInformational];
     [helpAlert runModal];
-
-    [label release];
 }
 
 /* ===== Left panel: Settings ===== */
@@ -358,7 +351,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         FlippedView *c = [[FlippedView alloc]
             initWithFrame:NSMakeRect(0, 0, contentWidth, 250)];
-        float iy = 0;
+        float iy = 4;
 
         _serverNameField = makeEditField(fieldWidth);
         [_serverNameField setStringValue:_serverName];
@@ -451,7 +444,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         FlippedView *c = [[FlippedView alloc]
             initWithFrame:NSMakeRect(0, 0, contentWidth, 100)];
-        float iy = 0;
+        float iy = 4;
 
         _portField = makeEditField(70);
         [_portField setStringValue:[NSString stringWithFormat:@"%d", _serverPort]];
@@ -480,7 +473,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         FlippedView *c = [[FlippedView alloc]
             initWithFrame:NSMakeRect(0, 0, contentWidth, 200)];
-        float iy = 0;
+        float iy = 4;
         float listX = LABEL_WIDTH - 4;
         float listW = fieldWidth - ROW_RIGHT_PAD - 12;
         float entryW = listW - 158;
@@ -541,7 +534,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         FlippedView *c = [[FlippedView alloc]
             initWithFrame:NSMakeRect(0, 0, contentWidth, 200)];
-        float iy = 0;
+        float iy = 4;
         float listX = LABEL_WIDTH - 4;
         float listW = fieldWidth - ROW_RIGHT_PAD - 12;
         float entryW = listW - 158;
@@ -602,7 +595,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         FlippedView *c = [[FlippedView alloc]
             initWithFrame:NSMakeRect(0, 0, contentWidth, 100)];
-        float iy = 0;
+        float iy = 4;
 
         _newsDateFormatPopup = [[NSPopUpButton alloc]
             initWithFrame:NSMakeRect(0, 0, 220, 24) pullsDown:NO];
@@ -642,14 +635,14 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         FlippedView *c = [[FlippedView alloc]
             initWithFrame:NSMakeRect(0, 0, contentWidth, 250)];
-        float iy = 0;
+        float iy = 4;
 
         _hopeCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
         [_hopeCheckbox setButtonType:NSButtonTypeSwitch];
         [_hopeCheckbox setTitle:@"Enable HOPE Encryption"];
         [_hopeCheckbox setState:NSControlStateValueOff];
         iy = addCheckboxWithHelp(c, _hopeCheckbox, iy,
-            @"HOPE replaces plaintext password login with a challenge-response MAC handshake. After authentication, the transaction channel (chat, commands, file listings) is encrypted with RC4 stream cipher. File transfers use a separate connection and are NOT encrypted by HOPE alone.", self);
+            @"HOPE replaces plaintext password login with a challenge-response MAC handshake. After authentication, Lemoniscate encrypts the transaction channel. Modern HOPE clients usually negotiate ChaCha20-Poly1305 AEAD, which also encrypts file transfers. Older RC4-only HOPE clients still encrypt chat, commands, and file listings, but file transfers remain unencrypted unless the client also connects over TLS.", self);
 
         _hopeLegacyCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
         [_hopeLegacyCheckbox setButtonType:NSButtonTypeSwitch];
@@ -662,26 +655,41 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_hopePrefixField setStringValue:@"[E2E]"];
         [_hopePrefixField setToolTip:@"File/folder name prefix that marks content as E2E-only"];
         iy = addRow(c, @"E2E Prefix:", _hopePrefixField, iy, 120);
-        /* Place (?) inline after the field */
-        {
-            NSButton *hb = [[NSButton alloc]
-                initWithFrame:NSMakeRect([c frame].size.width - 21 - ROW_RIGHT_PAD, iy - ROW_HEIGHT + 2, 21, 21)];
-            [hb setBezelStyle:NSBezelStyleHelpButton];
-            [hb setTitle:@""];
-            [hb setToolTip:@"Any file or folder whose name begins with this prefix will be hidden from clients that have not established an encrypted HOPE session. Use this to gate sensitive content behind encryption."];
-            [hb setTarget:self];
-            [hb setAction:@selector(showHelpPopover:)];
-            /* setAccessibilityLabel: is 10.10+ — skip on Tiger */
-            [c addSubview:hb];
-            [hb release];
-        }
+        addRightAlignedHelpButton(c, iy - ROW_HEIGHT, 22.0f,
+            @"Any file or folder whose name begins with this prefix will be hidden from clients that have not established an encrypted HOPE session. Use this to gate sensitive content behind encryption.",
+            self);
 
         _hopeRequireTLSCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
         [_hopeRequireTLSCheckbox setButtonType:NSButtonTypeSwitch];
-        [_hopeRequireTLSCheckbox setTitle:@"Require TLS for E2E file transfers"];
+        [_hopeRequireTLSCheckbox setTitle:@"Require TLS for E2E content"];
         [_hopeRequireTLSCheckbox setState:NSControlStateValueOff];
         iy = addCheckboxWithHelp(c, _hopeRequireTLSCheckbox, iy,
-            @"When enabled, clients must connect via TLS to see E2E-prefixed content. This ensures that file transfers (which use a separate TCP connection) are also encrypted, not just the HOPE transaction channel.", self);
+            @"When enabled, clients must use HOPE and also be connected over TLS to access E2E-prefixed content. This protects the separate file transfer connection even when HOPE falls back to legacy RC4.", self);
+
+        /* Cipher policy popup */
+        {
+            NSTextField *cpLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(6, iy + 3, LABEL_WIDTH - 12, 17)];
+            [cpLabel setStringValue:@"Cipher Policy:"];
+            [cpLabel setBezeled:NO]; [cpLabel setDrawsBackground:NO]; [cpLabel setEditable:NO]; [cpLabel setSelectable:NO];
+            [cpLabel setFont:[NSFont systemFontOfSize:11]];
+            [c addSubview:cpLabel]; [cpLabel release];
+            _hopeCipherPolicyPopup = [[NSPopUpButton alloc]
+                initWithFrame:NSMakeRect(LABEL_WIDTH - 4, iy, 200, 22) pullsDown:NO];
+            [_hopeCipherPolicyPopup addItemWithTitle:@"Prefer AEAD (recommended)"];
+            [_hopeCipherPolicyPopup addItemWithTitle:@"Require AEAD"];
+            [_hopeCipherPolicyPopup addItemWithTitle:@"RC4 Only"];
+            [_hopeCipherPolicyPopup selectItemAtIndex:0];
+            [_hopeCipherPolicyPopup setToolTip:@"Controls which cipher is negotiated with HOPE clients. AEAD (ChaCha20-Poly1305) provides authenticated encryption including file transfers. RC4 Only uses legacy stream encryption."];
+            [c addSubview:_hopeCipherPolicyPopup];
+            iy += ROW_HEIGHT;
+        }
+
+        _hopeRequireAEADCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_hopeRequireAEADCheckbox setButtonType:NSButtonTypeSwitch];
+        [_hopeRequireAEADCheckbox setTitle:@"Require AEAD for E2E content"];
+        [_hopeRequireAEADCheckbox setState:NSControlStateValueOff];
+        iy = addCheckboxWithHelp(c, _hopeRequireAEADCheckbox, iy,
+            @"When enabled, only clients using ChaCha20-Poly1305 AEAD HOPE can access E2E-prefixed content. This guarantees file transfers are encrypted without requiring TLS.", self);
 
         float contentH = iy;
         [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
@@ -698,7 +706,16 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         FlippedView *c = [[FlippedView alloc]
             initWithFrame:NSMakeRect(0, 0, contentWidth, 150)];
-        float iy = 0;
+        float iy = 4;
+
+        _tlsEnableCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_tlsEnableCheckbox setButtonType:NSButtonTypeSwitch];
+        [_tlsEnableCheckbox setTitle:@"Enable TLS encryption"];
+        [_tlsEnableCheckbox setState:NSControlStateValueOff];
+        [_tlsEnableCheckbox setToolTip:@"Enable TLS for Hotline 1.9+ clients. Requires a certificate and private key. On Tiger, TLS is limited to TLS 1.0 -- HOPE encryption is recommended instead."];
+        [_tlsEnableCheckbox setFrame:NSMakeRect(LABEL_WIDTH - 4, iy, 300, 18)];
+        [c addSubview:_tlsEnableCheckbox];
+        iy += ROW_HEIGHT;
 
         _tlsCertField = makeEditField(fieldWidth - 80);
         [_tlsCertField setToolTip:@"Path to PEM-encoded TLS certificate"];
@@ -728,18 +745,9 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
             [_generateTLSCertButton setFrame:NSMakeRect(LABEL_WIDTH - 4, iy, bf.size.width, 24)];
         }
         [c addSubview:_generateTLSCertButton];
-        {
-            NSButton *hb = [[NSButton alloc]
-                initWithFrame:NSMakeRect([c frame].size.width - 21 - ROW_RIGHT_PAD, iy, 21, 21)];
-            [hb setBezelStyle:NSBezelStyleHelpButton];
-            [hb setTitle:@""];
-            [hb setToolTip:@"Creates a self-signed RSA 2048-bit certificate valid for 10 years and saves it to your config directory. Suitable for encrypting connections but will show a certificate warning to clients that verify certificates."];
-            [hb setTarget:self];
-            [hb setAction:@selector(showHelpPopover:)];
-            /* setAccessibilityLabel: is 10.10+ — skip on Tiger */
-            [c addSubview:hb];
-            [hb release];
-        }
+        addRightAlignedHelpButton(c, iy, 24.0f,
+            @"Creates a self-signed RSA 2048-bit certificate valid for 10 years and saves it to your config directory. Suitable for encrypting connections but will show a certificate warning to clients that verify certificates.",
+            self);
         iy += ROW_HEIGHT;
 
         _tlsStatusLabel = [[NSTextField alloc] initWithFrame:
@@ -769,7 +777,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         FlippedView *c = [[FlippedView alloc]
             initWithFrame:NSMakeRect(0, 0, contentWidth, 200)];
-        float iy = 0;
+        float iy = 4;
 
         _mnemosyneEnableCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
         [_mnemosyneEnableCheckbox setButtonType:NSButtonTypeSwitch];
@@ -876,7 +884,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         FlippedView *c = [[FlippedView alloc]
             initWithFrame:NSMakeRect(0, 0, contentWidth, 120)];
-        float iy = 0;
+        float iy = 4;
 
         _maxDownloadsField = makeEditField(60);
         [_maxDownloadsField setIntValue:0];
@@ -892,19 +900,9 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_maxConnPerIPField setIntValue:0];
         [_maxConnPerIPField setToolTip:@"Maximum concurrent connections from a single IP"];
         iy = addRow(c, @"Max Conn/IP:", _maxConnPerIPField, iy, 60);
-        /* Place (?) inline after the last field */
-        {
-            NSButton *hb = [[NSButton alloc]
-                initWithFrame:NSMakeRect([c frame].size.width - 21 - ROW_RIGHT_PAD, iy - ROW_HEIGHT + 2, 21, 21)];
-            [hb setBezelStyle:NSBezelStyleHelpButton];
-            [hb setTitle:@""];
-            [hb setToolTip:@"Set any limit to 0 to disable it (unlimited). These limits help prevent resource exhaustion from excessive simultaneous transfers or connections."];
-            [hb setTarget:self];
-            [hb setAction:@selector(showHelpPopover:)];
-            /* setAccessibilityLabel: is 10.10+ — skip on Tiger */
-            [c addSubview:hb];
-            [hb release];
-        }
+        addRightAlignedHelpButton(c, iy - ROW_HEIGHT, 22.0f,
+            @"Set any limit to 0 to disable it (unlimited). These limits help prevent resource exhaustion from excessive simultaneous transfers or connections.",
+            self);
 
         float contentH = iy;
         [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
@@ -921,7 +919,7 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         FlippedView *c = [[FlippedView alloc]
             initWithFrame:NSMakeRect(0, 0, contentWidth, 60)];
-        float iy = 0;
+        float iy = 4;
 
         NSTextField *lbl = makeLabel(@"Polling Rate:", 11.0, NO);
         [lbl setAlignment:NSTextAlignmentRight];
@@ -949,19 +947,9 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         int idx = [self pollingIntervalToIndex:_pollingInterval];
         [_pollingRatePopup selectItemAtIndex:idx];
 
-        /* Place (?) inline after the popup */
-        {
-            NSButton *hb = [[NSButton alloc]
-                initWithFrame:NSMakeRect([c frame].size.width - 21 - ROW_RIGHT_PAD, iy - ROW_HEIGHT + 2, 21, 21)];
-            [hb setBezelStyle:NSBezelStyleHelpButton];
-            [hb setTitle:@""];
-            [hb setToolTip:@"Controls how frequently the GUI polls the server process for online users, transfer statistics, and status updates. Lower intervals give more responsive updates but use slightly more CPU."];
-            [hb setTarget:self];
-            [hb setAction:@selector(showHelpPopover:)];
-            /* setAccessibilityLabel: is 10.10+ — skip on Tiger */
-            [c addSubview:hb];
-            [hb release];
-        }
+        addRightAlignedHelpButton(c, iy - ROW_HEIGHT, 22.0f,
+            @"Controls how frequently the GUI polls the server process for online users, transfer statistics, and status updates. Lower intervals give more responsive updates but use slightly more CPU.",
+            self);
 
         float contentH = iy;
         [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
@@ -1396,14 +1384,23 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_accountPasswordStatusLabel setTextColor:[NSColor grayColor]];
     [ec addSubview:_accountPasswordStatusLabel];
 
+    _acctRequireEncryptionCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+    [_acctRequireEncryptionCheckbox setButtonType:NSButtonTypeSwitch];
+    [_acctRequireEncryptionCheckbox setTitle:@"Require Encryption for File Transfers"];
+    [_acctRequireEncryptionCheckbox setFont:[NSFont systemFontOfSize:11]];
+    [_acctRequireEncryptionCheckbox setState:NSControlStateValueOff];
+    [_acctRequireEncryptionCheckbox sizeToFit];
+    [_acctRequireEncryptionCheckbox setFrame:NSMakeRect(84, 318, 306, 18)];
+    [ec addSubview:_acctRequireEncryptionCheckbox];
+
     l = makeLabel(@"Templates and permissions map directly to YAML Access keys.", 10.0, NO);
     [l setTextColor:[NSColor grayColor]];
-    [l setFrame:NSMakeRect(84, 318, 306, 14)];
+    [l setFrame:NSMakeRect(84, 300, 306, 14)];
     [ec addSubview:l];
     [l release];
 
     _accountPermissionsScrollView = [[NSScrollView alloc]
-        initWithFrame:NSMakeRect(10, 8, 386, 304)];
+        initWithFrame:NSMakeRect(10, 8, 386, 286)];
     [_accountPermissionsScrollView setHasVerticalScroller:YES];
     [_accountPermissionsScrollView setBorderType:NSBezelBorder];
     [_accountPermissionsScrollView setAutoresizingMask:

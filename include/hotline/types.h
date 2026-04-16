@@ -169,23 +169,7 @@ static const hl_field_type_t FIELD_FOLDER_ITEM_COUNT_64 = {0x01, 0xF4}; /* 500 *
 #define HL_CAPABILITY_LARGE_FILES  0x0001
 
 
-/* --- HOPE Secure Login fields (Hotline Open Protocol Extensions) ---
- * Community-developed challenge-response auth + transport encryption.
- * See: fogWraith/Hotline HOPE-Secure-Login.md for full spec.
- * Remove this block if HOPE support is dropped. */
-static const hl_field_type_t FIELD_HOPE_APP_ID           = {0x0E, 0x01}; /* 3585 */
-static const hl_field_type_t FIELD_HOPE_APP_STRING        = {0x0E, 0x02}; /* 3586 */
-static const hl_field_type_t FIELD_HOPE_SESSION_KEY       = {0x0E, 0x03}; /* 3587 */
-static const hl_field_type_t FIELD_HOPE_MAC_ALGORITHM     = {0x0E, 0x04}; /* 3588 */
-static const hl_field_type_t FIELD_HOPE_SERVER_CIPHER     = {0x0E, 0xC1}; /* 3777 */
-static const hl_field_type_t FIELD_HOPE_CLIENT_CIPHER     = {0x0E, 0xC2}; /* 3778 */
-static const hl_field_type_t FIELD_HOPE_SERVER_CIPHER_MODE= {0x0E, 0xC3}; /* 3779 */
-static const hl_field_type_t FIELD_HOPE_CLIENT_CIPHER_MODE= {0x0E, 0xC4}; /* 3780 */
-static const hl_field_type_t FIELD_HOPE_SERVER_CIPHER_IVEC= {0x0E, 0xC5}; /* 3781 */
-static const hl_field_type_t FIELD_HOPE_CLIENT_CIPHER_IVEC= {0x0E, 0xC6}; /* 3782 */
-static const hl_field_type_t FIELD_HOPE_SERVER_COMPRESS   = {0x0E, 0xC9}; /* 3785 */
-static const hl_field_type_t FIELD_HOPE_CLIENT_COMPRESS   = {0x0E, 0xCA}; /* 3786 */
-
+/* HOPE field constants are now defined in hope.h */
 
 /* --- Well-known magic values --- */
 

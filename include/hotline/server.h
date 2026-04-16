@@ -73,21 +73,16 @@ typedef struct hl_server {
      * On Tiger, CoreFoundation handles the conversion. */
     int                 use_mac_roman;       /* 1 = MacRoman, 0 = UTF-8 */
 
-    void               *mnemosyne_sync;      /* mn_sync_t* (opaque to avoid circular include) */
+    void               *mnemosyne_sync;       /* mn_sync_t* (opaque to hotline layer) */
 
-    volatile int        shutdown;            /* Go: context cancellation */
+    volatile int        shutdown;
+    volatile int        reload_pending;      /* Set by SIGHUP handler */
+    char                config_dir[1024];    /* Config directory for reloads */
 
     int                 listen_fd;           /* Main protocol listener */
     int                 transfer_fd;         /* File transfer listener */
 
-    /* HOPE state — loaded on startup if EnableHOPE is true.
-     * Remove this block if HOPE support is dropped. */
-    uint8_t             hope_master_key[32]; /* For encrypting passwords at rest */
-    int                 hope_master_key_loaded;
-
-    /* TLS state — maps to Go TLSConfig/TLSPort in server.go.
-     * Uses SecureTransport on Tiger (TLS 1.0 max).
-     * Remove this block if TLS support is dropped. */
+    /* TLS state */
     hl_tls_server_ctx_t tls_ctx;             /* Loaded cert/key context */
     int                 tls_listen_fd;       /* TLS protocol listener (-1 = disabled) */
     int                 tls_transfer_fd;     /* TLS file transfer listener (-1 = disabled) */
