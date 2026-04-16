@@ -65,8 +65,11 @@ lemoniscate-linux-*
 mobius-hotline-server
 lemoniscate.zip
 Lemoniscate.app/
-Lemoniscate.dmg
+*.dmg
 Lemoniscate.zip
+
+# Release script intermediates (libyaml universal, per-arch app builds)
+build/
 test_mnemosyne
 test_mnemosyne_live
 test_chacha20poly1305
