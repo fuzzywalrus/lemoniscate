@@ -45,6 +45,9 @@ core.*
 .idea/
 *.iml
 
+# Environment / secrets
+.env
+
 # Claude / local AI workspace artifacts
 .claude/
 .claude/settings.local.json
