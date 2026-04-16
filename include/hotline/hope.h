@@ -17,6 +17,7 @@
 #include "hotline/client_conn.h"
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/types.h>  /* ssize_t */
 
 /* --- HOPE field type constants --- */
 
