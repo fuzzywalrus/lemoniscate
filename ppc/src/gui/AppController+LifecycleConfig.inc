@@ -303,6 +303,15 @@
     boolVal = [dict objectForKey:@"E2ERequireTLS"];
     if (boolVal && _hopeRequireTLSCheckbox)
         [_hopeRequireTLSCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
+    val = [dict objectForKey:@"HOPECipherPolicy"];
+    if (val && _hopeCipherPolicyPopup) {
+        if ([val isEqualToString:@"require-aead"]) [_hopeCipherPolicyPopup selectItemAtIndex:1];
+        else if ([val isEqualToString:@"rc4-only"]) [_hopeCipherPolicyPopup selectItemAtIndex:2];
+        else [_hopeCipherPolicyPopup selectItemAtIndex:0]; /* prefer-aead */
+    }
+    boolVal = [dict objectForKey:@"E2ERequireAEAD"];
+    if (boolVal && _hopeRequireAEADCheckbox)
+        [_hopeRequireAEADCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
 
     /* TLS (string fields loaded here; port loaded below after numVal decl) */
     val = [dict objectForKey:@"TLSCertFile"];
@@ -342,6 +351,10 @@
     numVal = [dict objectForKey:@"TLSPort"];
     if (numVal && _tlsPortField)
         [_tlsPortField setStringValue:[NSString stringWithFormat:@"%d", [numVal intValue]]];
+    if (_tlsEnableCheckbox) {
+        int tp = numVal ? [numVal intValue] : 0;
+        [_tlsEnableCheckbox setState:(tp > 0) ? NSControlStateValueOn : NSControlStateValueOff];
+    }
 
     /* Encoding popup */
     val = [dict objectForKey:@"Encoding"];
@@ -419,9 +432,13 @@
     BOOL hopeLegacy = _hopeLegacyCheckbox ? ([_hopeLegacyCheckbox state] == NSControlStateValueOn) : NO;
     NSString *hopePrefix = _hopePrefixField ? [_hopePrefixField stringValue] : @"[E2E]";
     BOOL e2eRequireTLS = _hopeRequireTLSCheckbox ? ([_hopeRequireTLSCheckbox state] == NSControlStateValueOn) : NO;
+    NSInteger cipherPolicyIdx = _hopeCipherPolicyPopup ? [_hopeCipherPolicyPopup indexOfSelectedItem] : 0;
+    NSString *cipherPolicy = (cipherPolicyIdx == 1) ? @"require-aead" : (cipherPolicyIdx == 2) ? @"rc4-only" : @"prefer-aead";
+    BOOL e2eRequireAEAD = _hopeRequireAEADCheckbox ? ([_hopeRequireAEADCheckbox state] == NSControlStateValueOn) : NO;
+    BOOL tlsEnabled = _tlsEnableCheckbox ? ([_tlsEnableCheckbox state] == NSControlStateValueOn) : NO;
     NSString *tlsCert = _tlsCertField ? [_tlsCertField stringValue] : @"";
     NSString *tlsKey = _tlsKeyField ? [_tlsKeyField stringValue] : @"";
-    int tlsPort = _tlsPortField ? [_tlsPortField intValue] : 0;
+    int tlsPort = tlsEnabled ? (_tlsPortField ? [_tlsPortField intValue] : 5600) : 0;
     int maxDownloads = _maxDownloadsField ? [_maxDownloadsField intValue] : 0;
     int maxDLPerClient = _maxDLPerClientField ? [_maxDLPerClientField intValue] : 0;
     int maxConnPerIP = _maxConnPerIPField ? [_maxConnPerIPField intValue] : 0;
@@ -460,6 +477,8 @@
     [dict setObject:[NSNumber numberWithBool:hopeLegacy] forKey:@"HOPELegacyMode"];
     [dict setObject:(hopePrefix ? hopePrefix : @"[E2E]") forKey:@"HOPERequiredPrefix"];
     [dict setObject:[NSNumber numberWithBool:e2eRequireTLS] forKey:@"E2ERequireTLS"];
+    [dict setObject:(cipherPolicy ? cipherPolicy : @"prefer-aead") forKey:@"HOPECipherPolicy"];
+    [dict setObject:[NSNumber numberWithBool:e2eRequireAEAD] forKey:@"E2ERequireAEAD"];
     [dict setObject:(tlsCert ? tlsCert : @"") forKey:@"TLSCertFile"];
     [dict setObject:(tlsKey ? tlsKey : @"") forKey:@"TLSKeyFile"];
     [dict setObject:[NSNumber numberWithInt:tlsPort] forKey:@"TLSPort"];

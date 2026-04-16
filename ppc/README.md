@@ -5,6 +5,9 @@ A native C and Objective-C implementation of the 1.9 Hotline protocol with exten
 
 ![Lemoniscate](docs/images/lemoniscate-256.png)
 
+In short, this is a **Hotline Server** build for mutliple platforms and it is completely native. It is fast. It is light. It is feature rich.
+
+
 
 ## What is this?
 
@@ -135,21 +138,6 @@ Granular per-account permissions including:
 - Hotline 1.8+ protocol (version 190)
 - CLI server binary for headless operation
 - Mobius-compatible account and news file formats
-
-## Linux & Docker Support
-
-The [`modern`](https://github.com/fuzzywalrus/lemoniscate/tree/modern) branch adds Linux support and Docker deployment. The server runs as a headless CLI binary on Linux with full protocol parity (HOPE encryption, TLS, all 43 transaction handlers).
-
-| Platform | How to run |
-|----------|------------|
-| Linux (native) | [Linux deployment guide](https://github.com/fuzzywalrus/lemoniscate/blob/modern/docs/LINUX.md) |
-| Linux (Docker) | [Docker on Linux](https://github.com/fuzzywalrus/lemoniscate/blob/modern/docs/DOCKER-LINUX.md) |
-| macOS (Docker) | [Docker on macOS](https://github.com/fuzzywalrus/lemoniscate/blob/modern/docs/DOCKER-MACOS.md) |
-| Windows (Docker) | [Docker on Windows](https://github.com/fuzzywalrus/lemoniscate/blob/modern/docs/DOCKER-WINDOWS.md) |
-
-The modern branch also includes a [configuration reference](https://github.com/fuzzywalrus/lemoniscate/blob/modern/config/config.yaml.example) with all available server options documented.
-
-> **Note:** The `main` branch targets Mac OS X 10.4 Tiger on PowerPC only. Switch to the `modern` branch for Linux, Docker, and macOS 10.11+ support.
 
 
 ## Building

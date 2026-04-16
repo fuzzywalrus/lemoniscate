@@ -35,5 +35,6 @@ struct hl_file_store {
  * Maps to: Go OSFileStore{}
  */
 hl_file_store_t *hl_os_file_store_new(void);
+void hl_file_store_free(hl_file_store_t *fs);
 
 #endif /* HOTLINE_FILE_STORE_H */

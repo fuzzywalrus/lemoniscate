@@ -76,3 +76,8 @@ hl_file_store_t *hl_os_file_store_new(void)
     fs->base.vt = &os_vtable;
     return &fs->base;
 }
+
+void hl_file_store_free(hl_file_store_t *fs)
+{
+    if (fs) free(fs);
+}

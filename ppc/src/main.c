@@ -11,7 +11,6 @@
 #include "hotline/bonjour.h"
 #include "hotline/tracker.h"
 #include "hotline/tls.h"
-#include "hotline/hope.h"
 #include "mobius/transaction_handlers.h"
 #include "mobius/config_loader.h"
 #include "mobius/config_plist.h"
@@ -310,7 +309,7 @@ int main(int argc, char **argv)
     }
 
     if (show_version) {
-        printf("lemoniscate 0.1.5\n");
+        printf("lemoniscate 0.1.6\n");
         return 0;
     }
 
@@ -352,6 +351,8 @@ int main(int argc, char **argv)
     /* Apply options */
     strncpy(srv->net_interface, interface_addr, sizeof(srv->net_interface) - 1);
     srv->port = port;
+    if (config_dir)
+        strncpy(srv->config_dir, config_dir, sizeof(srv->config_dir) - 1);
 
     if (api_addr || api_key) {
         hl_log_info(srv->logger,
@@ -481,20 +482,9 @@ int main(int argc, char **argv)
         }
     }
 
-    /* Load HOPE master key if HOPE is enabled */
     if (srv->config.enable_hope) {
-        if (hl_hope_master_key_load(config_dir, srv->hope_master_key) == 0) {
-            srv->hope_master_key_loaded = 1;
-            hl_log_info(srv->logger, "HOPE secure login enabled");
-        } else {
-            hl_log_error(srv->logger, "Failed to load HOPE master key — HOPE disabled");
-            srv->config.enable_hope = 0;
-        }
-
-        /* Create Encrypted secure zone folder if it doesn't exist */
-        char enc_path[2048];
-        snprintf(enc_path, sizeof(enc_path), "%s/Encrypted", srv->config.file_root);
-        mkdir(enc_path, 0755);
+        hl_log_info(srv->logger, "HOPE secure login enabled (cipher policy: %s)",
+                    srv->config.hope_cipher_policy);
     }
 
     /* Register all 43 transaction handlers */
@@ -508,9 +498,9 @@ int main(int argc, char **argv)
         const char *key  = tls_key  ? tls_key  : srv->config.tls_key_path;
         int tp = tls_port_arg > 0 ? tls_port_arg
                : srv->config.tls_port > 0 ? srv->config.tls_port
-               : port + 100; /* default: port + 100 (5600 for 5500) */
+               : 0; /* 0 = TLS disabled unless explicitly set */
 
-        if (cert && cert[0] && key && key[0]) {
+        if (tp > 0 && cert && cert[0] && key && key[0]) {
             if (hl_tls_server_ctx_init(&srv->tls_ctx, cert, key) == 0) {
                 srv->tls_port = tp;
                 hl_log_info(srv->logger,
