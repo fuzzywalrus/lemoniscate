@@ -7,8 +7,8 @@
  */
 
 #include "mobius/transaction_handlers.h"
-#include "mobius/mnemosyne_sync.h"
 #include "mobius/flat_news.h"
+#include "mobius/mnemosyne_sync.h"
 #include "hotline/field.h"
 #include "hotline/user.h"
 #include "hotline/access.h"
@@ -20,6 +20,7 @@
 #include "hotline/time_conv.h"
 #include "hotline/password.h"
 #include "hotline/hope.h"
+#include "hotline/file_name_with_info.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,20 +77,6 @@ void hl_build_notify_change_user_free(hl_transaction_t *notify)
     }
 }
 
-/* HOPE Secure Zone helper — returns non-zero and sends error reply if the path
- * is in the Encrypted zone and the client isn't HOPE-encrypted.
- * Returns 0 if access is allowed. Remove if Secure Zone causes issues. */
-static int check_secure_zone(hl_client_conn_t *cc, const hl_transaction_t *req,
-                              const char *path,
-                              hl_transaction_t **out, int *out_count)
-{
-    if (hl_hope_is_secure_zone(path) && !cc->hope_encrypted) {
-        return reply_err(cc, req, "This content requires an encrypted connection.",
-                         out, out_count);
-    }
-    return 0;
-}
-
 /* ====================================================================
  * GROUP A: SIMPLE HANDLERS
  * ==================================================================== */
@@ -138,14 +125,11 @@ static int handle_agreed(hl_client_conn_t *cc, const hl_transaction_t *req,
         cc->auto_reply_len = len;
     }
 
-    /* Notify all other clients of this user's presence (unless hidden) */
-    if (!cc->account ||
-        hl_access_is_set(cc->account->access, ACCESS_SHOW_IN_LIST)) {
-        hl_transaction_t notify;
-        hl_build_notify_change_user(cc, &notify);
-        hl_server_broadcast(cc->server, cc, &notify);
-        hl_build_notify_change_user_free(&notify);
-    }
+    /* Notify all other clients of this user's presence */
+    hl_transaction_t notify;
+    hl_build_notify_change_user(cc, &notify);
+    hl_server_broadcast(cc->server, cc, &notify);
+    hl_build_notify_change_user_free(&notify);
 
     /* Send server banner notification with banner type */
     if (cc->server->banner && cc->server->banner_len > 0) {
@@ -192,14 +176,11 @@ static int handle_set_client_user_info(hl_client_conn_t *cc, const hl_transactio
         memcpy(cc->icon, f_icon->data + (f_icon->data_len - 2), 2);
     }
 
-    /* Broadcast change to all clients (unless hidden) */
-    if (!cc->account ||
-        hl_access_is_set(cc->account->access, ACCESS_SHOW_IN_LIST)) {
-        hl_transaction_t notify;
-        hl_build_notify_change_user(cc, &notify);
-        hl_server_broadcast(cc->server, cc, &notify);
-        hl_build_notify_change_user_free(&notify);
-    }
+    /* Broadcast change to all clients */
+    hl_transaction_t notify;
+    hl_build_notify_change_user(cc, &notify);
+    hl_server_broadcast(cc->server, cc, &notify);
+    hl_build_notify_change_user_free(&notify);
 
     *out = NULL;
     *out_count = 0;
@@ -382,12 +363,6 @@ static int handle_get_user_name_list(hl_client_conn_t *cc, const hl_transaction_
         if (fields) {
             int i;
             for (i = 0; i < client_count; i++) {
-                /* Skip users without ShowInList permission */
-                if (clients[i]->account &&
-                    !hl_access_is_set(clients[i]->account->access,
-                                      ACCESS_SHOW_IN_LIST))
-                    continue;
-
                 hl_user_t u;
                 memcpy(u.id, clients[i]->id, 2);
                 memcpy(u.icon, clients[i]->icon, 2);
@@ -864,12 +839,17 @@ static int handle_new_user(hl_client_conn_t *cc, const hl_transaction_t *req,
         memcpy(acct.access, f_access->data, 8);
     }
 
-    /* Password — hash with salted SHA-1 */
+    /* Password — store plaintext when HOPE is enabled, otherwise hash */
     const hl_field_t *f_pass = hl_transaction_get_field(req, FIELD_USER_PASSWORD);
     if (f_pass && f_pass->data_len > 0) {
         char plaintext[128];
         hl_field_decode_obfuscated_string(f_pass, plaintext, sizeof(plaintext));
-        hl_password_hash(plaintext, acct.password, sizeof(acct.password));
+        if (cc->server->config.enable_hope) {
+            /* HOPE requires plaintext passwords for MAC verification */
+            strncpy(acct.password, plaintext, sizeof(acct.password) - 1);
+        } else {
+            hl_password_hash(plaintext, acct.password, sizeof(acct.password));
+        }
         memset(plaintext, 0, sizeof(plaintext));
     }
 
@@ -881,6 +861,9 @@ static int handle_new_user(hl_client_conn_t *cc, const hl_transaction_t *req,
 static int handle_set_user(hl_client_conn_t *cc, const hl_transaction_t *req,
                            hl_transaction_t **out, int *out_count)
 {
+    if (!hl_client_conn_authorize(cc, ACCESS_MODIFY_USER))
+        return reply_err(cc, req, "You are not allowed to modify accounts.", out, out_count);
+
     if (!cc->server->account_mgr)
         return reply_err(cc, req, "No account manager.", out, out_count);
 
@@ -890,62 +873,20 @@ static int handle_set_user(hl_client_conn_t *cc, const hl_transaction_t *req,
     char login[128];
     hl_field_decode_obfuscated_string(f_login, login, sizeof(login));
 
-    /* ACCESS_CHANGE_OWN_PASS: allow users without ACCESS_MODIFY_USER to
-     * change their own password (and only their password). Clients that
-     * support "Change Own Password" send SetUser (353) targeting the
-     * user's own login. If this causes issues, remove the own_pass_only
-     * block and revert to the original ACCESS_MODIFY_USER-only check. */
-    int own_pass_only = 0;
-    if (!hl_client_conn_authorize(cc, ACCESS_MODIFY_USER)) {
-        if (hl_client_conn_authorize(cc, ACCESS_CHANGE_OWN_PASS) &&
-            cc->account && strcmp(cc->account->login, login) == 0) {
-            own_pass_only = 1;
-        } else {
-            return reply_err(cc, req, "You are not allowed to modify accounts.",
-                             out, out_count);
-        }
-    }
-
     hl_account_t *acct = cc->server->account_mgr->vt->get(cc->server->account_mgr, login);
     if (!acct) return reply_err(cc, req, "Account not found.", out, out_count);
 
-    /* Name and access changes — blocked for own-password-only users */
-    if (!own_pass_only) {
-        const hl_field_t *f_name = hl_transaction_get_field(req, FIELD_USER_NAME);
-        const hl_field_t *f_access = hl_transaction_get_field(req, FIELD_USER_ACCESS);
+    const hl_field_t *f_name = hl_transaction_get_field(req, FIELD_USER_NAME);
+    const hl_field_t *f_access = hl_transaction_get_field(req, FIELD_USER_ACCESS);
 
-        if (f_name && f_name->data_len > 0) {
-            size_t nlen = f_name->data_len < sizeof(acct->name) - 1
-                        ? f_name->data_len : sizeof(acct->name) - 1;
-            memset(acct->name, 0, sizeof(acct->name));
-            memcpy(acct->name, f_name->data, nlen);
-        }
-
-        if (f_access && f_access->data_len >= 8) {
-            memcpy(acct->access, f_access->data, 8);
-        }
+    if (f_name && f_name->data_len > 0) {
+        size_t nlen = f_name->data_len < sizeof(acct->name) - 1 ? f_name->data_len : sizeof(acct->name) - 1;
+        memset(acct->name, 0, sizeof(acct->name));
+        memcpy(acct->name, f_name->data, nlen);
     }
 
-    /* Password change — allowed for both admins and own-password users.
-     * Per Virtual1's protocol notes, the client sends chr(7) as the
-     * password field when the password was NOT changed. A real password
-     * change sends the new password (obfuscated). Empty field = clear. */
-    const hl_field_t *f_pass = hl_transaction_get_field(req, FIELD_USER_PASSWORD);
-    if (f_pass) {
-        /* chr(7) = "password unchanged" sentinel — skip */
-        if (!(f_pass->data_len == 1 && f_pass->data[0] == (255 - 7))) {
-            if (f_pass->data_len > 0) {
-                char plaintext[128];
-                hl_field_decode_obfuscated_string(f_pass, plaintext,
-                                                  sizeof(plaintext));
-                hl_password_hash(plaintext, acct->password,
-                                 sizeof(acct->password));
-                memset(plaintext, 0, sizeof(plaintext));
-            } else {
-                /* Empty password field = clear password */
-                acct->password[0] = '\0';
-            }
-        }
+    if (f_access && f_access->data_len >= 8) {
+        memcpy(acct->access, f_access->data, 8);
     }
 
     cc->server->account_mgr->vt->update(cc->server->account_mgr, acct, NULL);
@@ -1070,11 +1011,19 @@ static int handle_update_user(hl_client_conn_t *cc, const hl_transaction_t *req,
                 if (!(sf_pass->data_len == 1 && sf_pass->data[0] == 0)) {
                     char pw[128];
                     hl_field_decode_obfuscated_string(sf_pass, pw, sizeof(pw));
-                    hl_password_hash(pw, existing->password, sizeof(existing->password));
+                    if (cc->server->config.enable_hope) {
+                        strncpy(existing->password, pw, sizeof(existing->password) - 1);
+                    } else {
+                        hl_password_hash(pw, existing->password, sizeof(existing->password));
+                    }
                     memset(pw, 0, sizeof(pw));
                 }
             } else {
-                hl_password_hash("", existing->password, sizeof(existing->password));
+                if (cc->server->config.enable_hope) {
+                    existing->password[0] = '\0';
+                } else {
+                    hl_password_hash("", existing->password, sizeof(existing->password));
+                }
             }
 
             if (is_rename) {
@@ -1103,7 +1052,11 @@ static int handle_update_user(hl_client_conn_t *cc, const hl_transaction_t *req,
             if (sf_pass && sf_pass->data_len > 0) {
                 char pw[128];
                 hl_field_decode_obfuscated_string(sf_pass, pw, sizeof(pw));
-                hl_password_hash(pw, acct.password, sizeof(acct.password));
+                if (cc->server->config.enable_hope) {
+                    strncpy(acct.password, pw, sizeof(acct.password) - 1);
+                } else {
+                    hl_password_hash(pw, acct.password, sizeof(acct.password));
+                }
                 memset(pw, 0, sizeof(pw));
             }
             srv->account_mgr->vt->create(srv->account_mgr, &acct);
@@ -1367,6 +1320,9 @@ static int handle_get_news_cat_name_list(hl_client_conn_t *cc, const hl_transact
      * We need to split the serialized data into individual fields. */
     /* For simplicity, send the entire blob as one field per category.
      * Re-parse the buffer to split into individual entries. */
+    const char *e2e_prefix = cc->server->config.hope_required_prefix;
+    int is_encrypted = hl_client_is_encrypted(cc);
+
     hl_field_t *fields = (hl_field_t *)calloc((size_t)cat_count, sizeof(hl_field_t));
     size_t off = 0;
     int fi = 0;
@@ -1380,9 +1336,10 @@ static int handle_get_news_cat_name_list(hl_client_conn_t *cc, const hl_transact
         uint8_t name_len = cat_data[off + hdr_size];
         size_t entry_len = hdr_size + 1 + name_len;
 
-        /* HOPE Secure Zone: skip "Encrypted" category for non-HOPE clients */
-        if (!cc->hope_encrypted && name_len == 9 &&
-            strncasecmp((const char *)cat_data + off + hdr_size + 1, "Encrypted", 9) == 0) {
+        /* Filter E2E categories for non-encrypted clients */
+        const char *cat_name_ptr = (const char *)(cat_data + off + hdr_size + 1);
+        if (!is_encrypted && e2e_prefix[0] != '\0' &&
+            hl_hope_name_requires_encryption(cat_name_ptr, name_len, e2e_prefix)) {
             off += entry_len;
             continue;
         }
@@ -1421,6 +1378,16 @@ static int handle_get_news_art_name_list(hl_client_conn_t *cc, const hl_transact
     char cat_name[TN_MAX_NAME_LEN];
     decode_news_path_cat(req, cat_name, sizeof(cat_name));
 
+    /* Check E2E encryption gating on the category */
+    {
+        const char *e2e_prefix = srv->config.hope_required_prefix;
+        if (e2e_prefix[0] != '\0' &&
+            hl_hope_name_requires_encryption(cat_name, strlen(cat_name), e2e_prefix) &&
+            !hl_client_is_encrypted(cc))
+            return reply_err(cc, req,
+                "This news category requires an encrypted connection.", out, out_count);
+    }
+
     uint8_t *art_data = NULL;
     size_t art_len = 0;
     if (tn_get_article_list(srv->threaded_news, cat_name, &art_data, &art_len) < 0)
@@ -1458,6 +1425,16 @@ static int handle_get_news_art_data(hl_client_conn_t *cc, const hl_transaction_t
 
     char cat_name[TN_MAX_NAME_LEN];
     decode_news_path_cat(req, cat_name, sizeof(cat_name));
+
+    /* Check E2E encryption gating */
+    {
+        const char *e2e_prefix = srv->config.hope_required_prefix;
+        if (e2e_prefix[0] != '\0' &&
+            hl_hope_name_requires_encryption(cat_name, strlen(cat_name), e2e_prefix) &&
+            !hl_client_is_encrypted(cc))
+            return reply_err(cc, req,
+                "This news category requires an encrypted connection.", out, out_count);
+    }
 
     /* Decode article ID — can be 2 or 4 bytes */
     const hl_field_t *id_field = hl_transaction_get_field(req, FIELD_NEWS_ART_ID);
@@ -1569,6 +1546,16 @@ static int handle_post_news_art(hl_client_conn_t *cc, const hl_transaction_t *re
     char cat_name[TN_MAX_NAME_LEN];
     decode_news_path_cat(req, cat_name, sizeof(cat_name));
 
+    /* Check E2E encryption gating */
+    {
+        const char *e2e_prefix = srv->config.hope_required_prefix;
+        if (e2e_prefix[0] != '\0' &&
+            hl_hope_name_requires_encryption(cat_name, strlen(cat_name), e2e_prefix) &&
+            !hl_client_is_encrypted(cc))
+            return reply_err(cc, req,
+                "This news category requires an encrypted connection.", out, out_count);
+    }
+
     /* Get parent article ID (can be 2 or 4 bytes) */
     uint32_t parent_id = 0;
     const hl_field_t *id_field = hl_transaction_get_field(req, FIELD_NEWS_ART_ID);
@@ -1597,7 +1584,32 @@ static int handle_post_news_art(hl_client_conn_t *cc, const hl_transaction_t *re
     }
 
     tn_post_article(srv->threaded_news, cat_name, parent_id,
-                    title, cc->user_name, data, data_len);
+                    title, (const char *)cc->user_name, data, data_len);
+
+    /* Mnemosyne: queue incremental news add */
+    if (srv->mnemosyne_sync) {
+        char date_str[32];
+        time_t now = time(NULL);
+        struct tm *tm = gmtime(&now);
+        snprintf(date_str, sizeof(date_str), "%04d-%02d-%02d",
+                 tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday);
+
+        /* Get the article ID that was just assigned */
+        pthread_mutex_lock(&srv->threaded_news->mu);
+        int ci;
+        uint32_t art_id = 0;
+        for (ci = 0; ci < srv->threaded_news->category_count; ci++) {
+            if (strcmp(srv->threaded_news->categories[ci].name, cat_name) == 0) {
+                art_id = srv->threaded_news->categories[ci].next_article_id - 1;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&srv->threaded_news->mu);
+
+        mn_queue_news_add((mn_sync_t *)srv->mnemosyne_sync, cat_name,
+                          art_id, title, data, (const char *)cc->user_name,
+                          date_str);
+    }
 
     return reply_empty(cc, req, out, out_count);
 }
@@ -1711,7 +1723,6 @@ static int handle_get_file_name_list(hl_client_conn_t *cc, const hl_transaction_
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
-    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     /* Check drop box viewing permission */
     const char *dir_leaf = strrchr(dir_path, '/');
@@ -1720,48 +1731,60 @@ static int handle_get_file_name_list(hl_client_conn_t *cc, const hl_transaction_
         !hl_client_conn_authorize(cc, ACCESS_VIEW_DROP_BOXES))
         return reply_err(cc, req, "You are not allowed to view drop boxes.", out, out_count);
 
+    /* Check E2E encryption gating on the directory itself */
+    const char *e2e_prefix = cc->server->config.hope_required_prefix;
+    if (e2e_prefix[0] != '\0') {
+        const char *root = cc->server->config.file_root;
+        if (cc->account && cc->account->file_root[0] != '\0')
+            root = cc->account->file_root;
+        if (hl_hope_path_requires_encryption(dir_path, root, e2e_prefix) &&
+            !hl_client_is_encrypted(cc))
+            return reply_err(cc, req,
+                "This folder requires an encrypted connection.", out, out_count);
+    }
+
     int field_count = 0;
     hl_field_t *fields = hl_get_file_name_list(dir_path, &field_count);
 
-    /* HOPE Secure Zone: filter "Encrypted" folder from listing for non-HOPE clients.
-     * We scan the returned fields and skip any entry whose name is "Encrypted". */
-    if (!cc->hope_encrypted && fields && field_count > 0) {
+    /* Filter out E2E entries for non-encrypted clients */
+    int filtered_count = field_count;
+    if (fields && e2e_prefix[0] != '\0' && !hl_client_is_encrypted(cc)) {
+        int dst = 0;
         int i;
         for (i = 0; i < field_count; i++) {
-            /* Check if this field's data contains "Encrypted" as the name.
-             * File name with info has: type(4)+creator(4)+size(4)+rsvd(4)+namesize(2)+name */
-            if (fields[i].data_len > 18) {
-                uint16_t nlen = hl_read_u16(fields[i].data + 16);
-                if (nlen == 9 && fields[i].data_len >= 18 + 9 &&
-                    strncasecmp((const char *)fields[i].data + 18, "Encrypted", 9) == 0) {
-                    /* Remove this entry by swapping with last and reducing count */
-                    hl_field_free(&fields[i]);
-                    if (i < field_count - 1) {
-                        fields[i] = fields[field_count - 1];
-                    }
-                    memset(&fields[field_count - 1], 0, sizeof(hl_field_t));
-                    field_count--;
-                    i--; /* re-check this index */
-                }
+            /* Extract name from FNWI field: header(20 bytes) + name */
+            int hide = 0;
+            if (fields[i].data_len > HL_FNWI_HEADER_SIZE) {
+                const char *entry_name = (const char *)(fields[i].data + HL_FNWI_HEADER_SIZE);
+                size_t entry_name_len = fields[i].data_len - HL_FNWI_HEADER_SIZE;
+                hide = hl_hope_name_requires_encryption(entry_name, entry_name_len,
+                                                        e2e_prefix);
+            }
+            if (hide) {
+                hl_field_free(&fields[i]);
+            } else {
+                if (dst != i) fields[dst] = fields[i];
+                dst++;
             }
         }
+        filtered_count = dst;
     }
 
     /* Large file mode: interleave DATA_FILESIZE64 after each FNWI entry */
     hl_field_t *reply_fields = fields;
-    int reply_count = field_count;
+    int reply_count = filtered_count;
 
-    if (cc->large_file_mode && field_count > 0 && fields) {
-        reply_count = field_count * 2;
+    if (cc->large_file_mode && filtered_count > 0 && fields) {
+        reply_count = filtered_count * 2;
         reply_fields = (hl_field_t *)calloc((size_t)reply_count, sizeof(hl_field_t));
         if (reply_fields) {
             int ri = 0;
             int i;
-            for (i = 0; i < field_count; i++) {
-                /* Copy FNWI field (move, don't deep-copy) */
+            for (i = 0; i < filtered_count; i++) {
+                /* Copy FNWI field */
                 reply_fields[ri++] = fields[i];
 
-                /* Extract 64-bit size via stat */
+                /* Extract name and stat for 64-bit size */
                 uint64_t fsize64 = 0;
                 if (fields[i].data_len > HL_FNWI_HEADER_SIZE) {
                     size_t name_len = fields[i].data_len - HL_FNWI_HEADER_SIZE;
@@ -1775,6 +1798,7 @@ static int handle_get_file_name_list(hl_client_conn_t *cc, const hl_transaction_
                     struct stat est;
                     if (stat(entry_path, &est) == 0) {
                         if (S_ISDIR(est.st_mode)) {
+                            /* For dirs, size field holds item count */
                             fsize64 = (uint64_t)hl_read_u32(fields[i].data + 8);
                         } else {
                             fsize64 = (uint64_t)est.st_size;
@@ -1787,11 +1811,13 @@ static int handle_get_file_name_list(hl_client_conn_t *cc, const hl_transaction_
                 hl_field_new(&reply_fields[ri++], FIELD_FILE_SIZE_64, size64_buf, 8);
             }
             reply_count = ri;
-            free(fields); /* fields were moved, not deep-copied */
+            /* Don't free individual fields — they were moved to reply_fields */
+            free(fields);
             fields = NULL;
         } else {
+            /* Allocation failed, fall back to non-64-bit */
             reply_fields = fields;
-            reply_count = field_count;
+            reply_count = filtered_count;
         }
     }
 
@@ -1803,8 +1829,11 @@ static int handle_get_file_name_list(hl_client_conn_t *cc, const hl_transaction_
     if (reply_fields) {
         int i;
         for (i = 0; i < reply_count; i++) hl_field_free(&reply_fields[i]);
-        if (reply_fields != fields) free(reply_fields);
-        else free(fields);
+        free(reply_fields);
+    } else if (fields) {
+        int i;
+        for (i = 0; i < filtered_count; i++) hl_field_free(&fields[i]);
+        free(fields);
     }
     return 0;
 }
@@ -1823,7 +1852,6 @@ static int handle_get_file_info(hl_client_conn_t *cc, const hl_transaction_t *re
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
-    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     char filename[256];
     size_t nlen = f_name->data_len < 255 ? f_name->data_len : 255;
@@ -1844,7 +1872,7 @@ static int handle_get_file_info(hl_client_conn_t *cc, const hl_transaction_t *re
         ft = hl_file_type_from_filename(filename);
     }
 
-    hl_field_t fields[8];
+    hl_field_t fields[9]; /* +1 for 64-bit size */
     int fc = 0;
     memset(fields, 0, sizeof(fields));
 
@@ -1902,7 +1930,6 @@ static int handle_set_file_info(hl_client_conn_t *cc, const hl_transaction_t *re
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
-    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     char filename[256];
     size_t nlen = f_name->data_len < 255 ? f_name->data_len : 255;
@@ -1963,7 +1990,6 @@ static int handle_delete_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
-    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     char filename[256];
     size_t nlen = f_name->data_len < 255 ? f_name->data_len : 255;
@@ -1986,6 +2012,18 @@ static int handle_delete_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     hl_file_init(&f, dir_path, filename);
     hl_file_delete(&f);
 
+    /* Mnemosyne: queue incremental file remove */
+    if (cc->server->mnemosyne_sync) {
+        char rel_path[2048];
+        const char *root = cc->server->config.file_root;
+        size_t root_len = strlen(root);
+        if (strncmp(full_path, root, root_len) == 0 && full_path[root_len] == '/')
+            snprintf(rel_path, sizeof(rel_path), "%s", full_path + root_len + 1);
+        else
+            snprintf(rel_path, sizeof(rel_path), "%s", filename);
+        mn_queue_file_remove((mn_sync_t *)cc->server->mnemosyne_sync, rel_path);
+    }
+
     return reply_empty(cc, req, out, out_count);
 }
 
@@ -2005,7 +2043,6 @@ static int handle_move_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
-    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     char filename[256];
     size_t nlen = f_name->data_len < 255 ? f_name->data_len : 255;
@@ -2039,6 +2076,11 @@ static int handle_move_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     hl_file_init(&f, dir_path, filename);
     hl_file_move(&f, new_dir);
 
+    /* Mnemosyne: file move triggers periodic check (full resync on drift) */
+    if (cc->server->mnemosyne_sync) {
+        mn_periodic_check((mn_sync_t *)cc->server->mnemosyne_sync);
+    }
+
     return reply_empty(cc, req, out, out_count);
 }
 
@@ -2056,7 +2098,6 @@ static int handle_new_folder(hl_client_conn_t *cc, const hl_transaction_t *req,
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
-    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     char folder_name[256];
     size_t nlen = f_name->data_len < 255 ? f_name->data_len : 255;
@@ -2084,7 +2125,6 @@ static int handle_make_alias(hl_client_conn_t *cc, const hl_transaction_t *req,
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
-    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     char filename[256];
     size_t nlen = f_name->data_len < 255 ? f_name->data_len : 255;
@@ -2116,15 +2156,18 @@ static int handle_make_alias(hl_client_conn_t *cc, const hl_transaction_t *req,
     return reply_empty(cc, req, out, out_count);
 }
 
-/* File transfer handlers — these set up transfer entries and return reference
- * numbers. Actual data movement happens on the file transfer port (port+1)
- * in handle_file_transfer_connection(). */
+/* File transfer handlers — these set up transfers but actual data movement
+ * happens on the file transfer port (port+1). For now, return empty replies
+ * since the file transfer port handler is a stub. */
 
 static int handle_download_file(hl_client_conn_t *cc, const hl_transaction_t *req,
                                 hl_transaction_t **out, int *out_count)
 {
     if (!hl_client_conn_authorize(cc, ACCESS_DOWNLOAD_FILE))
         return reply_err(cc, req, "You are not allowed to download files.", out, out_count);
+
+    if (cc->account && cc->account->require_encryption && !hl_client_is_encrypted(cc))
+        return reply_err(cc, req, "This account requires an encrypted connection for file transfers.", out, out_count);
 
     hl_server_t *srv = cc->server;
 
@@ -2149,6 +2192,20 @@ static int handle_download_file(hl_client_conn_t *cc, const hl_transaction_t *re
 
     char full_path[2048];
     snprintf(full_path, sizeof(full_path), "%s/%s", file_path, filename);
+
+    /* Check E2E encryption gating */
+    {
+        const char *e2e_prefix = srv->config.hope_required_prefix;
+        if (e2e_prefix[0] != '\0') {
+            const char *root = srv->config.file_root;
+            if (cc->account && cc->account->file_root[0] != '\0')
+                root = cc->account->file_root;
+            if (hl_hope_path_requires_encryption(full_path, root, e2e_prefix) &&
+                !hl_client_is_encrypted(cc))
+                return reply_err(cc, req,
+                    "This file requires an encrypted connection.", out, out_count);
+        }
+    }
 
     /* Get file size */
     struct stat st;
@@ -2183,6 +2240,10 @@ static int handle_download_file(hl_client_conn_t *cc, const hl_transaction_t *re
     ft->type = HL_XFER_FILE_DOWNLOAD;
     ft->client_conn = cc;
     ft->active = 1;
+    if (cc->hope && cc->hope->aead_active && cc->hope->aead.ft_base_key_set) {
+        ft->ft_aead = 1;
+        memcpy(ft->ft_base_key, cc->hope->aead.ft_base_key, 32);
+    }
     ft->resume_data = resume;
 
     /* Store file root and path info for the transfer handler */
@@ -2198,11 +2259,11 @@ static int handle_download_file(hl_client_conn_t *cc, const hl_transaction_t *re
     if (srv->file_transfer_mgr)
         srv->file_transfer_mgr->vt->add(srv->file_transfer_mgr, ft);
 
-    /* Reply with ref_num, transfer_size, file_size, waiting_count, resume flag */
+    /* Reply with ref_num, transfer_size, file_size, waiting_count
+     * + 64-bit companions in large file mode */
     uint8_t wait_count[2] = {0, 0};
-    uint8_t resume_supported[2] = {0x00, 0x01}; /* Advertise resume capability */
 
-    hl_field_t fields[7]; /* 5 legacy + up to 2 x 64-bit */
+    hl_field_t fields[7]; /* max: 4 legacy + 2 x 64-bit + waiting */
     int fc = 0;
     hl_field_new(&fields[fc++], FIELD_REF_NUM, ft->ref_num, 4);
     hl_field_new(&fields[fc++], FIELD_TRANSFER_SIZE, ft->transfer_size, 4);
@@ -2222,7 +2283,6 @@ static int handle_download_file(hl_client_conn_t *cc, const hl_transaction_t *re
     }
 
     hl_field_new(&fields[fc++], FIELD_WAITING_COUNT, wait_count, 2);
-    hl_field_new(&fields[fc++], FIELD_FILE_TRANSFER_OPTS, resume_supported, 2);
 
     hl_transaction_t *reply = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
     hl_transaction_new(reply, req->type, cc->id, fields, (uint16_t)fc);
@@ -2244,13 +2304,29 @@ static int handle_upload_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     if (!hl_client_conn_authorize(cc, ACCESS_UPLOAD_FILE))
         return reply_err(cc, req, "You are not allowed to upload files.", out, out_count);
 
+    if (cc->account && cc->account->require_encryption && !hl_client_is_encrypted(cc))
+        return reply_err(cc, req, "This account requires an encrypted connection for file transfers.", out, out_count);
+
     hl_server_t *srv = cc->server;
 
     /* Build destination directory path */
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
-    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
+
+    /* Check E2E encryption gating on upload destination */
+    {
+        const char *e2e_prefix = srv->config.hope_required_prefix;
+        if (e2e_prefix[0] != '\0') {
+            const char *root = srv->config.file_root;
+            if (cc->account && cc->account->file_root[0] != '\0')
+                root = cc->account->file_root;
+            if (hl_hope_path_requires_encryption(dir_path, root, e2e_prefix) &&
+                !hl_client_is_encrypted(cc))
+                return reply_err(cc, req,
+                    "This folder requires an encrypted connection.", out, out_count);
+        }
+    }
 
     /* Check upload location restriction */
     if (!hl_client_conn_authorize(cc, ACCESS_UPLOAD_ANYWHERE)) {
@@ -2290,6 +2366,10 @@ static int handle_upload_file(hl_client_conn_t *cc, const hl_transaction_t *req,
     ft->type = HL_XFER_FILE_UPLOAD;
     ft->client_conn = cc;
     ft->active = 1;
+    if (cc->hope && cc->hope->aead_active && cc->hope->aead.ft_base_key_set) {
+        ft->ft_aead = 1;
+        memcpy(ft->ft_base_key, cc->hope->aead.ft_base_key, 32);
+    }
     strncpy(ft->file_root, full_path, sizeof(ft->file_root) - 1);
 
     /* Store transfer size from request if provided */
@@ -2329,7 +2409,6 @@ static int handle_download_folder(hl_client_conn_t *cc, const hl_transaction_t *
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
-    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     const hl_field_t *f_name = hl_transaction_get_field(req, FIELD_FILE_NAME);
     if (!f_name || f_name->data_len == 0)
@@ -2361,6 +2440,10 @@ static int handle_download_folder(hl_client_conn_t *cc, const hl_transaction_t *
     ft->type = HL_XFER_FOLDER_DOWNLOAD;
     ft->client_conn = cc;
     ft->active = 1;
+    if (cc->hope && cc->hope->aead_active && cc->hope->aead.ft_base_key_set) {
+        ft->ft_aead = 1;
+        memcpy(ft->ft_base_key, cc->hope->aead.ft_base_key, 32);
+    }
     strncpy(ft->file_root, full_path, sizeof(ft->file_root) - 1);
     memcpy(ft->transfer_size, total_size, 4);
     memcpy(ft->folder_item_count, item_count, 2);
@@ -2378,8 +2461,8 @@ static int handle_download_folder(hl_client_conn_t *cc, const hl_transaction_t *
     hl_field_new(&fields[fcount++], FIELD_FOLDER_ITEM_COUNT, ft->folder_item_count, 2);
 
     if (cc->large_file_mode) {
-        uint64_t total_64 = (uint64_t)hl_read_u32(ft->transfer_size);
-        uint64_t count_64 = (uint64_t)hl_read_u16(ft->folder_item_count);
+        uint64_t total_64 = (uint64_t)hl_read_u32(total_size);
+        uint64_t count_64 = (uint64_t)hl_read_u16(item_count);
         uint8_t xfer64[8], count64[8];
         hl_write_u64(xfer64, total_64);
         hl_write_u64(count64, count_64);
@@ -2415,7 +2498,6 @@ static int handle_upload_folder(hl_client_conn_t *cc, const hl_transaction_t *re
     char dir_path[2048];
     if (build_full_path(cc, req, dir_path, sizeof(dir_path)) != 0)
         return reply_err(cc, req, "Invalid file path.", out, out_count);
-    if (check_secure_zone(cc, req, dir_path, out, out_count) != 0) return 0;
 
     const hl_field_t *f_name = hl_transaction_get_field(req, FIELD_FILE_NAME);
     if (!f_name || f_name->data_len == 0)
@@ -2444,6 +2526,10 @@ static int handle_upload_folder(hl_client_conn_t *cc, const hl_transaction_t *re
     ft->type = HL_XFER_FOLDER_UPLOAD;
     ft->client_conn = cc;
     ft->active = 1;
+    if (cc->hope && cc->hope->aead_active && cc->hope->aead.ft_base_key_set) {
+        ft->ft_aead = 1;
+        memcpy(ft->ft_base_key, cc->hope->aead.ft_base_key, 32);
+    }
     strncpy(ft->file_root, full_path, sizeof(ft->file_root) - 1);
 
     if (f_count && f_count->data_len >= 2)
@@ -2489,6 +2575,10 @@ static int handle_download_banner(hl_client_conn_t *cc, const hl_transaction_t *
     ft->type = HL_XFER_BANNER_DOWNLOAD;
     ft->client_conn = cc;
     ft->active = 1;
+    if (cc->hope && cc->hope->aead_active && cc->hope->aead.ft_base_key_set) {
+        ft->ft_aead = 1;
+        memcpy(ft->ft_base_key, cc->hope->aead.ft_base_key, 32);
+    }
     hl_write_u32(ft->transfer_size, (uint32_t)srv->banner_len);
 
     /* Add to transfer manager (assigns random ref_num) */
@@ -2565,7 +2655,7 @@ void mobius_register_handlers(hl_server_t *srv)
     hl_server_handle_func(srv, TRAN_MAKE_FILE_ALIAS,     handle_make_alias);
     hl_server_handle_func(srv, TRAN_DOWNLOAD_FILE,       handle_download_file);
     hl_server_handle_func(srv, TRAN_UPLOAD_FILE,         handle_upload_file);
-    hl_server_handle_func(srv, TRAN_UPLOAD_FLDR,         handle_upload_folder);
     hl_server_handle_func(srv, TRAN_DOWNLOAD_FLDR,       handle_download_folder);
+    hl_server_handle_func(srv, TRAN_UPLOAD_FLDR,         handle_upload_folder);
     hl_server_handle_func(srv, TRAN_DOWNLOAD_BANNER,     handle_download_banner);
 }

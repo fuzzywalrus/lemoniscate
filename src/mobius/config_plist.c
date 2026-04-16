@@ -141,6 +141,13 @@ int mobius_load_config_plist(hl_config_t *cfg, const char *plist_path)
 
     plist_get_bool(dict, "EnableTrackerRegistration", &cfg->enable_tracker_registration);
     plist_get_bool(dict, "EnableBonjour", &cfg->enable_bonjour);
+    plist_get_bool(dict, "HOPELegacyMode", &cfg->hope_legacy_mode);
+    plist_get_string(dict, "HOPERequiredPrefix", cfg->hope_required_prefix,
+                     sizeof(cfg->hope_required_prefix));
+    plist_get_bool(dict, "E2ERequireTLS", &cfg->e2e_require_tls);
+    plist_get_string(dict, "HOPECipherPolicy", cfg->hope_cipher_policy,
+                     sizeof(cfg->hope_cipher_policy));
+    plist_get_bool(dict, "E2ERequireAEAD", &cfg->e2e_require_aead);
     plist_get_bool(dict, "PreserveResourceForks", &cfg->preserve_resource_forks);
     plist_get_bool(dict, "EnableHOPE", &cfg->enable_hope);
 
@@ -148,17 +155,21 @@ int mobius_load_config_plist(hl_config_t *cfg, const char *plist_path)
     plist_get_int(dict, "MaxDownloadsPerClient", &cfg->max_downloads_per_client);
     plist_get_int(dict, "MaxConnectionsPerIP", &cfg->max_connections_per_ip);
 
-    plist_get_string(dict, "TLSCertFile", cfg->tls_cert_path, HL_CONFIG_PATH_MAX);
-    plist_get_string(dict, "TLSKeyFile", cfg->tls_key_path, HL_CONFIG_PATH_MAX);
-    plist_get_int(dict, "TLSPort", &cfg->tls_port);
-
     plist_get_string_array(dict, "Trackers",
                             cfg->trackers, HL_CONFIG_MAX_TRACKERS,
                             &cfg->tracker_count);
 
-    /* Mnemosyne sync config */
-    plist_get_string(dict, "MnemosyneURL", cfg->mnemosyne_url, HL_CONFIG_MNEMOSYNE_URL_MAX);
-    plist_get_string(dict, "MnemosyneAPIKey", cfg->mnemosyne_api_key, HL_CONFIG_MNEMOSYNE_KEY_MAX);
+    plist_get_string(dict, "TLSCertFile", cfg->tls_cert_path,
+                     sizeof(cfg->tls_cert_path));
+    plist_get_string(dict, "TLSKeyFile", cfg->tls_key_path,
+                     sizeof(cfg->tls_key_path));
+    plist_get_int(dict, "TLSPort", &cfg->tls_port);
+
+    /* Mnemosyne */
+    plist_get_string(dict, "MnemosyneURL", cfg->mnemosyne_url,
+                     sizeof(cfg->mnemosyne_url));
+    plist_get_string(dict, "MnemosyneAPIKey", cfg->mnemosyne_api_key,
+                     sizeof(cfg->mnemosyne_api_key));
     plist_get_bool(dict, "MnemosyneIndexFiles", &cfg->mnemosyne_index_files);
     plist_get_bool(dict, "MnemosyneIndexNews", &cfg->mnemosyne_index_news);
     plist_get_bool(dict, "MnemosyneIndexMsgboard", &cfg->mnemosyne_index_msgboard);

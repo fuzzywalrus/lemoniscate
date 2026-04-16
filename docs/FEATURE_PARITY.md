@@ -257,13 +257,13 @@ constraint with modern clients:
 - **curl, wget, or other tools** with `--tlsv1.0` will work for testing.
 - **HOPE encryption** is the recommended encryption method for Navigator ↔ Lemoniscate
   connections. It works at the application layer with no TLS version constraints, and
-  provides challenge-response auth + optional RC4 transport encryption.
+  provides challenge-response auth plus negotiated AEAD or RC4 transport encryption.
 
 The server always accepts plaintext + HOPE connections on the standard port (5500), so
 TLS is purely additive. The three encryption options from weakest to strongest:
 
 1. **Plaintext** — no encryption (legacy default)
-2. **HOPE** — application-layer challenge-response auth + optional RC4 stream cipher
+2. **HOPE** — application-layer challenge-response auth + negotiated AEAD or RC4 transport encryption
 3. **TLS 1.0** — transport-layer encryption (requires TLS 1.0-capable client)
 
 All three can coexist on the same server. HOPE can even layer on top of TLS (redundant
@@ -279,7 +279,7 @@ HOPE (Hotline Open Protocol Extensions) is a community-developed extension to th
 protocol that adds challenge-response authentication and optional transport encryption.
 It replaces the legacy login flow (where credentials are trivially obfuscated with 255-XOR)
 with MAC-based authentication using a session key, and can optionally wrap the connection
-in RC4 stream encryption.
+in either RC4 or ChaCha20-Poly1305 AEAD transport encryption.
 
 The spec was developed by fogWraith and is documented in `HOPE-Secure-Login.md` in the
 Hotline community archives. Lemoniscate implements HOPE as an opt-in feature controlled

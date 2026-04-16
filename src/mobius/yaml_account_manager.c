@@ -95,10 +95,6 @@ static int parse_account_file(hl_account_t *acct, const char *filepath)
 
     memset(acct, 0, sizeof(*acct));
 
-    /* Default ShowInList to ON — users should be visible unless explicitly
-     * hidden. Matches Mobius Go behavior where ShowInList defaults to true. */
-    hl_access_set(acct->access, ACCESS_SHOW_IN_LIST);
-
     char current_key[128] = {0};
     int in_access_map = 0;
     int depth = 0;
@@ -154,6 +150,8 @@ static int parse_account_file(hl_account_t *acct, const char *filepath)
                         strncpy(acct->password, val, sizeof(acct->password) - 1);
                     else if (strcmp(current_key, "FileRoot") == 0)
                         strncpy(acct->file_root, val, sizeof(acct->file_root) - 1);
+                    else if (strcmp(current_key, "RequireEncryption") == 0)
+                        acct->require_encryption = (strcmp(val, "true") == 0 || strcmp(val, "1") == 0);
 
                     current_key[0] = '\0';
                 }
@@ -200,6 +198,9 @@ static int write_account_yaml(const char *dir, const hl_account_t *acct)
 
     if (acct->file_root[0] != '\0') {
         fprintf(f, "FileRoot: %s\n", acct->file_root);
+    }
+    if (acct->require_encryption) {
+        fprintf(f, "RequireEncryption: true\n");
     }
 
     fclose(f);

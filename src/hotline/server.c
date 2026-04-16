@@ -10,7 +10,10 @@
  */
 
 #include "hotline/server.h"
+#include "hotline/tls.h"
 #include "hotline/handshake.h"
+#include "hotline/hope.h"
+#include "hotline/chacha20poly1305.h"
 #include "hotline/field.h"
 #include "hotline/user.h"
 #include "hotline/password.h"
@@ -19,16 +22,14 @@
 #include "hotline/flattened_file_object.h"
 #include "hotline/file_types.h"
 #include "hotline/file_path.h"
-#include "hotline/hope.h"
 #include "mobius/transaction_handlers.h"
 #include "mobius/mnemosyne_sync.h"
-#include <openssl/sha.h> /* SHA_DIGEST_LENGTH for HOPE key derivation */
+#include "mobius/config_loader.h"
 
-#include <sys/event.h>
+#include "hotline/platform/platform_event.h"
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <netinet/in.h>
-#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -46,27 +47,19 @@
 #define HL_IDLE_CHECK_INTERVAL  10   /* seconds between idle checks */
 #define HL_DEFAULT_PORT       5500
 
-/* Timer IDs for kqueue EVFILT_TIMER (must not collide with fd values) */
-#define HL_TIMER_IDLE_CHECK     1   /* existing idle/tracker timer */
-#define HL_TIMER_MN_HEARTBEAT   2   /* Mnemosyne heartbeat (300s) */
-#define HL_TIMER_MN_PERIODIC    3   /* Mnemosyne drift detection (900s) */
+/* Timer IDs */
+#define HL_TIMER_IDLE          1     /* Idle check (10s) */
+#define HL_TIMER_MN_HEARTBEAT  2     /* Mnemosyne heartbeat (300s) */
+#define HL_TIMER_MN_PERIODIC   3     /* Mnemosyne periodic check (900s) */
+#define HL_TIMER_MN_CHUNK      4     /* Mnemosyne chunk tick (2s) */
 
-/* --- Helpers: read/write with EINTR handling --- */
+/* Mnemosyne timer intervals */
+#define MN_HEARTBEAT_MS     300000   /* 5 minutes */
+#define MN_PERIODIC_MS      900000   /* 15 minutes */
+#define MN_CHUNK_TICK_MS      2000   /* 2 seconds */
+#define MN_STARTUP_DELAY_SECS  30    /* seconds before first full sync */
 
-static int read_full(int fd, uint8_t *buf, size_t n)
-{
-    size_t total = 0;
-    while (total < n) {
-        ssize_t r = read(fd, buf + total, n - total);
-        if (r < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-        if (r == 0) return -1;
-        total += (size_t)r;
-    }
-    return 0;
-}
+/* --- Helpers: write with EINTR handling (used for local file I/O) --- */
 
 static int write_all(int fd, const uint8_t *buf, size_t n)
 {
@@ -83,7 +76,7 @@ static int write_all(int fd, const uint8_t *buf, size_t n)
     return 0;
 }
 
-/* --- Send a transaction to a client fd --- */
+/* --- Send a transaction to a client fd (raw, no HOPE encryption) --- */
 
 int hl_server_send_transaction(int fd, hl_transaction_t *t)
 {
@@ -114,6 +107,59 @@ static int send_transaction_via_conn(hl_tls_conn_t *conn, hl_transaction_t *t)
     return rc;
 }
 
+/* --- Send a transaction to a client connection (HOPE-aware) --- */
+
+static int send_transaction_to_client(hl_client_conn_t *cc, hl_transaction_t *t)
+{
+    size_t wire_size = hl_transaction_wire_size(t);
+    uint8_t *buf = (uint8_t *)malloc(wire_size);
+    if (!buf) return -1;
+
+    int written = hl_transaction_serialize(t, buf, wire_size);
+    if (written < 0) { free(buf); return -1; }
+
+    int rc;
+
+    if (cc->hope && cc->hope->aead_active) {
+        /* AEAD: seal into length-prefixed frame */
+        size_t frame_size = 4 + (size_t)written + HL_POLY1305_TAG_SIZE;
+        uint8_t *frame_buf = (uint8_t *)malloc(frame_size);
+        if (!frame_buf) { free(buf); return -1; }
+
+        uint64_t counter_before = cc->hope->aead.send_counter;
+        int frame_written = hl_hope_aead_encrypt_transaction(
+            cc->hope, buf, (size_t)written, frame_buf, frame_size);
+        free(buf);
+
+        if (frame_written < 0) { free(frame_buf); return -1; }
+
+        hl_log_debug(cc->logger, "[HOPE-AEAD-W] Sealed frame: %d bytes plaintext -> %d bytes frame (counter=%llu)",
+                     written, frame_written, (unsigned long long)counter_before);
+
+        if (cc->conn) {
+            rc = hl_conn_write_all(cc->conn, frame_buf, (size_t)frame_written);
+        } else {
+            rc = write_all(cc->fd, frame_buf, (size_t)frame_written);
+        }
+        free(frame_buf);
+    } else {
+        /* RC4 or plaintext */
+        if (cc->hope && cc->hope->active &&
+            cc->hope->mac_alg != HL_HOPE_MAC_INVERSE) {
+            hl_hope_encrypt_transaction(cc->hope, buf, (size_t)written);
+        }
+
+        if (cc->conn) {
+            rc = hl_conn_write_all(cc->conn, buf, (size_t)written);
+        } else {
+            rc = write_all(cc->fd, buf, (size_t)written);
+        }
+        free(buf);
+    }
+
+    return rc;
+}
+
 /* --- Broadcast a transaction to all clients except sender --- */
 
 void hl_server_broadcast(hl_server_t *srv, hl_client_conn_t *sender,
@@ -123,24 +169,14 @@ void hl_server_broadcast(hl_server_t *srv, hl_client_conn_t *sender,
     hl_client_conn_t **clients = srv->client_mgr->vt->list(srv->client_mgr, &count);
     if (!clients) return;
 
-    /* Serialize once, then send to each client (encrypting per-client if needed) */
-    size_t wire_size = hl_transaction_wire_size(t);
-    uint8_t *buf = (uint8_t *)malloc(wire_size);
-    if (!buf) { free(clients); return; }
-
     int i;
     for (i = 0; i < count; i++) {
         if (!hl_type_eq(clients[i]->id, sender->id)) {
+            /* Set target client ID and send */
             memcpy(t->client_id, clients[i]->id, 2);
-            int written = hl_transaction_serialize(t, buf, wire_size);
-            if (written > 0) {
-                /* Always route through hl_hope_write which handles
-                 * both HOPE encryption and TLS via the conn wrapper. */
-                hl_hope_write(clients[i], buf, (size_t)written);
-            }
+            send_transaction_to_client(clients[i], t);
         }
     }
-    free(buf);
     free(clients);
 }
 
@@ -149,20 +185,7 @@ void hl_server_broadcast(hl_server_t *srv, hl_client_conn_t *sender,
 void hl_server_send_to_client(hl_client_conn_t *cc, hl_transaction_t *t)
 {
     memcpy(t->client_id, cc->id, 2);
-
-    /* HOPE-aware send: encrypts if transport encryption is active.
-     * For non-HOPE clients, falls through to plain write. */
-    size_t wire_size = hl_transaction_wire_size(t);
-    uint8_t *buf = (uint8_t *)malloc(wire_size);
-    if (!buf) return;
-
-    int written = hl_transaction_serialize(t, buf, wire_size);
-    if (written > 0) {
-        /* Always route through hl_hope_write which handles
-         * both HOPE encryption and TLS via the conn wrapper. */
-        hl_hope_write(cc, buf, (size_t)written);
-    }
-    free(buf);
+    send_transaction_to_client(cc, t);
 }
 
 /* Notify all other clients that this user's visible profile changed.
@@ -306,6 +329,8 @@ void hl_server_free(hl_server_t *srv)
     if (srv->stats) hl_stats_free(srv->stats);
     if (srv->client_mgr) hl_mem_client_mgr_free(srv->client_mgr);
     if (srv->chat_mgr) hl_mem_chat_mgr_free(srv->chat_mgr);
+    if (srv->fs) hl_file_store_free(srv->fs);
+    if (srv->file_transfer_mgr) hl_mem_xfer_mgr_free(srv->file_transfer_mgr);
 
     free(srv);
 }
@@ -334,12 +359,6 @@ static int create_listener(const char *interface, int port)
     int opt = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-    /* Disable Nagle's algorithm — Hotline sends many small transactions
-     * (chat, keepalives, user notifications) and Nagle can add up to 200ms
-     * latency per message. Safe to revert by removing this setsockopt call
-     * if TCP_NODELAY causes throughput issues on slow links. */
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
-
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -366,33 +385,33 @@ static int create_listener(const char *interface, int port)
 
 /* --- Disconnect a client and clean up --- */
 
-static void disconnect_client(hl_server_t *srv, hl_client_conn_t *cc, int kq)
+static void disconnect_client(hl_server_t *srv, hl_client_conn_t *cc, hl_event_loop_t *evloop)
 {
     hl_log_info(srv->logger, "Client disconnected: %s (id=%d)",
                 cc->remote_addr, hl_read_u16(cc->id));
 
-    /* Remove from kqueue (closing fd does this automatically, but be explicit) */
-    struct kevent change;
-    EV_SET(&change, cc->fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
-    kevent(kq, &change, 1, NULL, 0, NULL);
+    /* Remove from event loop (closing fd does this automatically, but be explicit) */
+    hl_event_remove_fd(evloop, cc->fd);
 
-    close(cc->fd);
+    if (cc->conn) {
+        hl_conn_close(cc->conn);
+        cc->conn = NULL;
+    } else {
+        close(cc->fd);
+    }
     cc->fd = -1;
 
-    /* Notify other clients (skip for users without ShowInList permission) */
-    if (!cc->account ||
-        hl_access_is_set(cc->account->access, ACCESS_SHOW_IN_LIST)) {
-        hl_transaction_t notify;
-        memset(&notify, 0, sizeof(notify));
-        memcpy(notify.type, TRAN_NOTIFY_DELETE_USER, 2);
-        hl_field_t nfield;
-        hl_field_new(&nfield, FIELD_USER_ID, cc->id, 2);
-        notify.fields = &nfield;
-        notify.field_count = 1;
-        hl_server_broadcast(srv, cc, &notify);
-        hl_field_free(&nfield);
-        notify.fields = NULL;
-    }
+    /* Notify other clients */
+    hl_transaction_t notify;
+    memset(&notify, 0, sizeof(notify));
+    memcpy(notify.type, TRAN_NOTIFY_DELETE_USER, 2);
+    hl_field_t nfield;
+    hl_field_new(&nfield, FIELD_USER_ID, cc->id, 2);
+    notify.fields = &nfield;
+    notify.field_count = 1;
+    hl_server_broadcast(srv, cc, &notify);
+    hl_field_free(&nfield);
+    notify.fields = NULL;
 
     /* Remove from client manager */
     srv->client_mgr->vt->del(srv->client_mgr, cc->id);
@@ -403,31 +422,155 @@ static void disconnect_client(hl_server_t *srv, hl_client_conn_t *cc, int kq)
 
 /* --- Process incoming data from a client --- */
 
-static void process_client_data(hl_server_t *srv, hl_client_conn_t *cc, int kq)
+static void process_client_data(hl_server_t *srv, hl_client_conn_t *cc, hl_event_loop_t *evloop)
 {
     /* Read available data into the client's accumulation buffer */
     if (cc->read_buf_len >= sizeof(cc->read_buf)) {
         hl_log_error(srv->logger, "Client %d buffer full, disconnecting",
                      hl_read_u16(cc->id));
-        disconnect_client(srv, cc, kq);
+        disconnect_client(srv, cc, evloop);
         return;
     }
 
-    /* Use HOPE-aware read — decrypts in-place if transport encryption is active.
-     * Falls through to plain read() if HOPE is not active on this connection. */
-    ssize_t n = hl_hope_read(cc,
-                     cc->read_buf + cc->read_buf_len,
-                     sizeof(cc->read_buf) - cc->read_buf_len);
-    if (n < 0 && (errno == EINTR || errno == EAGAIN)) return;
+    ssize_t n;
+    if (cc->conn) {
+        n = hl_conn_read(cc->conn,
+                         cc->read_buf + cc->read_buf_len,
+                         sizeof(cc->read_buf) - cc->read_buf_len);
+    } else {
+        n = read(cc->fd,
+                 cc->read_buf + cc->read_buf_len,
+                 sizeof(cc->read_buf) - cc->read_buf_len);
+    }
+    if (n < 0 && errno == EINTR) return;
     if (n <= 0) {
-        disconnect_client(srv, cc, kq);
+        disconnect_client(srv, cc, evloop);
         return;
     }
     cc->read_buf_len += (size_t)n;
 
-    /* Scan for complete transactions and dispatch */
-    while (cc->read_buf_len > 0) {
-        int tran_len = hl_transaction_scan(cc->read_buf, cc->read_buf_len);
+    /* AEAD clients: frame-based decryption (cannot decrypt partial frames) */
+    if (cc->hope && cc->hope->aead_active) {
+        while (cc->read_buf_len > 0) {
+            int frame_result = hl_hope_aead_scan_frame(
+                cc->read_buf, cc->read_buf_len, sizeof(cc->read_buf));
+
+            if (frame_result == 0) break; /* need more data */
+
+            if (frame_result < 0) {
+                hl_log_error(srv->logger,
+                    "AEAD frame too large or invalid from client %d (buf_len=%zu), disconnecting",
+                    hl_read_u16(cc->id), cc->read_buf_len);
+                disconnect_client(srv, cc, evloop);
+                return;
+            }
+
+            size_t frame_len = (size_t)frame_result;
+
+            /* Decrypt frame into temporary buffer */
+            uint8_t decrypt_buf[65536];
+            size_t plaintext_len = 0;
+            uint64_t counter_before = cc->hope->aead.recv_counter;
+            if (hl_hope_aead_decrypt_frame(cc->hope,
+                    cc->read_buf, frame_len,
+                    decrypt_buf, &plaintext_len) != 0) {
+                hl_log_error(srv->logger,
+                    "AEAD tag verification failed from client %d (frame_len=%zu, counter=%llu), disconnecting",
+                    hl_read_u16(cc->id), frame_len, (unsigned long long)counter_before);
+                disconnect_client(srv, cc, evloop);
+                return;
+            }
+
+            hl_log_debug(srv->logger,
+                "[HOPE-AEAD-R] Opened frame: %zu bytes -> %zu bytes plaintext (counter=%llu) from client %d",
+                frame_len, plaintext_len, (unsigned long long)counter_before, hl_read_u16(cc->id));
+
+            /* Consume frame from read_buf */
+            if (frame_len < cc->read_buf_len) {
+                memmove(cc->read_buf, cc->read_buf + frame_len,
+                        cc->read_buf_len - frame_len);
+            }
+            cc->read_buf_len -= frame_len;
+
+            /* Parse and dispatch the decrypted transaction */
+            hl_transaction_t t;
+            if (hl_transaction_deserialize(&t, decrypt_buf, plaintext_len) < 0) {
+                hl_log_error(srv->logger,
+                    "Transaction parse error after AEAD decrypt for client %d",
+                    hl_read_u16(cc->id));
+                continue;
+            }
+
+            /* Dispatch to handler (same code path as below) */
+            uint16_t type_code = hl_type_to_u16(t.type);
+            hl_handler_func_t handler = (type_code < HL_HANDLER_TABLE_SIZE)
+                ? srv->handlers[type_code] : NULL;
+
+            if (handler) {
+                hl_log_debug(srv->logger, "Handling %s from client %d (AEAD)",
+                            hl_transaction_type_name(t.type), hl_read_u16(cc->id));
+
+                if (!hl_type_eq(t.type, TRAN_KEEP_ALIVE)) {
+                    pthread_rwlock_wrlock(&cc->mu);
+                    cc->idle_time = 0;
+                    if (hl_user_flags_is_set(cc->flags, HL_USER_FLAG_AWAY)) {
+                        hl_user_flags_set(cc->flags, HL_USER_FLAG_AWAY, 0);
+                        broadcast_notify_change_user(srv, cc);
+                    }
+                    pthread_rwlock_unlock(&cc->mu);
+                }
+
+                hl_transaction_t *responses = NULL;
+                int resp_count = 0;
+                handler(cc, &t, &responses, &resp_count);
+
+                if (responses && resp_count > 0) {
+                    int r;
+                    for (r = 0; r < resp_count; r++) {
+                        hl_transaction_t *resp = &responses[r];
+                        hl_client_id_t target_id;
+                        memcpy(target_id, resp->client_id, 2);
+
+                        if (target_id[0] == 0 && target_id[1] == 0) {
+                            hl_server_send_to_client(cc, resp);
+                        } else {
+                            hl_client_conn_t *target = srv->client_mgr->vt->get(
+                                srv->client_mgr, target_id);
+                            if (target) {
+                                send_transaction_to_client(target, resp);
+                            }
+                        }
+                        hl_transaction_free(resp);
+                    }
+                    free(responses);
+                }
+            } else {
+                hl_log_info(srv->logger, "Unhandled transaction %s (%d) from client %d (AEAD)",
+                           hl_transaction_type_name(t.type), type_code,
+                           hl_read_u16(cc->id));
+            }
+
+            hl_transaction_free(&t);
+        }
+        return; /* AEAD path handled — don't fall through to RC4/plaintext */
+    }
+
+    /* RC4 HOPE: decrypt newly received data incrementally */
+    if (cc->hope && cc->hope->active &&
+        cc->hope->mac_alg != HL_HOPE_MAC_INVERSE) {
+        hl_hope_decrypt_incremental(cc->hope, cc->read_buf, cc->read_buf_len);
+    }
+
+    /* Scan for complete transactions and dispatch.
+     * For HOPE RC4 clients, only scan up to the decrypted boundary. */
+    size_t scan_limit = cc->read_buf_len;
+    if (cc->hope && cc->hope->active &&
+        cc->hope->mac_alg != HL_HOPE_MAC_INVERSE) {
+        scan_limit = cc->hope->decrypt_offset;
+    }
+
+    while (scan_limit > 0) {
+        int tran_len = hl_transaction_scan(cc->read_buf, scan_limit);
         if (tran_len < 0) {
             hl_log_error(srv->logger, "Transaction scan error for client %d",
                          hl_read_u16(cc->id));
@@ -462,11 +605,8 @@ static void process_client_data(hl_server_t *srv, hl_client_conn_t *cc, int kq)
                 /* Clear away flag if set */
                 if (hl_user_flags_is_set(cc->flags, HL_USER_FLAG_AWAY)) {
                     hl_user_flags_set(cc->flags, HL_USER_FLAG_AWAY, 0);
-                    /* Notify others that user is no longer away (skip hidden) */
-                    if (!cc->account ||
-                        hl_access_is_set(cc->account->access,
-                                         ACCESS_SHOW_IN_LIST))
-                        broadcast_notify_change_user(srv, cc);
+                    /* Notify others that user is no longer away. */
+                    broadcast_notify_change_user(srv, cc);
                 }
                 pthread_rwlock_unlock(&cc->mu);
             }
@@ -492,7 +632,7 @@ static void process_client_data(hl_server_t *srv, hl_client_conn_t *cc, int kq)
                         hl_client_conn_t *target = srv->client_mgr->vt->get(
                             srv->client_mgr, target_id);
                         if (target) {
-                            hl_server_send_to_client(target, resp);
+                            send_transaction_to_client(target, resp);
                         }
                     }
                     hl_transaction_free(resp);
@@ -513,13 +653,26 @@ static void process_client_data(hl_server_t *srv, hl_client_conn_t *cc, int kq)
                     cc->read_buf_len - (size_t)consumed);
         }
         cc->read_buf_len -= (size_t)consumed;
+
+        /* Adjust HOPE decrypt offset after consuming bytes */
+        if (cc->hope && cc->hope->active) {
+            hl_hope_adjust_offset(cc->hope, (size_t)consumed);
+        }
+
+        /* Update scan_limit for next iteration */
+        scan_limit = cc->read_buf_len;
+        if (cc->hope && cc->hope->active &&
+            cc->hope->mac_alg != HL_HOPE_MAC_INVERSE) {
+            scan_limit = cc->hope->decrypt_offset;
+        }
     }
 }
 
 /* --- Handle a new client connection (handshake + login) --- */
 
 static void handle_new_connection(hl_server_t *srv, int client_fd,
-                                  struct sockaddr_in *client_addr, int kq,
+                                  struct sockaddr_in *client_addr,
+                                  hl_event_loop_t *evloop,
                                   hl_tls_conn_t *tls_conn)
 {
     char ip_str[INET_ADDRSTRLEN];
@@ -537,25 +690,6 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
     hl_tls_conn_t *conn = tls_conn ? tls_conn : hl_conn_wrap_plain(client_fd);
     if (!conn) { close(client_fd); return; }
 
-    /* Quick peek to detect zero-data connections (e.g. tracker probes).
-     * Trackers do a TCP connect-back with no data to verify the server
-     * is reachable — handle these fast instead of blocking for seconds.
-     * Skip for TLS connections (already past TLS handshake). */
-    if (!tls_conn) {
-        struct timeval peek_tv;
-        peek_tv.tv_sec = 1;
-        peek_tv.tv_usec = 0;
-        setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &peek_tv, sizeof(peek_tv));
-        uint8_t peek_buf[1];
-        ssize_t peeked = recv(client_fd, peek_buf, 1, MSG_PEEK);
-        if (peeked <= 0) {
-            hl_log_info(srv->logger, "Zero-data connection from %s (tracker probe?)",
-                        ip_str);
-            hl_conn_close(conn);
-            return;
-        }
-    }
-
     /* Set socket timeouts to prevent a slow client from blocking the event loop.
      * These are removed after login completes (client moves to non-blocking kqueue). */
     struct timeval tv;
@@ -565,16 +699,11 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
     setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
     /* Handshake (application-layer, runs over TLS if active) */
-    hl_log_info(srv->logger, "Starting app handshake from %s%s",
-                ip_str, tls_conn ? " (TLS)" : "");
     if (hl_perform_handshake_server_conn(conn) < 0) {
-        hl_log_info(srv->logger, "Handshake failed from %s%s (possible tracker probe)",
-                    ip_str, tls_conn ? " (TLS)" : "");
+        hl_log_error(srv->logger, "Handshake failed: %s", ip_str);
         hl_conn_close(conn);
         return;
     }
-    hl_log_info(srv->logger, "App handshake OK from %s%s",
-                ip_str, tls_conn ? " (TLS)" : "");
 
     /* Read login transaction — maps to Go handleNewConnection() */
     /* Read enough data for the transaction header first */
@@ -613,212 +742,166 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
     }
     free(login_buf);
 
-    /* --- HOPE Secure Login detection ---
-     * If the login field is a single 0x00 byte, this is a HOPE Phase 1 probe.
-     * We negotiate MAC/cipher, send a session key, then read the authenticated
-     * Phase 3 login. If HOPE is disabled or not detected, fall through to
-     * the legacy login flow. Remove this block if HOPE causes issues. */
-    int hope_authenticated = 0;
-    int hope_mac_algo = HL_HOPE_MAC_INVERSE;
-    uint8_t hope_session_key[HL_HOPE_SESSION_KEY_LEN];
-    int hope_cipher = HL_HOPE_CIPHER_NONE;
-    char hope_password_plain[128] = ""; /* needed for key derivation */
-
-    if (srv->config.enable_hope && hl_hope_detect(&login_tran)) {
-        hl_log_info(srv->logger, "HOPE Phase 1 from %s", ip_str);
-
-        /* Parse client's MAC algorithm preferences */
-        const hl_field_t *f_mac = hl_transaction_get_field(&login_tran,
-                                                            FIELD_HOPE_MAC_ALGORITHM);
-        int client_algos[HL_HOPE_MAC_COUNT];
-        int algo_count = 0;
-        if (f_mac && f_mac->data_len > 0) {
-            algo_count = hl_hope_parse_mac_list(f_mac->data, f_mac->data_len,
-                                                 client_algos, HL_HOPE_MAC_COUNT);
-        }
-        hope_mac_algo = hl_hope_select_mac(client_algos, algo_count);
-
-        /* Parse cipher preference */
-        const hl_field_t *f_cipher = hl_transaction_get_field(&login_tran,
-                                                               FIELD_HOPE_SERVER_CIPHER);
-        if (f_cipher && f_cipher->data_len > 0) {
-            char cipher_name[32];
-            size_t clen = f_cipher->data_len < sizeof(cipher_name) - 1
-                        ? f_cipher->data_len : sizeof(cipher_name) - 1;
-            memcpy(cipher_name, f_cipher->data, clen);
-            cipher_name[clen] = '\0';
-            hope_cipher = hl_hope_parse_cipher(cipher_name);
-        }
-
-        /* Generate session key: IP(4) + port(2) + random(58) */
-        uint32_t srv_ip = 0;
-        if (srv->net_interface[0] != '\0') {
-            srv_ip = ntohl(inet_addr(srv->net_interface));
-        } else {
-            srv_ip = ntohl(client_addr->sin_addr.s_addr);
-        }
-        hl_hope_generate_session_key(srv_ip, (uint16_t)ntohs(client_addr->sin_port),
-                                      hope_session_key);
-
-        /* Build HOPE Task reply (transaction type 0x00010000 = 65536) */
-        {
-            const char *mac_name = hl_hope_mac_name(hope_mac_algo);
-            uint8_t login_marker = 0x01; /* non-empty = "use MAC auth" */
-
-            /* Encode MAC algorithm in list format: <u16:count=1> <u8:len> <name>
-             * Navigator's decode_algorithm_selection expects this wire format. */
-            uint8_t mac_list[64];
-            size_t mac_name_len = strlen(mac_name);
-            hl_write_u16(mac_list, 1); /* count = 1 */
-            mac_list[2] = (uint8_t)mac_name_len;
-            memcpy(mac_list + 3, mac_name, mac_name_len);
-            uint16_t mac_list_len = (uint16_t)(3 + mac_name_len);
-
-            hl_field_t task_fields[5];
-            int tfc = 0;
-            hl_field_new(&task_fields[tfc++], FIELD_HOPE_SESSION_KEY,
-                         hope_session_key, HL_HOPE_SESSION_KEY_LEN);
-            hl_field_new(&task_fields[tfc++], FIELD_HOPE_MAC_ALGORITHM,
-                         mac_list, mac_list_len);
-            hl_field_new(&task_fields[tfc++], FIELD_USER_LOGIN,
-                         &login_marker, 1);
-            if (hope_cipher != HL_HOPE_CIPHER_NONE) {
-                /* Encode cipher in list format: <u16:count=1> <u8:len> <name> */
-                const char *cn = (hope_cipher == HL_HOPE_CIPHER_RC4) ? "RC4" : "BLOWFISH";
-                size_t cn_len = strlen(cn);
-                uint8_t cipher_list[32];
-                hl_write_u16(cipher_list, 1);
-                cipher_list[2] = (uint8_t)cn_len;
-                memcpy(cipher_list + 3, cn, cn_len);
-                hl_field_new(&task_fields[tfc++], FIELD_HOPE_SERVER_CIPHER,
-                             cipher_list, (uint16_t)(3 + cn_len));
-                hl_field_new(&task_fields[tfc++], FIELD_HOPE_CLIENT_CIPHER,
-                             cipher_list, (uint16_t)(3 + cn_len));
-            }
-
-            hl_transaction_t task_reply;
-            memset(&task_reply, 0, sizeof(task_reply));
-            task_reply.is_reply = 1;
-            /* Task type 65536 = 0x00010000 → type bytes {0x00, 0x00} with
-             * the high bytes in the ID. Per HOPE spec, use the login_tran's ID. */
-            memcpy(task_reply.id, login_tran.id, 4);
-            task_reply.fields = task_fields;
-            task_reply.field_count = (uint16_t)tfc;
-            send_transaction_via_conn(conn, &task_reply);
-
-            int fi;
-            for (fi = 0; fi < tfc; fi++) hl_field_free(&task_fields[fi]);
-            task_reply.fields = NULL;
-        }
-
-        /* Free Phase 1 login transaction and read Phase 3 */
-        hl_transaction_free(&login_tran);
-        memset(&login_tran, 0, sizeof(login_tran));
-
-        /* Read Phase 3 login transaction */
-        uint8_t p3_header[22];
-        if (hl_conn_read_full(conn, p3_header, 22) < 0) {
-            hl_log_error(srv->logger, "HOPE Phase 3 read failed from %s", ip_str);
-            hl_conn_close(conn);
-            return;
-        }
-        uint32_t p3_total = hl_read_u32(p3_header + 12);
-        if (p3_total > 65535 || p3_total < 2) { hl_conn_close(conn); return; }
-
-        size_t p3_len = 20 + p3_total;
-        uint8_t *p3_buf = (uint8_t *)malloc(p3_len);
-        if (!p3_buf) { hl_conn_close(conn); return; }
-        memcpy(p3_buf, p3_header, 22);
-        if (p3_len > 22) {
-            if (hl_conn_read_full(conn, p3_buf + 22, p3_len - 22) < 0) {
-                free(p3_buf);
-                hl_conn_close(conn);
-                return;
-            }
-        }
-
-        if (hl_transaction_deserialize(&login_tran, p3_buf, p3_len) < 0) {
-            free(p3_buf);
-            hl_conn_close(conn);
-            return;
-        }
-        free(p3_buf);
-
-        hope_authenticated = 1;
-        hl_log_info(srv->logger, "HOPE Phase 3 received from %s (MAC: %s, Cipher: %s)",
-                    ip_str, hl_hope_mac_name(hope_mac_algo),
-                    hope_cipher == HL_HOPE_CIPHER_RC4 ? "RC4" :
-                    hope_cipher == HL_HOPE_CIPHER_BLOWFISH ? "Blowfish" : "none");
-    }
-
-    /* Extract login fields — from Phase 3 if HOPE, or from original if legacy */
+    /* Extract login fields */
     const hl_field_t *f_login = hl_transaction_get_field(&login_tran, FIELD_USER_LOGIN);
     const hl_field_t *f_password = hl_transaction_get_field(&login_tran, FIELD_USER_PASSWORD);
     const hl_field_t *f_name = hl_transaction_get_field(&login_tran, FIELD_USER_NAME);
     const hl_field_t *f_icon = hl_transaction_get_field(&login_tran, FIELD_USER_ICON_ID);
     const hl_field_t *f_version = hl_transaction_get_field(&login_tran, FIELD_VERSION);
 
-    /* Decode login — HOPE uses MAC'd login, legacy uses 255-rotation */
+    /* --- HOPE detection and negotiation --- */
+    hl_hope_state_t *hope = NULL;
+    int is_hope = 0;
+    hl_account_t *hope_acct = NULL;
+
+    if (srv->config.enable_hope && hl_hope_detect_probe(&login_tran)) {
+        hl_log_info(srv->logger, "HOPE identification from %s", ip_str);
+
+        hope = (hl_hope_state_t *)calloc(1, sizeof(hl_hope_state_t));
+        if (!hope) {
+            hl_transaction_free(&login_tran);
+            hl_conn_close(conn);
+            return;
+        }
+
+        /* Build and send HOPE negotiation reply */
+        hl_transaction_t hope_reply;
+        hl_hope_cipher_mode_t negotiated_cipher_mode = HL_HOPE_CIPHER_MODE_NONE;
+        hl_hope_cipher_policy_t cipher_policy = hl_hope_parse_cipher_policy(
+            srv->config.hope_cipher_policy);
+        if (hl_hope_build_negotiation_reply(hope, &login_tran, &hope_reply,
+                                            ip_str, (uint16_t)srv->port,
+                                            srv->config.hope_legacy_mode,
+                                            cipher_policy,
+                                            &negotiated_cipher_mode) < 0) {
+            hl_log_info(srv->logger, "HOPE: no acceptable algorithms from %s (policy=%s)",
+                        ip_str, srv->config.hope_cipher_policy);
+            free(hope);
+            hl_transaction_free(&login_tran);
+            hl_conn_close(conn);
+            return;
+        }
+
+        hl_log_info(srv->logger,
+            "HOPE negotiation: mac=%d, cipher_mode=%s, policy=%s, session_key[0..3]=%02x%02x%02x%02x from %s",
+            (int)hope->mac_alg,
+            negotiated_cipher_mode == HL_HOPE_CIPHER_MODE_AEAD ? "AEAD" :
+            negotiated_cipher_mode == HL_HOPE_CIPHER_MODE_RC4 ? "RC4" : "NONE",
+            srv->config.hope_cipher_policy,
+            hope->session_key[0], hope->session_key[1],
+            hope->session_key[2], hope->session_key[3],
+            ip_str);
+
+        send_transaction_via_conn(conn, &hope_reply);
+        hl_transaction_free(&hope_reply);
+
+        /* Free the probe login and read the authenticated login */
+        hl_transaction_free(&login_tran);
+
+        /* Read second (authenticated) login transaction */
+        uint8_t header_buf2[22];
+        if (hl_conn_read_full(conn, header_buf2, 22) < 0) {
+            hl_log_error(srv->logger, "HOPE: failed to read auth login from %s", ip_str);
+            free(hope);
+            hl_conn_close(conn);
+            return;
+        }
+
+        uint32_t total_size2 = hl_read_u32(header_buf2 + 12);
+        if (total_size2 > 65535 || total_size2 < 2) {
+            free(hope);
+            hl_conn_close(conn);
+            return;
+        }
+
+        size_t full_len2 = 20 + total_size2;
+        uint8_t *login_buf2 = (uint8_t *)malloc(full_len2);
+        if (!login_buf2) { free(hope); hl_conn_close(conn); return; }
+
+        memcpy(login_buf2, header_buf2, 22);
+        if (full_len2 > 22) {
+            if (hl_conn_read_full(conn, login_buf2 + 22, full_len2 - 22) < 0) {
+                free(login_buf2);
+                free(hope);
+                hl_conn_close(conn);
+                return;
+            }
+        }
+
+        if (hl_transaction_deserialize(&login_tran, login_buf2, full_len2) < 0) {
+            free(login_buf2);
+            free(hope);
+            hl_conn_close(conn);
+            return;
+        }
+        free(login_buf2);
+
+        /* Re-extract fields from authenticated login */
+        f_login = hl_transaction_get_field(&login_tran, FIELD_USER_LOGIN);
+        f_password = hl_transaction_get_field(&login_tran, FIELD_USER_PASSWORD);
+        f_name = hl_transaction_get_field(&login_tran, FIELD_USER_NAME);
+        f_icon = hl_transaction_get_field(&login_tran, FIELD_USER_ICON_ID);
+        f_version = hl_transaction_get_field(&login_tran, FIELD_VERSION);
+
+        /* Verify HOPE-authenticated credentials */
+        if (srv->account_mgr &&
+            hl_hope_verify_login(hope, f_login, f_password,
+                                 srv->account_mgr, &hope_acct)) {
+            hl_log_info(srv->logger, "HOPE login verified: %s from %s",
+                        hope_acct->login, ip_str);
+
+            /* Derive transport encryption keys based on negotiated cipher */
+            if (negotiated_cipher_mode == HL_HOPE_CIPHER_MODE_AEAD) {
+                hl_hope_aead_derive_keys(hope, hope_acct->password);
+                hl_log_info(srv->logger,
+                    "HOPE AEAD keys derived: encode[0..3]=%02x%02x%02x%02x, decode[0..3]=%02x%02x%02x%02x, ft_base[0..3]=%02x%02x%02x%02x",
+                    hope->aead.encode_key[0], hope->aead.encode_key[1],
+                    hope->aead.encode_key[2], hope->aead.encode_key[3],
+                    hope->aead.decode_key[0], hope->aead.decode_key[1],
+                    hope->aead.decode_key[2], hope->aead.decode_key[3],
+                    hope->aead.ft_base_key[0], hope->aead.ft_base_key[1],
+                    hope->aead.ft_base_key[2], hope->aead.ft_base_key[3]);
+            } else {
+                hl_hope_derive_keys(hope, hope_acct->password);
+                hl_log_info(srv->logger, "HOPE RC4 keys derived for %s", hope_acct->login);
+            }
+            is_hope = 1;
+        } else {
+            hl_log_info(srv->logger, "HOPE login failed from %s", ip_str);
+            /* Send error reply */
+            hl_transaction_t err_reply;
+            memset(&err_reply, 0, sizeof(err_reply));
+            err_reply.is_reply = 1;
+            memcpy(err_reply.id, login_tran.id, 4);
+            err_reply.error_code[3] = 1;
+            hl_field_t err_field;
+            const char *msg = "Incorrect login.";
+            hl_field_new(&err_field, FIELD_ERROR, (const uint8_t *)msg,
+                         (uint16_t)strlen(msg));
+            err_reply.fields = &err_field;
+            err_reply.field_count = 1;
+            send_transaction_via_conn(conn, &err_reply);
+            hl_field_free(&err_field);
+            err_reply.fields = NULL;
+            hl_transaction_free(&login_tran);
+            free(hope);
+            hl_conn_close(conn);
+            return;
+        }
+    }
+
+    /* --- Standard (non-HOPE) login credential processing --- */
     char login_str[128] = "guest";
-    if (!hope_authenticated) {
-        /* Legacy: 255-rotation obfuscated */
+
+    if (!is_hope) {
+        /* Decode login (255-rotation obfuscated) */
         if (f_login && f_login->data_len > 0) {
             hl_field_decode_obfuscated_string(f_login, login_str, sizeof(login_str));
         }
     } else {
-        /* HOPE Phase 3: login field encoding depends on mac_login flag.
-         * If mac_login was set (login_marker=0x01 in our reply), the client
-         * sends MAC(login_bytes, session_key) — we must iterate all accounts
-         * and find which one matches. If mac_login was not set, the login
-         * is 255-XOR inverted (same as legacy). */
-        if (f_login && f_login->data_len > 0) {
-            if (hope_mac_algo != HL_HOPE_MAC_INVERSE) {
-                /* MAC'd login — iterate all accounts to find a match */
-                int found = 0;
-                if (srv->account_mgr) {
-                    int acct_count = 0;
-                    hl_account_t **accts = srv->account_mgr->vt->list(
-                        srv->account_mgr, &acct_count);
-                    if (accts) {
-                        int ai;
-                        for (ai = 0; ai < acct_count; ai++) {
-                            uint8_t expected_mac[20]; /* SHA1 is largest */
-                            int mac_len = hl_hope_compute_mac(hope_mac_algo,
-                                (const uint8_t *)accts[ai]->login,
-                                strlen(accts[ai]->login),
-                                hope_session_key, HL_HOPE_SESSION_KEY_LEN,
-                                expected_mac, sizeof(expected_mac));
-                            if (mac_len > 0 &&
-                                (size_t)mac_len == f_login->data_len &&
-                                memcmp(expected_mac, f_login->data, (size_t)mac_len) == 0) {
-                                strncpy(login_str, accts[ai]->login,
-                                        sizeof(login_str) - 1);
-                                found = 1;
-                                break;
-                            }
-                        }
-                        free(accts);
-                    }
-                }
-                if (!found) {
-                    /* No account matched — try "guest" as fallback */
-                    uint8_t guest_mac[20];
-                    int gml = hl_hope_compute_mac(hope_mac_algo,
-                        (const uint8_t *)"guest", 5,
-                        hope_session_key, HL_HOPE_SESSION_KEY_LEN,
-                        guest_mac, sizeof(guest_mac));
-                    if (gml > 0 && (size_t)gml == f_login->data_len &&
-                        memcmp(guest_mac, f_login->data, (size_t)gml) == 0) {
-                        strncpy(login_str, "guest", sizeof(login_str) - 1);
-                    }
-                    /* If still no match, login_str stays "guest" as default */
-                }
-            } else {
-                /* INVERSE: same as legacy 255-XOR */
-                hl_field_decode_obfuscated_string(f_login, login_str,
-                                                   sizeof(login_str));
-            }
-        }
+        /* Use the verified HOPE account's login name */
+        strncpy(login_str, hope_acct->login, sizeof(login_str) - 1);
+        login_str[sizeof(login_str) - 1] = '\0';
     }
 
     /* Check bans */
@@ -842,6 +925,7 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
             hl_field_free(&err_field);
             err_reply.fields = NULL;
             hl_transaction_free(&login_tran);
+            if (hope) free(hope);
             hl_conn_close(conn);
             return;
         }
@@ -855,12 +939,18 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
     hl_client_conn_t *cc = hl_client_conn_new(client_fd, remote_addr, srv);
     if (!cc) {
         hl_transaction_free(&login_tran);
+        if (hope) free(hope);
         hl_conn_close(conn);
         return;
     }
+    cc->logger = srv->logger;
     cc->conn = conn;              /* Transfer conn ownership to client */
     cc->is_tls = (tls_conn != NULL);
-    cc->logger = srv->logger;
+
+    /* Attach HOPE state if negotiated */
+    if (is_hope) {
+        cc->hope = hope;
+    }
 
     /* Set user info from login fields */
     if (f_name && f_name->data_len > 0) {
@@ -885,7 +975,15 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
     }
 
     /* Authenticate — maps to Go handleLogin() password check */
-    if (srv->account_mgr) {
+    if (is_hope) {
+        /* HOPE already verified credentials — assign the matched account */
+        cc->account = hope_acct;
+        if (hl_access_is_set(hope_acct->access, ACCESS_DISCON_USER)) {
+            pthread_mutex_lock(&cc->flags_mu);
+            hl_user_flags_set(cc->flags, HL_USER_FLAG_ADMIN, 1);
+            pthread_mutex_unlock(&cc->flags_mu);
+        }
+    } else if (srv->account_mgr) {
         hl_account_t *acct = srv->account_mgr->vt->get(srv->account_mgr, login_str);
         if (!acct) {
             hl_log_info(srv->logger, "Login failed (unknown account): %s from %s",
@@ -902,7 +1000,7 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
                          (uint16_t)strlen(msg));
             err_reply.fields = &err_field;
             err_reply.field_count = 1;
-            send_transaction_via_conn(conn, &err_reply);
+            send_transaction_to_client(cc, &err_reply);
             hl_field_free(&err_field);
             err_reply.fields = NULL;
             hl_transaction_free(&login_tran);
@@ -913,52 +1011,12 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
 
         /* Verify password if the account has one set */
         if (acct->password[0] != '\0') {
-            int pw_ok = 0;
-
-            if (hope_authenticated) {
-                /* HOPE: verify MAC'd password against session key.
-                 * Try HOPE-format password first (reversible), fall back
-                 * to INVERSE which doesn't need plaintext. */
-                if (f_password && f_password->data_len > 0) {
-                    char plain_pw[128] = "";
-                    int have_plain = 0;
-
-                    /* Try to decrypt HOPE-stored password */
-                    if (srv->hope_master_key_loaded &&
-                        strncmp(acct->password, "hope:", 5) == 0) {
-                        if (hl_hope_password_decrypt(srv->hope_master_key,
-                                acct->password, plain_pw, sizeof(plain_pw)) == 0)
-                            have_plain = 1;
-                    }
-
-                    if (have_plain) {
-                        /* Full HMAC verification with plaintext password */
-                        pw_ok = hl_hope_verify_password(hope_mac_algo,
-                            plain_pw, hope_session_key,
-                            f_password->data, f_password->data_len);
-                        strncpy(hope_password_plain, plain_pw, sizeof(hope_password_plain) - 1);
-                    } else if (hope_mac_algo == HL_HOPE_MAC_INVERSE) {
-                        /* INVERSE fallback: decode and verify against stored hash */
-                        char pw_str[128] = "";
-                        hl_field_decode_obfuscated_string(f_password, pw_str, sizeof(pw_str));
-                        pw_ok = hl_password_verify(pw_str, acct->password);
-                        strncpy(hope_password_plain, pw_str, sizeof(hope_password_plain) - 1);
-                        memset(pw_str, 0, sizeof(pw_str));
-                    }
-                    memset(plain_pw, 0, sizeof(plain_pw));
-                }
-            } else {
-                /* Legacy: 255-rotation decode + SHA-1 hash verification */
-                char password_str[128] = "";
-                if (f_password && f_password->data_len > 0) {
-                    hl_field_decode_obfuscated_string(f_password, password_str,
-                                                       sizeof(password_str));
-                }
-                pw_ok = hl_password_verify(password_str, acct->password);
-                memset(password_str, 0, sizeof(password_str));
+            char password_str[128] = "";
+            if (f_password && f_password->data_len > 0) {
+                hl_field_decode_obfuscated_string(f_password, password_str,
+                                                   sizeof(password_str));
             }
-
-            if (!pw_ok) {
+            if (!hl_password_verify(password_str, acct->password)) {
                 hl_log_info(srv->logger, "Login failed (bad password): %s from %s",
                             login_str, ip_str);
                 hl_transaction_t err_reply;
@@ -972,20 +1030,13 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
                              (uint16_t)strlen(msg));
                 err_reply.fields = &err_field;
                 err_reply.field_count = 1;
-                send_transaction_via_conn(conn, &err_reply);
+                send_transaction_to_client(cc, &err_reply);
                 hl_field_free(&err_field);
                 err_reply.fields = NULL;
                 hl_transaction_free(&login_tran);
                 hl_client_conn_free(cc);
                 close(client_fd);
                 return;
-            }
-        } else if (hope_authenticated && f_password && f_password->data_len > 0) {
-            /* Guest account (empty password) with HOPE — verify MAC of empty string */
-            if (!hl_hope_verify_password(hope_mac_algo, "",
-                    hope_session_key, f_password->data, f_password->data_len)) {
-                /* MAC mismatch on empty password — shouldn't happen but be safe */
-                hl_log_info(srv->logger, "HOPE guest MAC mismatch from %s", ip_str);
             }
         }
 
@@ -995,56 +1046,6 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
             pthread_mutex_lock(&cc->flags_mu);
             hl_user_flags_set(cc->flags, HL_USER_FLAG_ADMIN, 1);
             pthread_mutex_unlock(&cc->flags_mu);
-        }
-    }
-
-    /* Set HOPE state on the connection if authenticated via HOPE.
-     * Transport encryption is initialized here if a cipher was negotiated. */
-    if (hope_authenticated) {
-        cc->hope_active = 1;
-        cc->hope_mac_algo = hope_mac_algo;
-        memcpy(cc->hope_session_key, hope_session_key, HL_HOPE_SESSION_KEY_LEN);
-
-        /* Set up transport encryption if cipher was negotiated */
-        if (hope_cipher == HL_HOPE_CIPHER_RC4 && hope_password_plain[0] != '\0') {
-            uint8_t encode_key[SHA_DIGEST_LENGTH];
-            uint8_t decode_key[SHA_DIGEST_LENGTH];
-            const uint8_t *pw = (const uint8_t *)hope_password_plain;
-            size_t pw_len = strlen(hope_password_plain);
-
-            /* Compute password MAC for key derivation */
-            uint8_t pw_mac[SHA_DIGEST_LENGTH];
-            int mac_len = hl_hope_compute_mac(hope_mac_algo,
-                pw, pw_len, hope_session_key, HL_HOPE_SESSION_KEY_LEN,
-                pw_mac, sizeof(pw_mac));
-
-            if (mac_len > 0) {
-                int key_len = hl_hope_derive_keys(hope_mac_algo,
-                    pw, pw_len, pw_mac, (size_t)mac_len,
-                    encode_key, decode_key, sizeof(encode_key));
-                if (key_len > 0) {
-                    hl_hope_init_rc4(cc, encode_key, (size_t)key_len,
-                                     decode_key, (size_t)key_len);
-                    hl_log_info(srv->logger, "HOPE RC4 transport encryption active for %s",
-                                ip_str);
-                }
-            }
-            memset(encode_key, 0, sizeof(encode_key));
-            memset(decode_key, 0, sizeof(decode_key));
-            memset(pw_mac, 0, sizeof(pw_mac));
-        }
-        memset(hope_password_plain, 0, sizeof(hope_password_plain));
-    }
-
-    /* Large file mode — default on. Old clients simply ignore unknown fields.
-     * If a client sends FIELD_CAPABILITIES, respect it; otherwise assume support. */
-    cc->large_file_mode = 1;
-    {
-        const hl_field_t *f_caps = hl_transaction_get_field(&login_tran, FIELD_CAPABILITIES);
-        if (f_caps && f_caps->data_len >= 2) {
-            uint16_t client_caps = hl_read_u16(f_caps->data);
-            if (!(client_caps & HL_CAPABILITY_LARGE_FILES))
-                cc->large_file_mode = 0;
         }
     }
 
@@ -1063,19 +1064,54 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
                 remote_addr, cc->user_name_len, cc->user_name,
                 hl_read_u16(cc->id));
 
+    /* Negotiate capabilities (large file support, etc.) */
+    {
+        const hl_field_t *f_caps = hl_transaction_get_field(&login_tran, FIELD_CAPABILITIES);
+        uint16_t client_caps = 0;
+        if (f_caps && f_caps->data_len >= 2) {
+            client_caps = hl_read_u16(f_caps->data);
+        }
+        /* Enable large file mode if client advertises it */
+        if (client_caps & HL_CAPABILITY_LARGE_FILES) {
+            cc->large_file_mode = 1;
+            hl_log_info(srv->logger, "Large file mode enabled for %s",
+                        cc->remote_addr);
+        }
+    }
+
+    /* Activate HOPE transport encryption BEFORE sending login reply.
+     * Per Janus interop: the login reply and all subsequent transactions
+     * are sent encrypted. The client activates its reader immediately
+     * after sending step 3, so it expects the reply to be encrypted. */
+    if (cc->hope && cc->hope->mac_alg != HL_HOPE_MAC_INVERSE) {
+        if (cc->hope->aead.ft_base_key_set) {
+            /* AEAD keys were derived — activate AEAD transport */
+            cc->hope->aead_active = 1;
+            hl_log_info(srv->logger, "HOPE AEAD transport encryption activated for %s (ChaCha20-Poly1305)",
+                        cc->remote_addr);
+        } else {
+            /* RC4 transport */
+            cc->hope->active = 1;
+            hl_log_info(srv->logger, "HOPE transport encryption activated for %s (RC4)",
+                        cc->remote_addr);
+        }
+    }
+
     /* Send login reply sequence — maps to Go login response in server.go:593-615
      *
-     * 1. Reply to login transaction with FieldVersion, FieldCommunityBannerID, FieldServerName
+     * 1. Reply to login transaction with FieldVersion, FieldCommunityBannerID, FieldServerName, FieldCapabilities
      * 2. Send TranUserAccess with access bitmap (new transaction, not reply)
      * 3. Send TranShowAgreement with agreement text (new transaction, not reply)
+     *
+     * All sent via send_transaction_to_client() which encrypts if HOPE is active.
      */
 
-    /* Step 1: Login reply with server info + capabilities */
+    /* Step 1: Login reply with server info */
     {
         uint8_t version_bytes[2] = {0x00, 0xBE}; /* 190 = Hotline 1.8+ */
         uint8_t banner_id[2] = {0, 0};
 
-        hl_field_t reply_fields[6]; /* version + banner + name + capabilities + access + room */
+        hl_field_t reply_fields[4]; /* +1 for capabilities */
         int fc = 0;
         hl_field_new(&reply_fields[fc++], FIELD_VERSION, version_bytes, 2);
         hl_field_new(&reply_fields[fc++], FIELD_COMMUNITY_BANNER_ID, banner_id, 2);
@@ -1090,13 +1126,6 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
             hl_field_new(&reply_fields[fc++], FIELD_CAPABILITIES, caps, 2);
         }
 
-        /* Include UserAccess in the login reply — modern clients (Navigator)
-         * read it from the reply, not from a separate TranUserAccess push. */
-        if (cc->account) {
-            hl_field_new(&reply_fields[fc++], FIELD_USER_ACCESS,
-                         cc->account->access, 8);
-        }
-
         hl_transaction_t reply;
         memset(&reply, 0, sizeof(reply));
         reply.is_reply = 1;
@@ -1104,21 +1133,20 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
         memcpy(reply.client_id, cc->id, 2);
         reply.fields = reply_fields;
         reply.field_count = (uint16_t)fc;
-        send_transaction_via_conn(conn, &reply);
+        send_transaction_to_client(cc, &reply);
 
         int fi;
         for (fi = 0; fi < fc; fi++) hl_field_free(&reply_fields[fi]);
         reply.fields = NULL;
     }
 
-    /* Step 2: Send UserAccess as a separate transaction for legacy clients
-     * that expect it (Hotline 1.x). Modern clients read it from the login reply. */
+    /* Step 2: Send UserAccess bitmap as new transaction */
     if (cc->account) {
         hl_field_t access_field;
         hl_field_new(&access_field, FIELD_USER_ACCESS, cc->account->access, 8);
         hl_transaction_t access_tran;
         hl_transaction_new(&access_tran, TRAN_USER_ACCESS, cc->id, &access_field, 1);
-        send_transaction_via_conn(conn, &access_tran);
+        send_transaction_to_client(cc, &access_tran);
         hl_field_free(&access_field);
         hl_transaction_free(&access_tran);
     }
@@ -1137,7 +1165,7 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
             hl_transaction_t agree_tran;
             hl_transaction_new(&agree_tran, TRAN_SHOW_AGREEMENT, cc->id,
                                &agree_field, 1);
-            send_transaction_via_conn(conn, &agree_tran);
+            send_transaction_to_client(cc, &agree_tran);
             hl_field_free(&agree_field);
             hl_transaction_free(&agree_tran);
         } else {
@@ -1150,7 +1178,7 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
             hl_transaction_t na_tran;
             hl_transaction_new(&na_tran, TRAN_SHOW_AGREEMENT, cc->id,
                                &na_field, 1);
-            send_transaction_via_conn(conn, &na_tran);
+            send_transaction_to_client(cc, &na_tran);
             hl_field_free(&na_field);
             hl_transaction_free(&na_tran);
         }
@@ -1158,28 +1186,23 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
 
     /* Notify others immediately for 1.2.3-style login flows where the
      * nickname was already provided in TranLogin. Newer clients are
-     * announced on TranAgreed after sending user info/options.
-     * Skip notification for users without ShowInList permission. */
+     * announced on TranAgreed after sending user info/options. */
     if (f_name && f_name->data_len > 0) {
-        if (!cc->account ||
-            hl_access_is_set(cc->account->access, ACCESS_SHOW_IN_LIST))
-            broadcast_notify_change_user(srv, cc);
+        broadcast_notify_change_user(srv, cc);
     }
 
     hl_transaction_free(&login_tran);
 
-    /* Clear socket timeouts — client is now managed by kqueue */
+    /* Clear socket timeouts — client is now managed by event loop */
     tv.tv_sec = 0;
     tv.tv_usec = 0;
     setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
-    /* Register client fd with kqueue for read events */
-    struct kevent change;
-    EV_SET(&change, client_fd, EVFILT_READ, EV_ADD, 0, 0, cc);
-    if (kevent(kq, &change, 1, NULL, 0, NULL) < 0) {
-        hl_log_error(srv->logger, "Failed to register client fd with kqueue");
-        disconnect_client(srv, cc, kq);
+    /* Register client fd with event loop for read events */
+    if (hl_event_add_fd(evloop, client_fd, cc) < 0) {
+        hl_log_error(srv->logger, "Failed to register client fd with event loop");
+        disconnect_client(srv, cc, evloop);
         return;
     }
 }
@@ -1226,7 +1249,8 @@ static int encode_file_path(const char *rel_path, uint8_t *buf, size_t buf_len)
 
 /* Send a single file's data in FILP format during folder download.
  * Returns 0 on success, -1 on error. */
-static int send_folder_file(hl_tls_conn_t *conn, const char *file_path, const char *filename)
+static int send_folder_file(hl_tls_conn_t *conn, const char *file_path,
+                             const char *filename)
 {
     FILE *f = fopen(file_path, "rb");
     if (!f) return -1;
@@ -1357,10 +1381,48 @@ static int send_folder_recursive(hl_server_t *srv, hl_tls_conn_t *conn,
     return 0;
 }
 
+/* Write data through AEAD framing for encrypted file transfers.
+ * Seals `data` into a length-prefixed AEAD frame and writes it.
+ * Uses server->client direction (0x00). */
+static int aead_write_frame(hl_tls_conn_t *conn, const uint8_t key[32],
+                            uint64_t *counter, const uint8_t *data, size_t data_len)
+{
+    size_t frame_size = 4 + data_len + HL_POLY1305_TAG_SIZE;
+    uint8_t *frame = (uint8_t *)malloc(frame_size);
+    if (!frame) return -1;
+
+    /* Build nonce: direction 0x00 (server->client) + counter */
+    uint8_t nonce[12];
+    memset(nonce, 0, 12);
+    nonce[4]  = (uint8_t)(*counter >> 56);
+    nonce[5]  = (uint8_t)(*counter >> 48);
+    nonce[6]  = (uint8_t)(*counter >> 40);
+    nonce[7]  = (uint8_t)(*counter >> 32);
+    nonce[8]  = (uint8_t)(*counter >> 24);
+    nonce[9]  = (uint8_t)(*counter >> 16);
+    nonce[10] = (uint8_t)(*counter >> 8);
+    nonce[11] = (uint8_t)(*counter);
+
+    uint8_t *ct = frame + 4;
+    uint8_t *tag = ct + data_len;
+    hl_chacha20_poly1305_encrypt(key, nonce, data, data_len, ct, tag);
+
+    uint32_t payload = (uint32_t)(data_len + HL_POLY1305_TAG_SIZE);
+    frame[0] = (uint8_t)(payload >> 24);
+    frame[1] = (uint8_t)(payload >> 16);
+    frame[2] = (uint8_t)(payload >> 8);
+    frame[3] = (uint8_t)(payload);
+
+    int rc = hl_conn_write_all(conn, frame, frame_size);
+    free(frame);
+    (*counter)++;
+    return rc;
+}
+
 static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
                                              hl_tls_conn_t *xfer_conn)
 {
-    /* Wrap plain connections; TLS connections arrive pre-wrapped */
+    /* Create unified connection wrapper for file transfer I/O */
     hl_tls_conn_t *conn = xfer_conn ? xfer_conn : hl_conn_wrap_plain(client_fd);
     if (!conn) { close(client_fd); return; }
 
@@ -1395,11 +1457,50 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
         return;
     }
 
+    /* Derive per-transfer AEAD key if this is an AEAD transfer */
+    uint8_t xfer_key[32];
+    int xfer_aead = 0;
+    uint64_t xfer_send_counter = 0;
+    uint64_t xfer_recv_counter = 0;
+    (void)xfer_recv_counter; /* Used when AEAD upload decryption is implemented */
+
+    if (ft->ft_aead) {
+        hl_hkdf_sha256(ft->ft_base_key, 32,
+                       hdr.reference_number, 4,
+                       (const uint8_t *)"hope-ft-ref", 11,
+                       xfer_key, 32);
+        xfer_aead = 1;
+        hl_log_info(srv->logger, "AEAD file transfer key derived for ref %02x%02x%02x%02x",
+                    hdr.reference_number[0], hdr.reference_number[1],
+                    hdr.reference_number[2], hdr.reference_number[3]);
+    }
+
     /* Handle banner download — send raw banner data */
     if (ft->type == HL_XFER_BANNER_DOWNLOAD) {
         if (srv->banner && srv->banner_len > 0) {
-            hl_conn_write_all(conn, srv->banner, srv->banner_len);
-            hl_log_info(srv->logger, "Banner sent (%zu bytes)", srv->banner_len);
+            if (xfer_aead) {
+                /* Seal banner into AEAD frame */
+                size_t frame_size = 4 + srv->banner_len + HL_POLY1305_TAG_SIZE;
+                uint8_t *frame = (uint8_t *)malloc(frame_size);
+                if (frame) {
+                    uint8_t nonce[12];
+                    memset(nonce, 0, 12); /* direction 0x00 (server->client), counter 0 */
+                    uint8_t *ct = frame + 4;
+                    uint8_t *tag = ct + srv->banner_len;
+                    hl_chacha20_poly1305_encrypt(xfer_key, nonce,
+                        srv->banner, srv->banner_len, ct, tag);
+                    uint32_t payload = (uint32_t)(srv->banner_len + HL_POLY1305_TAG_SIZE);
+                    frame[0] = (uint8_t)(payload >> 24);
+                    frame[1] = (uint8_t)(payload >> 16);
+                    frame[2] = (uint8_t)(payload >> 8);
+                    frame[3] = (uint8_t)(payload);
+                    hl_conn_write_all(conn, frame, frame_size);
+                    free(frame);
+                }
+            } else {
+                hl_conn_write_all(conn, srv->banner, srv->banner_len);
+            }
+            hl_log_info(srv->logger, "Banner sent (%zu bytes, aead=%d)", srv->banner_len, xfer_aead);
         }
         /* Remove completed transfer (ft points into manager array — do NOT free) */
         srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
@@ -1480,10 +1581,25 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
         hl_write_u32(data_fork_hdr + 12, file_size);
 
         /* Send FILP headers (always sent, even for resume) */
-        hl_conn_write_all(conn, filp_hdr, 24);
-        hl_conn_write_all(conn, info_fork_hdr, 16);
-        hl_conn_write_all(conn, info_data, info_data_size);
-        hl_conn_write_all(conn, data_fork_hdr, 16);
+        if (xfer_aead) {
+            /* Concatenate all FILP metadata into one frame */
+            size_t meta_len = 24 + 16 + info_data_size + 16;
+            uint8_t *meta = (uint8_t *)malloc(meta_len);
+            if (meta) {
+                size_t mpos = 0;
+                memcpy(meta + mpos, filp_hdr, 24); mpos += 24;
+                memcpy(meta + mpos, info_fork_hdr, 16); mpos += 16;
+                memcpy(meta + mpos, info_data, info_data_size); mpos += info_data_size;
+                memcpy(meta + mpos, data_fork_hdr, 16); mpos += 16;
+                aead_write_frame(conn, xfer_key, &xfer_send_counter, meta, mpos);
+                free(meta);
+            }
+        } else {
+            hl_conn_write_all(conn, filp_hdr, 24);
+            hl_conn_write_all(conn, info_fork_hdr, 16);
+            hl_conn_write_all(conn, info_data, info_data_size);
+            hl_conn_write_all(conn, data_fork_hdr, 16);
+        }
 
         /* Seek past already-transferred bytes for resume */
         if (data_offset > 0) {
@@ -1495,14 +1611,20 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
         size_t total_sent = 0;
         size_t n;
         while ((n = fread(fbuf, 1, sizeof(fbuf), f)) > 0) {
-            if (hl_conn_write_all(conn, fbuf, n) < 0) break;
+            int wrc;
+            if (xfer_aead) {
+                wrc = aead_write_frame(conn, xfer_key, &xfer_send_counter, fbuf, n);
+            } else {
+                wrc = hl_conn_write_all(conn, fbuf, n);
+            }
+            if (wrc < 0) break;
             total_sent += n;
         }
         fclose(f);
 
-        hl_log_info(srv->logger, "File sent: %s (%zu bytes%s + FILP headers)",
+        hl_log_info(srv->logger, "File sent: %s (%zu bytes%s + FILP headers, aead=%d)",
                     ft->file_root, total_sent,
-                    resuming ? ", resumed" : "");
+                    resuming ? ", resumed" : "", xfer_aead);
 
         srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
                                          hdr.reference_number);
@@ -1512,20 +1634,35 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
 
     /* Handle file upload — receive FILP-wrapped data from client */
     if (ft->type == HL_XFER_FILE_UPLOAD) {
+        /* Set up AEAD stream reader if this is an encrypted transfer */
+        hl_aead_stream_reader_t aead_reader;
+        int use_aead_reader = 0;
+        if (xfer_aead) {
+            hl_aead_reader_init(&aead_reader, conn, xfer_key);
+            use_aead_reader = 1;
+            hl_log_info(srv->logger, "Upload: AEAD stream reader initialized");
+        }
+
+        /* Macros to abstract reads through plain or AEAD path */
+        #define UPLOAD_READ_FULL(buf, len) \
+            (use_aead_reader ? hl_aead_reader_read_full(&aead_reader, (buf), (len)) \
+                             : hl_conn_read_full(conn, (buf), (len)))
+
         /* Step 1: Read FILP header (24 bytes) */
         uint8_t filp_hdr[HL_FLAT_FILE_HEADER_SIZE];
-        if (hl_conn_read_full(conn, filp_hdr, HL_FLAT_FILE_HEADER_SIZE) < 0) {
-            hl_log_error(srv->logger, "Upload: failed to read FILP header");
+        if (UPLOAD_READ_FULL(filp_hdr, HL_FLAT_FILE_HEADER_SIZE) < 0) {
+            hl_log_error(srv->logger, "Upload: failed to read FILP header (aead=%d)", xfer_aead);
             goto upload_cleanup;
         }
         if (memcmp(filp_hdr, "FILP", 4) != 0) {
-            hl_log_error(srv->logger, "Upload: invalid FILP magic");
+            hl_log_error(srv->logger, "Upload: invalid FILP magic (got %02x%02x%02x%02x, aead=%d)",
+                        filp_hdr[0], filp_hdr[1], filp_hdr[2], filp_hdr[3], xfer_aead);
             goto upload_cleanup;
         }
 
         /* Step 2: Read INFO fork header (16 bytes) to get info data size */
         uint8_t info_hdr[HL_FORK_HEADER_SIZE];
-        if (hl_conn_read_full(conn, info_hdr, HL_FORK_HEADER_SIZE) < 0) {
+        if (UPLOAD_READ_FULL(info_hdr, HL_FORK_HEADER_SIZE) < 0) {
             hl_log_error(srv->logger, "Upload: failed to read INFO fork header");
             goto upload_cleanup;
         }
@@ -1539,7 +1676,7 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
         if (info_data_size > 0) {
             uint8_t *info_buf = (uint8_t *)malloc(info_data_size);
             if (!info_buf) goto upload_cleanup;
-            if (hl_conn_read_full(conn, info_buf, info_data_size) < 0) {
+            if (UPLOAD_READ_FULL(info_buf, info_data_size) < 0) {
                 free(info_buf);
                 hl_log_error(srv->logger, "Upload: failed to read INFO fork data");
                 goto upload_cleanup;
@@ -1549,7 +1686,7 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
 
         /* Step 4: Read DATA fork header (16 bytes) to get file size */
         uint8_t data_hdr[HL_FORK_HEADER_SIZE];
-        if (hl_conn_read_full(conn, data_hdr, HL_FORK_HEADER_SIZE) < 0) {
+        if (UPLOAD_READ_FULL(data_hdr, HL_FORK_HEADER_SIZE) < 0) {
             hl_log_error(srv->logger, "Upload: failed to read DATA fork header");
             goto upload_cleanup;
         }
@@ -1574,10 +1711,16 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
 
         while (remaining > 0) {
             size_t chunk = remaining < sizeof(fbuf) ? remaining : sizeof(fbuf);
-            ssize_t r = hl_conn_read(conn, fbuf, chunk);
+            ssize_t r;
+            if (use_aead_reader) {
+                r = hl_aead_reader_read(&aead_reader, fbuf, chunk);
+            } else {
+                r = hl_conn_read(conn, fbuf, chunk);
+            }
             if (r < 0) {
-                if (errno == EINTR) continue;
-                hl_log_error(srv->logger, "Upload: read error: %s", strerror(errno));
+                if (!use_aead_reader && errno == EINTR) continue;
+                hl_log_error(srv->logger, "Upload: read error%s",
+                            use_aead_reader ? " (AEAD)" : "");
                 write_error = 1;
                 break;
             }
@@ -1594,6 +1737,8 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
             remaining -= (uint32_t)r;
             total_received += (size_t)r;
         }
+
+        #undef UPLOAD_READ_FULL
         close(out_fd);
 
         if (write_error) {
@@ -1607,10 +1752,26 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
             } else {
                 hl_log_info(srv->logger, "File received: %s (%zu bytes)",
                             ft->file_root, total_received);
+
+                /* Mnemosyne: queue incremental file add */
+                if (srv->mnemosyne_sync) {
+                    const char *root = srv->config.file_root;
+                    size_t root_len = strlen(root);
+                    const char *rel = ft->file_root;
+                    if (strncmp(rel, root, root_len) == 0 && rel[root_len] == '/')
+                        rel = rel + root_len + 1;
+                    /* Extract filename from path */
+                    const char *fname = strrchr(rel, '/');
+                    fname = fname ? fname + 1 : rel;
+                    mn_queue_file_add((mn_sync_t *)srv->mnemosyne_sync,
+                                      rel, fname, (uint64_t)total_received,
+                                      "file", "");
+                }
             }
         }
 
 upload_cleanup:
+        if (use_aead_reader) hl_aead_reader_free(&aead_reader);
         srv->file_transfer_mgr->vt->del(srv->file_transfer_mgr,
                                          hdr.reference_number);
         hl_conn_close(conn);
@@ -1814,46 +1975,36 @@ int hl_server_listen_and_serve(hl_server_t *srv)
         }
     }
 
-    int kq = kqueue();
-    if (kq < 0) {
-        hl_log_error(srv->logger, "kqueue() failed: %s", strerror(errno));
+    hl_event_loop_t *evloop = hl_event_loop_new();
+    if (!evloop) {
+        hl_log_error(srv->logger, "Failed to create event loop: %s", strerror(errno));
         return -1;
     }
 
-    struct kevent changes[10];
-    int nchanges = 0;
-
-    EV_SET(&changes[nchanges++], srv->listen_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-    EV_SET(&changes[nchanges++], srv->transfer_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+    if (hl_event_add_fd(evloop, srv->listen_fd, NULL) < 0 ||
+        hl_event_add_fd(evloop, srv->transfer_fd, NULL) < 0) {
+        hl_log_error(srv->logger, "Failed to register listener fds: %s", strerror(errno));
+        hl_event_loop_free(evloop);
+        return -1;
+    }
     if (srv->tls_listen_fd >= 0)
-        EV_SET(&changes[nchanges++], srv->tls_listen_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+        hl_event_add_fd(evloop, srv->tls_listen_fd, NULL);
     if (srv->tls_transfer_fd >= 0)
-        EV_SET(&changes[nchanges++], srv->tls_transfer_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-    EV_SET(&changes[nchanges++], HL_TIMER_IDLE_CHECK, EVFILT_TIMER, EV_ADD, 0,
-           HL_IDLE_CHECK_INTERVAL * 1000, NULL);
+        hl_event_add_fd(evloop, srv->tls_transfer_fd, NULL);
 
-    /* Mnemosyne timers — register separately after main batch */
-    mn_sync_t *mn = (mn_sync_t *)srv->mnemosyne_sync;
-    if (mn && mn_sync_enabled(mn)) {
-        struct kevent mn_changes[2];
-        /* Heartbeat every 5 minutes (300s) */
-        EV_SET(&mn_changes[0], HL_TIMER_MN_HEARTBEAT, EVFILT_TIMER, EV_ADD, 0,
-               300 * 1000, NULL);
-        /* Periodic drift detection every 15 minutes (900s) */
-        EV_SET(&mn_changes[1], HL_TIMER_MN_PERIODIC, EVFILT_TIMER, EV_ADD, 0,
-               900 * 1000, NULL);
-        if (kevent(kq, mn_changes, 2, NULL, 0, NULL) < 0) {
-            hl_log_error(srv->logger, "Mnemosyne timer registration failed: %s",
-                         strerror(errno));
-        } else {
-            hl_log_info(srv->logger, "Mnemosyne sync timers registered");
-        }
+    if (hl_event_add_timer(evloop, HL_TIMER_IDLE, HL_IDLE_CHECK_INTERVAL * 1000) < 0) {
+        hl_log_error(srv->logger, "Failed to register timer: %s", strerror(errno));
+        hl_event_loop_free(evloop);
+        return -1;
     }
 
-    if (kevent(kq, changes, nchanges, NULL, 0, NULL) < 0) {
-        hl_log_error(srv->logger, "kevent() register failed: %s", strerror(errno));
-        close(kq);
-        return -1;
+    /* Mnemosyne timers */
+    mn_sync_t *mn_sync = (mn_sync_t *)srv->mnemosyne_sync;
+    int mn_chunk_timer_active = 0;
+    if (mn_sync && mn_sync_enabled(mn_sync)) {
+        hl_event_add_timer(evloop, HL_TIMER_MN_HEARTBEAT, MN_HEARTBEAT_MS);
+        hl_event_add_timer(evloop, HL_TIMER_MN_PERIODIC, MN_PERIODIC_MS);
+        hl_log_info(srv->logger, "Mnemosyne timers registered (heartbeat 5m, periodic 15m)");
     }
 
     hl_log_info(srv->logger, "Server started, entering event loop");
@@ -1862,44 +2013,19 @@ int hl_server_listen_and_serve(hl_server_t *srv)
     int tracker_elapsed = HL_TRACKER_UPDATE_FREQ; /* trigger on first tick */
 
     while (!srv->shutdown) {
-        struct kevent events[64];
-        struct timespec timeout = {1, 0};
+        hl_event_t events[64];
 
-        int nev = kevent(kq, NULL, 0, events, 64, &timeout);
+        int nev = hl_event_poll(evloop, events, 64, 1000);
         if (nev < 0) {
-            if (errno == EINTR) continue;
-            hl_log_error(srv->logger, "kevent() wait failed: %s", strerror(errno));
+            hl_log_error(srv->logger, "Event poll failed: %s", strerror(errno));
             break;
         }
 
         int i;
         for (i = 0; i < nev; i++) {
-            struct kevent *ev = &events[i];
+            hl_event_t *ev = &events[i];
 
-            if (ev->filter == EVFILT_TIMER &&
-                (int)ev->ident == HL_TIMER_MN_HEARTBEAT) {
-                /* Mnemosyne heartbeat timer */
-                mn_sync_t *mns = (mn_sync_t *)srv->mnemosyne_sync;
-                if (mns && mn_sync_enabled(mns)) {
-                    /* On first heartbeat, trigger initial full sync */
-                    if (!mns->startup_delay_done) {
-                        mns->startup_delay_done = 1;
-                        hl_log_info(srv->logger, "Mnemosyne: initial full sync");
-                        mn_start_full_sync(mns);
-                    }
-                    mn_send_heartbeat(mns);
-                    mn_drain_incremental_queue(mns);
-                }
-            }
-            else if (ev->filter == EVFILT_TIMER &&
-                     (int)ev->ident == HL_TIMER_MN_PERIODIC) {
-                /* Mnemosyne periodic drift detection */
-                mn_sync_t *mns = (mn_sync_t *)srv->mnemosyne_sync;
-                if (mns && mn_sync_enabled(mns)) {
-                    mn_periodic_check(mns);
-                }
-            }
-            else if (ev->filter == EVFILT_TIMER) {
+            if (ev->type == HL_EVENT_TIMER && ev->fd == HL_TIMER_IDLE) {
                 /* Idle check — maps to Go keepaliveHandler() */
                 int count = 0;
                 hl_client_conn_t **clients = srv->client_mgr->vt->list(
@@ -1914,11 +2040,8 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                         if (cc->idle_time > HL_USER_IDLE_SECONDS &&
                             !hl_user_flags_is_set(cc->flags, HL_USER_FLAG_AWAY)) {
                             hl_user_flags_set(cc->flags, HL_USER_FLAG_AWAY, 1);
-                            /* Notify others that user is now away (skip hidden) */
-                            if (!cc->account ||
-                                hl_access_is_set(cc->account->access,
-                                                 ACCESS_SHOW_IN_LIST))
-                                broadcast_notify_change_user(srv, cc);
+                            /* Notify others that user is now away. */
+                            broadcast_notify_change_user(srv, cc);
                         }
                         pthread_rwlock_unlock(&cc->mu);
                     }
@@ -1950,8 +2073,103 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                             reg_ok, srv->config.tracker_count);
                     }
                 }
+
+                /* Mnemosyne: startup delay — trigger first full sync after 30s */
+                if (mn_sync && mn_sync_enabled(mn_sync) &&
+                    !mn_sync->startup_delay_done) {
+                    mn_sync->startup_ticks += HL_IDLE_CHECK_INTERVAL;
+                    if (mn_sync->startup_ticks >= MN_STARTUP_DELAY_SECS) {
+                        mn_sync->startup_delay_done = 1;
+                        if (mn_load_cursor(mn_sync)) {
+                            mn_sync->chunked_sync_active = 1;
+                            hl_log_info(srv->logger,
+                                "Mnemosyne: resuming interrupted sync");
+                        } else {
+                            mn_start_full_sync(mn_sync);
+                        }
+                        /* Start chunk timer if needed */
+                        if (mn_sync->chunked_sync_active && !mn_chunk_timer_active) {
+                            hl_event_add_timer(evloop, HL_TIMER_MN_CHUNK,
+                                               MN_CHUNK_TICK_MS);
+                            mn_chunk_timer_active = 1;
+                        }
+                    }
+                }
+
+                /* Check for SIGHUP reload */
+                if (srv->reload_pending) {
+                    srv->reload_pending = 0;
+
+                    /* Reload config from disk */
+                    if (srv->config_dir[0]) {
+                        hl_log_info(srv->logger, "Reloading configuration (SIGHUP)");
+                        mobius_load_config(&srv->config, srv->config_dir);
+                    }
+
+                    /* Mnemosyne: stop timers, reconfigure, restart */
+                    if (mn_sync) {
+                        hl_event_remove_timer(evloop, HL_TIMER_MN_HEARTBEAT);
+                        hl_event_remove_timer(evloop, HL_TIMER_MN_PERIODIC);
+                        if (mn_chunk_timer_active) {
+                            hl_event_remove_timer(evloop, HL_TIMER_MN_CHUNK);
+                            mn_chunk_timer_active = 0;
+                        }
+
+                        if (mn_sync_reconfigure(mn_sync, srv)) {
+                            hl_event_add_timer(evloop, HL_TIMER_MN_HEARTBEAT, MN_HEARTBEAT_MS);
+                            hl_event_add_timer(evloop, HL_TIMER_MN_PERIODIC, MN_PERIODIC_MS);
+                            hl_log_info(srv->logger, "Mnemosyne: timers restarted after SIGHUP");
+                            mn_start_full_sync(mn_sync);
+                        } else {
+                            hl_log_info(srv->logger, "Mnemosyne: sync disabled after SIGHUP");
+                            srv->mnemosyne_sync = NULL;
+                            mn_sync = NULL;
+                        }
+                    }
+                }
             }
-            else if ((int)ev->ident == srv->listen_fd) {
+            else if (ev->type == HL_EVENT_TIMER && ev->fd == HL_TIMER_MN_HEARTBEAT) {
+                /* Mnemosyne heartbeat */
+                if (mn_sync && mn_sync_enabled(mn_sync)) {
+                    mn_send_heartbeat(mn_sync);
+                    /* Drain incrementals if not chunking */
+                    mn_drain_incremental_queue(mn_sync);
+
+                    /* Manage chunk tick timer */
+                    if (mn_sync->chunked_sync_active && !mn_chunk_timer_active) {
+                        hl_event_add_timer(evloop, HL_TIMER_MN_CHUNK, MN_CHUNK_TICK_MS);
+                        mn_chunk_timer_active = 1;
+                    } else if (!mn_sync->chunked_sync_active && mn_chunk_timer_active) {
+                        hl_event_remove_timer(evloop, HL_TIMER_MN_CHUNK);
+                        mn_chunk_timer_active = 0;
+                    }
+                }
+            }
+            else if (ev->type == HL_EVENT_TIMER && ev->fd == HL_TIMER_MN_PERIODIC) {
+                /* Mnemosyne periodic drift check */
+                if (mn_sync && mn_sync_enabled(mn_sync)) {
+                    mn_periodic_check(mn_sync);
+
+                    /* Start chunk timer if sync was triggered */
+                    if (mn_sync->chunked_sync_active && !mn_chunk_timer_active) {
+                        hl_event_add_timer(evloop, HL_TIMER_MN_CHUNK, MN_CHUNK_TICK_MS);
+                        mn_chunk_timer_active = 1;
+                    }
+                }
+            }
+            else if (ev->type == HL_EVENT_TIMER && ev->fd == HL_TIMER_MN_CHUNK) {
+                /* Mnemosyne chunk tick */
+                if (mn_sync && mn_sync_enabled(mn_sync)) {
+                    mn_do_sync_tick(mn_sync);
+
+                    /* Remove chunk timer when sync finishes */
+                    if (!mn_sync->chunked_sync_active && mn_chunk_timer_active) {
+                        hl_event_remove_timer(evloop, HL_TIMER_MN_CHUNK);
+                        mn_chunk_timer_active = 0;
+                    }
+                }
+            }
+            else if (ev->fd == srv->listen_fd) {
                 /* New connection on protocol port */
                 struct sockaddr_in client_addr;
                 socklen_t addr_len = sizeof(client_addr);
@@ -1959,15 +2177,11 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                                        (struct sockaddr *)&client_addr,
                                        &addr_len);
                 if (client_fd >= 0) {
-                    /* TCP_NODELAY on accepted client socket — see create_listener()
-                     * comment for rationale. Remove if causing throughput issues. */
-                    int nodelay = 1;
-                    setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY,
-                               &nodelay, sizeof(nodelay));
-                    handle_new_connection(srv, client_fd, &client_addr, kq, NULL);
+                    handle_new_connection(srv, client_fd, &client_addr,
+                                         evloop, NULL);
                 }
             }
-            else if ((int)ev->ident == srv->transfer_fd) {
+            else if (ev->fd == srv->transfer_fd) {
                 /* New connection on file transfer port */
                 struct sockaddr_in client_addr;
                 socklen_t addr_len = sizeof(client_addr);
@@ -1975,17 +2189,11 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                                        (struct sockaddr *)&client_addr,
                                        &addr_len);
                 if (client_fd >= 0) {
-                    /* TCP_NODELAY on transfer socket — file transfers send
-                     * large chunks so this matters less, but keeps behavior
-                     * consistent. Remove if causing throughput issues. */
-                    int nodelay = 1;
-                    setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY,
-                               &nodelay, sizeof(nodelay));
                     handle_file_transfer_connection(srv, client_fd, NULL);
                 }
             }
             else if (srv->tls_listen_fd >= 0 &&
-                     (int)ev->ident == srv->tls_listen_fd) {
+                     ev->fd == srv->tls_listen_fd) {
                 /* New TLS connection on protocol port */
                 struct sockaddr_in client_addr;
                 socklen_t addr_len = sizeof(client_addr);
@@ -1993,30 +2201,16 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                                        (struct sockaddr *)&client_addr,
                                        &addr_len);
                 if (client_fd >= 0) {
-                    int nodelay = 1;
-                    setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY,
-                               &nodelay, sizeof(nodelay));
-                    hl_log_info(srv->logger, "TLS accept from %s:%d",
-                                inet_ntoa(client_addr.sin_addr),
-                                ntohs(client_addr.sin_port));
                     hl_tls_conn_t *tconn = hl_tls_accept(&srv->tls_ctx,
                                                           client_fd);
                     if (tconn) {
-                        hl_log_info(srv->logger, "TLS handshake OK from %s:%d",
-                                    inet_ntoa(client_addr.sin_addr),
-                                    ntohs(client_addr.sin_port));
                         handle_new_connection(srv, tconn->fd, &client_addr,
-                                              kq, tconn);
-                    } else {
-                        hl_log_info(srv->logger, "TLS handshake FAILED from %s:%d",
-                                    inet_ntoa(client_addr.sin_addr),
-                                    ntohs(client_addr.sin_port));
+                                              evloop, tconn);
                     }
-                    /* hl_tls_accept closes fd on failure */
                 }
             }
             else if (srv->tls_transfer_fd >= 0 &&
-                     (int)ev->ident == srv->tls_transfer_fd) {
+                     ev->fd == srv->tls_transfer_fd) {
                 /* New TLS connection on file transfer port */
                 struct sockaddr_in client_addr;
                 socklen_t addr_len = sizeof(client_addr);
@@ -2024,25 +2218,22 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                                        (struct sockaddr *)&client_addr,
                                        &addr_len);
                 if (client_fd >= 0) {
-                    int nodelay = 1;
-                    setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY,
-                               &nodelay, sizeof(nodelay));
                     hl_tls_conn_t *tconn = hl_tls_accept(&srv->tls_ctx,
                                                           client_fd);
                     if (tconn) {
                         handle_file_transfer_connection(srv, tconn->fd, tconn);
                     }
-                    /* hl_tls_accept closes fd on failure */
                 }
             }
-            else if (ev->filter == EVFILT_READ && ev->udata != NULL) {
+            else if (ev->type == HL_EVENT_EOF && ev->udata != NULL) {
+                /* Client disconnected */
+                hl_client_conn_t *cc = (hl_client_conn_t *)ev->udata;
+                disconnect_client(srv, cc, evloop);
+            }
+            else if (ev->type == HL_EVENT_READ && ev->udata != NULL) {
                 /* Data available from a connected client */
                 hl_client_conn_t *cc = (hl_client_conn_t *)ev->udata;
-                if (ev->flags & EV_EOF) {
-                    disconnect_client(srv, cc, kq);
-                } else {
-                    process_client_data(srv, cc, kq);
-                }
+                process_client_data(srv, cc, evloop);
             }
         }
     }
@@ -2055,7 +2246,11 @@ int hl_server_listen_and_serve(hl_server_t *srv)
     if (clients) {
         int j;
         for (j = 0; j < count; j++) {
-            if (clients[j]->fd >= 0) {
+            if (clients[j]->conn) {
+                hl_conn_close(clients[j]->conn);
+                clients[j]->conn = NULL;
+                clients[j]->fd = -1;
+            } else if (clients[j]->fd >= 0) {
                 close(clients[j]->fd);
                 clients[j]->fd = -1;
             }
@@ -2063,6 +2258,6 @@ int hl_server_listen_and_serve(hl_server_t *srv)
         free(clients);
     }
 
-    close(kq);
+    hl_event_loop_free(evloop);
     return 0;
 }

@@ -90,7 +90,8 @@ HOTLINE_C_SRCS = \
 	src/hotline/bonjour.c \
 	src/hotline/tracker.c \
 	src/hotline/password.c \
-	src/hotline/hope.c
+	src/hotline/hope.c \
+	src/hotline/chacha20poly1305.c
 
 HOTLINE_C_OBJS = $(HOTLINE_C_SRCS:.c=.o)
 

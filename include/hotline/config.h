@@ -1,7 +1,5 @@
 /*
  * config.h - Hotline server configuration
- *
- * Maps to: hotline/config.go
  */
 
 #ifndef HOTLINE_CONFIG_H
@@ -35,18 +33,23 @@ typedef struct {
     char ignore_files[HL_CONFIG_MAX_IGNORE][256];/* Go: IgnoreFiles []string              */
     int  ignore_file_count;
     int  enable_bonjour;                         /* Go: EnableBonjour bool                */
-    int  enable_hope;                            /* HOPE secure login (opt-in)            */
+    char encoding[16];                           /* Go: Encoding string ("macintosh"|"utf8") */
+    int  enable_hope;                            /* EnableHOPE: HOPE secure login support */
+    int  hope_legacy_mode;                       /* HOPELegacyMode: allow INVERSE + bare MD5/SHA1 */
+    char hope_required_prefix[32];               /* HOPERequiredPrefix: name prefix for E2E-only content */
+    int  e2e_require_tls;                        /* E2ERequireTLS: require TLS in addition to HOPE for E2E content */
+    char hope_cipher_policy[16];                 /* HOPECipherPolicy: prefer-aead|require-aead|rc4-only */
+    int  e2e_require_aead;                       /* E2ERequireAEAD: require AEAD for E2E content access */
     char tls_cert_path[HL_CONFIG_PATH_MAX];      /* TLSCertFile: path to PEM certificate  */
     char tls_key_path[HL_CONFIG_PATH_MAX];       /* TLSKeyFile: path to PEM private key   */
     int  tls_port;                                /* TLSPort: TLS base port (0 = disabled) */
-    char encoding[16];                           /* Go: Encoding string ("macintosh"|"utf8") */
 
-    /* Mnemosyne search sync */
-    char mnemosyne_url[HL_CONFIG_MNEMOSYNE_URL_MAX];
-    char mnemosyne_api_key[HL_CONFIG_MNEMOSYNE_KEY_MAX];
-    int  mnemosyne_index_files;
-    int  mnemosyne_index_news;
-    int  mnemosyne_index_msgboard;
+    /* Mnemosyne sync */
+    char mnemosyne_url[HL_CONFIG_MNEMOSYNE_URL_MAX];   /* Mnemosyne instance URL */
+    char mnemosyne_api_key[HL_CONFIG_MNEMOSYNE_KEY_MAX]; /* msv_-prefixed server API key */
+    int  mnemosyne_index_files;                  /* Index file listings (default: true) */
+    int  mnemosyne_index_news;                   /* Index threaded news (default: true) */
+    int  mnemosyne_index_msgboard;               /* Index message board (default: true) */
 } hl_config_t;
 
 /* Initialize config with defaults */
