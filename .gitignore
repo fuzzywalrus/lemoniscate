@@ -74,3 +74,5 @@ test_mnemosyne
 test_mnemosyne_live
 test_chacha20poly1305
 test_hope_aead
+test_chat_history
+test_threaded_news
