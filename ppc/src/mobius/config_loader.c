@@ -59,6 +59,8 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
     int parsing_trackers = 0;
     int parsing_mnemosyne = 0;
     char mnemosyne_key[128] = {0};
+    int parsing_chat_history = 0;
+    char chat_history_key[64] = {0};
     int done = 0;
 
     while (!done) {
@@ -74,6 +76,10 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
                 parsing_mnemosyne = 1;
                 mnemosyne_key[0] = '\0';
                 current_key[0] = '\0';
+            } else if (in_mapping && strcmp(current_key, "ChatHistory") == 0) {
+                parsing_chat_history = 1;
+                chat_history_key[0] = '\0';
+                current_key[0] = '\0';
             } else {
                 in_mapping = 1;
             }
@@ -82,6 +88,8 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
         case YAML_MAPPING_END_EVENT:
             if (parsing_mnemosyne) {
                 parsing_mnemosyne = 0;
+            } else if (parsing_chat_history) {
+                parsing_chat_history = 0;
             } else {
                 in_mapping = 0;
             }
@@ -107,6 +115,32 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
                     else if (strcmp(mnemosyne_key, "index_msgboard") == 0)
                         cfg->mnemosyne_index_msgboard = yaml_parse_bool(val);
                     mnemosyne_key[0] = '\0';
+                }
+            } else if (parsing_chat_history) {
+                const char *val = (const char *)event.data.scalar.value;
+                if (chat_history_key[0] == '\0') {
+                    strncpy(chat_history_key, val, sizeof(chat_history_key) - 1);
+                } else {
+                    if (strcmp(chat_history_key, "Enabled") == 0)
+                        cfg->chat_history_enabled = yaml_parse_bool(val);
+                    else if (strcmp(chat_history_key, "MaxMessages") == 0)
+                        cfg->chat_history_max_msgs = (uint32_t)strtoul(val, NULL, 10);
+                    else if (strcmp(chat_history_key, "MaxDays") == 0)
+                        cfg->chat_history_max_days = (uint32_t)strtoul(val, NULL, 10);
+                    else if (strcmp(chat_history_key, "LegacyBroadcast") == 0)
+                        cfg->chat_history_legacy_broadcast = yaml_parse_bool(val);
+                    else if (strcmp(chat_history_key, "LegacyCount") == 0)
+                        cfg->chat_history_legacy_count = (uint32_t)strtoul(val, NULL, 10);
+                    else if (strcmp(chat_history_key, "EncryptionKey") == 0)
+                        strncpy(cfg->chat_history_encryption_key_path, val,
+                                sizeof(cfg->chat_history_encryption_key_path) - 1);
+                    else if (strcmp(chat_history_key, "RateCapacity") == 0)
+                        cfg->chat_history_rate_capacity = (uint32_t)strtoul(val, NULL, 10);
+                    else if (strcmp(chat_history_key, "RateRefillPerSec") == 0)
+                        cfg->chat_history_rate_refill_per_sec = (uint32_t)strtoul(val, NULL, 10);
+                    else if (strcmp(chat_history_key, "LogJoins") == 0)
+                        cfg->chat_history_log_joins = yaml_parse_bool(val);
+                    chat_history_key[0] = '\0';
                 }
             } else if (parsing_trackers) {
                 /* Inside Trackers sequence — each scalar is a tracker entry */
