@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>Lemoniscate</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.lemoniscate.admin</string>
+	<key>CFBundleName</key>
+	<string>Lemoniscate</string>
+	<key>CFBundleDisplayName</key>
+	<string>Lemoniscate</string>
+	<key>CFBundleIconFile</key>
+	<string>Lemoniscate.icns</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleSignature</key>
+	<string>LMSC</string>
+	<key>CFBundleVersion</key>
+	<string>0.1.7</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.7</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.4</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSHighResolutionCapable</key>
+	<false/>
+</dict>
+</plist>

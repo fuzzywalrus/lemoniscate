@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ServerName</key>
+	<string>Lemoniscate Server</string>
+	<key>ServerDescription</key>
+	<string>A Hotline server</string>
+	<key>FileRoot</key>
+	<string>~/Public</string>
+	<key>EnableBonjour</key>
+	<true/>
+	<key>EnableTrackerRegistration</key>
+	<false/>
+	<key>Trackers</key>
+	<array>
+		<string>tracked.mainecyber.com:5498</string>
+		<string>tracker.preterhuman.net:5498</string>
+		<string>badmoon.biz:5498</string>
+	</array>
+	<key>Encoding</key>
+	<string>macintosh</string>
+	<key>MaxDownloads</key>
+	<integer>0</integer>
+	<key>MaxDownloadsPerClient</key>
+	<integer>0</integer>
+	<key>MaxConnectionsPerIP</key>
+	<integer>0</integer>
+	<key>PreserveResourceForks</key>
+	<false/>
+</dict>
+</plist>
