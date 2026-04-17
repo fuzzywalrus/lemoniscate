@@ -98,7 +98,7 @@
         /* Note: do NOT include "lemoniscate" — on HFS+ (case-insensitive)
          * it matches "Lemoniscate" (the GUI binary). */
         NSArray *names = [NSArray arrayWithObjects:
-            @"lemoniscate-server", @"mobius-hotline-server", nil];
+            @"lemoniscate-server", nil];
         unsigned idx;
         for (idx = 0; idx < [names count] && !binPath; idx++) {
             NSString *name = [names objectAtIndex:idx];
