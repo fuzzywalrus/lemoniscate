@@ -51,37 +51,37 @@
 - [x] 6.2 Minimal-stub rewrite of root `README.md` — single-repo layout description, link to ppc/README.md (full rewrite deferred per user preference)
 - [x] 6.3 Deleted `ppc/.gitignore` — contents fully covered by root `.gitignore` (which already has test_chacha20poly1305, test_chat_history, test_hope_aead, test_threaded_news, build/, lemoniscate-linux-*, Lemoniscate.app/, *.dmg)
 - [x] 6.4 Scanned `README.md` and `docs/` for `src/` refs: root README is clean. `docs/PPC_BACKPORT_CHAT_HISTORY.md` has `src/` refs that are semantically "modern side" in backport context — left as-is; can be clarified later
-- [ ] 6.5 Commit cleanup as a single commit
+- [x] 6.5 Commit cleanup: 065a68f
 
 ## 7. Tag reconciliation (Phase 4)
 
-- [ ] 7.1 For each PPC-line tag, rename: `git tag ppc/v0.1.4 v0.1.4 && git tag -d v0.1.4`; repeat for v0.1.5, v0.1.6, v0.1.7
-- [ ] 7.2 Verify ancestor tags v0.1.1, v0.1.2, v0.1.3 still point at the correct un-prefixed modern-side commits (`git show v0.1.1 --stat` should show paths without `ppc/` prefix)
-- [ ] 7.3 If any ancestor tag points at a `ppc/`-prefixed commit, re-point it: `git tag -f v0.1.1 <correct-sha>` using the equivalent modern-side commit
-- [ ] 7.4 Drop orphan tag: `git tag -d v0.1.0`
-- [ ] 7.5 Verify final tag set: `git tag -l` should show v0.1.1, v0.1.2, v0.1.3, ppc/v0.1.4, ppc/v0.1.5, ppc/v0.1.6, ppc/v0.1.7, and 8 legacy/* tags
+- [x] 7.1 Created `ppc/v0.1.4–ppc/v0.1.7` at scratch-ppc's rewritten SHAs (5b34134, c7f64c6, d2cfbae, cf9a7cb), deleted originals
+- [x] 7.2 Verified: `v0.1.1`, `v0.1.2`, `v0.1.3` stay at original SHAs (9f0a52f, 345870a, 6d4263b) — these are un-prefixed modern-side ancestors and are reachable from new main
+- [x] 7.3 N/A — ancestor tags already at correct un-prefixed commits; no re-point needed
+- [x] 7.4 Deleted orphan `v0.1.0` tag
+- [x] 7.5 Final local tag set: v0.1.1–v0.1.3, ppc/v0.1.4–ppc/v0.1.7, 8 legacy/*, ppc-pre-flip
 
 ## 8. Local validation before publish
 
-- [ ] 8.1 Verify `git log -- ppc/src/main.c` traces through history with `ppc/`-prefixed paths on all commits
-- [ ] 8.2 Verify `git log -- src/` (modern) traces back to modern's original commits
-- [ ] 8.3 Verify no binary artifacts exist in pack: `git rev-list --objects --all | git cat-file --batch-check='%(objecttype) %(objectname) %(objectsize) %(rest)' | awk '/^blob/{print $3, $4}' | sort -rn | head -10` — no `mobius-hotline-server`, `Lemoniscate-0.1.5.dmg`, or suspicious binaries in top entries
-- [ ] 8.4 Verify repo size shrank: compare `.git` size pre-flip (from `ppc-archive`) and post-flip
-- [ ] 8.5 Run `openspec validate` to ensure the openspec directory structure survived the merge
+- [x] 8.1 Verified: `ppc/src/main.c` traces through ppc/-prefixed history (cf9a7cb → d2cfbae → c9b1e31 → …)
+- [x] 8.2 Verified: `src/` traces through modern history (aeb5386 → 8cba467 → 0886000 → …)
+- [~] 8.3 Binaries STILL in pack locally (DMG 3.2MB, test_threaded_news 285KB, mobius-hotline-server ×4) — kept alive by `legacy/*` and `ppc-pre-flip` backup refs BY DESIGN. Objects become unreachable on origin once legacy tags are eventually pruned (out of scope for this change)
+- [x] 8.4 Real repo `.git` = 47MB (holds both pre-flip and post-flip objects); scratch-ppc post-filter = 18MB, scratch-modern post-filter = 16MB — shows 5.7MB of pre-flip cruft will disappear from fresh clones after publish
+- [x] 8.5 `openspec validate --all` in `ppc/` passes for flip-main-to-modern, port-modern-post-014, bootstrap-specs, gui-mnemosyne-encoding. Root `openspec/` has pre-existing validation failures unrelated to flip (janus-*, tracker-v3, voice-chat-*, etc.)
 
 ## 9. Publish (Phase 5 — point of no return)
 
-- [ ] 9.1 Force-push main: `git push --force-with-lease origin main`
-- [ ] 9.2 Force-push tags: `git push --force-with-lease --tags origin`
-- [ ] 9.3 Create archive branch on origin from the pre-flip modern ref: `git push origin refs/remotes/origin/modern:refs/heads/archive/pre-flip-modern`
-- [ ] 9.4 Delete origin/modern: `git push origin --delete modern`
-- [ ] 9.5 Visual verification on GitHub: default branch shows modern tree at root, PPC under `ppc/`, branch list shows `main` + `archive/pre-flip-modern` + `ppc-archive`, tag list shows renamed + legacy tags
-- [ ] 9.6 Clean up local scratch clones: `rm -rf /tmp/scratch-ppc /tmp/scratch-modern`
-- [ ] 9.7 Clean up scratch remotes: `git remote remove scratch-ppc && git remote remove scratch-modern`
+- [x] 9.1 Force-pushed main: 60c52cb → 065a68f
+- [x] 9.2 Pushed new `ppc/v0.1.4–v0.1.7` tags; deleted stale v0.1.0 and v0.1.4–v0.1.7 from origin (spec's `--tags` command doesn't delete, explicit deletes required)
+- [x] 9.3 Created `archive/pre-flip-modern` on origin at 326cb2d (pre-flip modern HEAD)
+- [x] 9.4 Deleted origin/modern
+- [x] 9.5 Origin branches: main, archive/pre-flip-modern, ppc-archive. Tags: legacy/v0.1.0–v0.1.7, ppc-pre-flip, ppc/v0.1.4–v0.1.7, v0.1.1–v0.1.3. Visual check on GitHub pending user confirmation.
+- [x] 9.6 Removed /tmp/scratch-ppc and /tmp/scratch-modern
+- [x] 9.7 Removed scratch-modern and scratch-ppc remotes
 
 ## 10. Follow-ups (non-blocking)
 
-- [ ] 10.1 Update `~/.claude/skills/powerpc-development/SKILL.md`: change project path from `/Users/me/Public/lemoniscate-ppc` to `/Users/me/Public/lemoniscate-ppc/ppc` in all build examples
+- [x] 10.1 Updated `~/.claude/skills/powerpc-development/SKILL.md` (lines 71, 78): project path now `/Users/me/Public/lemoniscate-ppc/ppc`; added note about 2026-04-17 monorepo flip
 - [ ] 10.2 Test the PPC build end-to-end from the G4 via the updated skill to confirm nothing broke
 - [ ] 10.3 (Optional) Rename the G4's SMB share top-level directory from `lemoniscate-ppc` to `lemoniscate/` so the path reflects the combined contents
 - [ ] 10.4 Announce in any project-adjacent channels (Discord, README banner, release notes) that the branch flip occurred and point to this change as the record
