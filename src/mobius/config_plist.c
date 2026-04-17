@@ -198,6 +198,7 @@ int mobius_load_config_plist(hl_config_t *cfg, const char *plist_path)
         plist_get_string(dict, "ChatHistoryEncryptionKey",
                          cfg->chat_history_encryption_key_path,
                          sizeof(cfg->chat_history_encryption_key_path));
+        plist_get_bool(dict, "ChatHistoryLogJoins", &cfg->chat_history_log_joins);
     }
 
     CFRelease(plist);

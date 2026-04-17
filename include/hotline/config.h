@@ -60,6 +60,7 @@ typedef struct {
     char     chat_history_encryption_key_path[HL_CONFIG_PATH_MAX]; /* ChatHistoryEncryptionKey path */
     uint32_t chat_history_rate_capacity;                 /* ChatHistoryRateCapacity (tokens) */
     uint32_t chat_history_rate_refill_per_sec;           /* ChatHistoryRateRefillPerSec */
+    int      chat_history_log_joins;                     /* ChatHistoryLogJoins (record sign on/off as system messages) */
 } hl_config_t;
 
 /* Initialize config with defaults */

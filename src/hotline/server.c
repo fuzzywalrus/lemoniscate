@@ -190,6 +190,42 @@ void hl_server_send_to_client(hl_client_conn_t *cc, hl_transaction_t *t)
     send_transaction_to_client(cc, t);
 }
 
+/* Append a server-message entry to chat history for a sign-on or
+ * sign-off event ("greg signed on" / "greg signed off"). Gated by
+ * the ChatHistoryLogJoins config — off by default since some operators
+ * find these noisy. Stored as UTF-8; transcodes the user's nickname
+ * from the connection's wire encoding if needed. */
+static void log_chat_history_event(hl_client_conn_t *cc, const char *verb)
+{
+    if (!cc || !cc->server) return;
+    if (!cc->server->chat_history || !cc->server->config.chat_history_enabled) return;
+    if (!cc->server->config.chat_history_log_joins) return;
+    if (cc->user_name_len == 0) return;
+
+    char nick_utf8[LM_CHAT_MAX_NICK_LEN + 1];
+    int sender_is_macroman = cc->utf8_encoding ? 0 : cc->server->use_mac_roman;
+    if (sender_is_macroman) {
+        int n = hl_macroman_to_utf8((const char *)cc->user_name,
+                                     cc->user_name_len,
+                                     nick_utf8, sizeof(nick_utf8));
+        if (n < 0) n = 0;
+        nick_utf8[n] = '\0';
+    } else {
+        size_t nl = cc->user_name_len < LM_CHAT_MAX_NICK_LEN
+                  ? cc->user_name_len : LM_CHAT_MAX_NICK_LEN;
+        memcpy(nick_utf8, cc->user_name, nl);
+        nick_utf8[nl] = '\0';
+    }
+
+    char body[LM_CHAT_MAX_BODY_LEN + 1];
+    int n = snprintf(body, sizeof(body), "%s %s", nick_utf8, verb);
+    if (n <= 0) return;
+
+    /* Empty nick + IS_SERVER_MSG so renderers treat it as a system message. */
+    lm_chat_history_append(cc->server->chat_history, 0,
+                           HL_CHAT_FLAG_IS_SERVER_MSG, 0, "", body);
+}
+
 /* Notify all other clients that this user's visible profile changed.
  * Matches Mobius Go behavior for TranNotifyChangeUser payload fields. */
 static void broadcast_notify_change_user(hl_server_t *srv, hl_client_conn_t *cc)
@@ -391,6 +427,9 @@ static void disconnect_client(hl_server_t *srv, hl_client_conn_t *cc, hl_event_l
 {
     hl_log_info(srv->logger, "Client disconnected: %s (id=%d)",
                 cc->remote_addr, hl_read_u16(cc->id));
+
+    /* Optional sign-off entry in chat history (gated on ChatHistoryLogJoins). */
+    log_chat_history_event(cc, "signed off");
 
     /* Remove from event loop (closing fd does this automatically, but be explicit) */
     hl_event_remove_fd(evloop, cc->fd);
@@ -1300,6 +1339,11 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
     if (f_name && f_name->data_len > 0) {
         broadcast_notify_change_user(srv, cc);
     }
+
+    /* Optional sign-on entry in chat history (gated on ChatHistoryLogJoins).
+     * Recorded AFTER the legacy broadcast above so this user doesn't see
+     * their own join in the replay; subsequent joiners will see it. */
+    log_chat_history_event(cc, "signed on");
 
     hl_transaction_free(&login_tran);
 
