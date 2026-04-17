@@ -227,7 +227,13 @@ YAML_LDFLAGS = -L/usr/local/lib -lyaml
 ```bash
 sudo apt install build-essential libssl-dev libyaml-dev   # Debian/Ubuntu
 make
+./lemoniscate --init -c ./config        # scaffold a default config dir
 ```
+
+The `--init` step writes a minimal `config.yaml`. For the full annotated
+template — including the `ChatHistory:` section, TLS/HOPE settings,
+Mnemosyne sync, tracker registration, and per-account permissions —
+copy from [`config/config.yaml.example`](config/config.yaml.example).
 
 See [docs/LINUX.md](docs/LINUX.md) for other distributions, systemd setup, and Docker.
 

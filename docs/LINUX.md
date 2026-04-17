@@ -40,7 +40,7 @@ config/
 
 ### 3. Edit the configuration
 
-Open `~/hotline-server/config/config.yaml` in a text editor. See `config/config.yaml.example` in the repo for all available options with descriptions.
+Open `~/hotline-server/config/config.yaml` in a text editor. See [`config/config.yaml.example`](../config/config.yaml.example) in the repo for the full annotated template — every option is documented inline, including the optional `ChatHistory:` section (persistent public chat with cursor pagination), TLS / HOPE encryption, Mnemosyne search sync, and per-account permissions.
 
 At minimum, set your server name:
 
@@ -48,6 +48,20 @@ At minimum, set your server name:
 Name: My Hotline Server
 Description: Welcome!
 ```
+
+To turn on persistent chat history (opt-in), append:
+
+```yaml
+ChatHistory:
+  Enabled: true
+  MaxMessages: 10000      # per-channel cap; 0 = unlimited
+  MaxDays: 30             # age cap in days; 0 = unlimited
+  LegacyBroadcast: true   # replay recent chat to non-capable clients on join
+  LegacyCount: 30
+  LogJoins: false         # record sign-on / sign-off as system messages
+```
+
+Storage lands at `<FileRoot>/ChatHistory/channel-N.jsonl`.
 
 ### 4. Start the server
 
