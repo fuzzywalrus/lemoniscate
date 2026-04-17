@@ -91,7 +91,8 @@ HOTLINE_C_SRCS = \
 	src/hotline/tracker.c \
 	src/hotline/password.c \
 	src/hotline/hope.c \
-	src/hotline/chacha20poly1305.c
+	src/hotline/chacha20poly1305.c \
+	src/hotline/chat_history.c
 
 HOTLINE_C_OBJS = $(HOTLINE_C_SRCS:.c=.o)
 
@@ -153,7 +154,7 @@ APP_RESOURCES = $(APP_CONTENTS)/Resources
 SERVER_COMPAT_BIN = mobius-hotline-server
 APP_SKIP_ARCH_CHECK ?= 0
 
-.PHONY: all clean test test-wire test-client gui app
+.PHONY: all clean test test-wire test-chat-history test-client gui app
 
 all: libhotline.a lemoniscate $(SERVER_COMPAT_BIN)
 
@@ -178,13 +179,18 @@ test-wire: $(TEST_C_OBJS) $(HOTLINE_C_OBJS) $(PLATFORM_OBJS)
 	$(CC) $(CFLAGS) -o test_runner $^ -framework CoreFoundation -framework Security -lpthread -lcrypto
 	./test_runner
 
+# Chat history storage tests
+test-chat-history: test/test_chat_history.o src/hotline/chat_history.o src/hotline/chacha20poly1305.o
+	$(CC) $(CFLAGS) -o test_chat_history $^
+	./test_chat_history
+
 # Phase 2 client tests (Obj-C, needs Foundation)
 test-client: $(TEST_OBJC_OBJS) $(HOTLINE_OBJS)
 	$(CC) $(OBJCFLAGS) -o test_client $^ $(LDFLAGS)
 	./test_client
 
 # Run all tests
-test: test-wire test-client
+test: test-wire test-chat-history test-client
 
 # --- Pattern rules ---
 
@@ -232,7 +238,8 @@ app: lemoniscate $(SERVER_COMPAT_BIN) gui
 clean:
 	rm -f $(HOTLINE_OBJS) $(PLATFORM_OBJS) $(MOBIUS_OBJS) $(TEST_C_OBJS) $(TEST_OBJC_OBJS) \
 	      $(GUI_OBJC_OBJS) \
-	      libhotline.a lemoniscate $(SERVER_COMPAT_BIN) lemoniscate-gui test_runner test_client src/main.o
+	      libhotline.a lemoniscate $(SERVER_COMPAT_BIN) lemoniscate-gui test_runner test_client test_chat_history \
+	      test/test_chat_history.o src/main.o
 	rm -rf $(APP_BUNDLE)
 
 # Auto-dependency generation

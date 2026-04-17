@@ -264,6 +264,7 @@ const char *hl_transaction_type_name(const hl_tran_type_t type)
         case 410: return "Create news article";
         case 411: return "Delete news article";
         case 500: return "Keepalive";
+        case 700: return "Get chat history";
         default:  return "Unknown";
     }
 }

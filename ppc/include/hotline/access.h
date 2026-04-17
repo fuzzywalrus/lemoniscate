@@ -54,6 +54,7 @@
 #define ACCESS_UPLOAD_FOLDER      38   /* Can Upload Folders */
 #define ACCESS_DOWNLOAD_FOLDER    39   /* Can Download Folders */
 #define ACCESS_SEND_PRIV_MSG      40   /* Can Send Messages */
+#define ACCESS_READ_CHAT_HISTORY  56   /* Can Request Chat History */
 
 /*
  * hl_access_set - Set a permission bit in the access bitmap.

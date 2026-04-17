@@ -30,6 +30,6 @@ typedef int (*hl_handler_func_t)(hl_client_conn_t *cc,
                                  int *out_count);
 
 /* Max transaction type code for handler lookup table */
-#define HL_HANDLER_TABLE_SIZE 512
+#define HL_HANDLER_TABLE_SIZE 1024
 
 #endif /* HOTLINE_HANDLERS_H */

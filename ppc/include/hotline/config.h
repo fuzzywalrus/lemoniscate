@@ -50,6 +50,17 @@ typedef struct {
     int  mnemosyne_index_files;                  /* Index file listings (default: true) */
     int  mnemosyne_index_news;                   /* Index threaded news (default: true) */
     int  mnemosyne_index_msgboard;               /* Index message board (default: true) */
+
+    /* Chat history extension */
+    int      chat_history_enabled;               /* ChatHistoryEnabled */
+    uint32_t chat_history_max_msgs;              /* ChatHistoryMaxMessages (0 = unlimited) */
+    uint32_t chat_history_max_days;              /* ChatHistoryMaxDays (0 = unlimited) */
+    int      chat_history_legacy_broadcast;      /* ChatHistoryLegacyBroadcast */
+    uint32_t chat_history_legacy_count;          /* ChatHistoryLegacyCount */
+    char     chat_history_encryption_key_path[HL_CONFIG_PATH_MAX]; /* ChatHistoryEncryptionKey */
+    uint32_t chat_history_rate_capacity;         /* ChatHistoryRateCapacity */
+    uint32_t chat_history_rate_refill_per_sec;   /* ChatHistoryRateRefillPerSec */
+    int      chat_history_log_joins;             /* ChatHistoryLogJoins */
 } hl_config_t;
 
 /* Initialize config with defaults */
