@@ -1,0 +1,247 @@
+.\" Manual page for lemoniscate(1)
+.\" Copy to /usr/local/share/man/man1/lemoniscate.1 (or use `make install-man`)
+.TH LEMONISCATE 1 "April 2026" "lemoniscate 0.1.7" "User Commands"
+.\" =========================================================================
+.SH NAME
+lemoniscate \- a Hotline protocol server in C
+.\" =========================================================================
+.SH SYNOPSIS
+.B lemoniscate
+.RI [ options ]
+.br
+.B lemoniscate
+.B \-\-init
+.RB [ \-c
+.IR DIR ]
+.br
+.B lemoniscate
+.RB { \-v | \-\-version }
+.\" =========================================================================
+.SH DESCRIPTION
+.B lemoniscate
+is a single-binary Hotline 1.8+ protocol server. It serves chat,
+private rooms, file transfers, news (flat and threaded), accounts, and
+bans. Optional extensions include HOPE secure login (challenge\(hyresponse
+authentication and ChaCha20\(hyPoly1305 / RC4 transport encryption), TLS
+on a dedicated port, Mnemosyne content indexing, and persistent public
+chat history with cursor pagination.
+.PP
+The server reads its configuration from a YAML file in a config
+directory (see
+.BR FILES )
+and on macOS additionally from
+.IR ~/Library/Preferences/com.lemoniscate.server.plist .
+A plist on macOS takes precedence over the YAML when present.
+.\" =========================================================================
+.SH OPTIONS
+.TP
+.BR \-i ", " \-\-interface " " \fIADDR\fR
+IP address to bind the listener to. Defaults to all interfaces (0.0.0.0).
+.TP
+.BR \-p ", " \-\-port " " \fIPORT\fR
+Base TCP port for the protocol listener. The file\(hytransfer port is
+.IR PORT+1 ;
+the TLS ports (when configured) are
+.I PORT+100
+and
+.IR PORT+101 .
+Default: 5500.
+.TP
+.BR \-c ", " \-\-config " " \fIDIR\fR
+Path to the configuration directory. Used to find
+.IR config.yaml ,
+.IR Users/ ,
+.IR Banlist.yaml ,
+.IR Agreement.txt ,
+the message board, and threaded news.
+Default: current working directory.
+.TP
+.BR \-f ", " \-\-log\-file " " \fIPATH\fR
+Append log output to
+.I PATH
+in addition to stderr. Without this flag, logs go only to stderr.
+.TP
+.BR \-l ", " \-\-log\-level " " \fILEVEL\fR
+Minimum log level. One of
+.BR debug ,
+.BR info ,
+or
+.BR error .
+Default:
+.BR info .
+.TP
+.BI \-\-tls\-cert " PATH"
+PEM-encoded TLS certificate. Required (with
+.BR \-\-tls\-key )
+to enable the TLS listener.
+.TP
+.BI \-\-tls\-key " PATH"
+PEM-encoded TLS private key. The signed binary uses Apple's
+SecureTransport on macOS and OpenSSL on Linux.
+.TP
+.BI \-\-tls\-port " PORT"
+TLS listener port. Defaults to base port + 100 (5600 when port is 5500).
+The TLS file-transfer port is
+.IR PORT+1 .
+.TP
+.BI \-\-api\-addr " ADDR"
+Accepted for command\(hyline compatibility with Mobius. Has no effect.
+.TP
+.BI \-\-api\-key " KEY"
+Accepted for command\(hyline compatibility with Mobius. Has no effect.
+.TP
+.B \-\-init
+Scaffold a default configuration directory at the path given by
+.B \-c
+(or the current directory if omitted), then exit. Creates
+.IR config.yaml ,
+.IR Agreement.txt ,
+.IR MessageBoard.txt ,
+.IR ThreadedNews.yaml ,
+.IR Banlist.yaml ,
+.IR Files/ ,
+and
+.IR Users/{admin,guest}.yaml .
+.TP
+.BR \-v ", " \-\-version
+Print the version and exit.
+.TP
+.BR \-h ", " \-\-help
+Show a brief usage summary and exit.
+.\" =========================================================================
+.SH FILES
+.TP
+.IR <config>/config.yaml
+Server configuration. Annotated template at
+.I config/config.yaml.example
+in the source distribution. Settings include
+.BR Name ,
+.BR FileRoot ,
+.BR EnableHOPE ,
+.BR EnableTrackerRegistration ,
+.BR Trackers ,
+.BR Mnemosyne ,
+.BR ChatHistory ,
+.BR TLSCertFile ,
+.BR TLSKeyFile ,
+and connection limits.
+.TP
+.IR <config>/Users/*.yaml
+One YAML file per account. Includes login, name, password, and the
+per\(hybit access bitmap.
+.TP
+.IR <config>/Banlist.yaml
+IP and username/nickname ban list.
+.TP
+.IR <config>/Agreement.txt
+Optional text shown to clients on connect.
+.TP
+.IR <FileRoot>/ChatHistory/channel-N.jsonl
+Persistent chat history, when enabled. Append\(hyonly JSONL with one
+message per line. See
+.B ChatHistory
+in the configuration reference.
+.TP
+.IR ~/Library/Preferences/com.lemoniscate.server.plist
+On macOS, this plist is read at startup. When present it takes
+precedence over
+.IR config.yaml .
+The GUI app writes here.
+.\" =========================================================================
+.SH SIGNALS
+.TP
+.B SIGINT, SIGTERM
+Graceful shutdown. Open client connections are closed, in\(hyflight
+file transfers are aborted, the chat history file is fsync()\(hyed,
+and the tracker registration is dropped (if enabled).
+.TP
+.B SIGHUP
+Trigger a config reload. Implementation is partial; see
+.IR docs/SERVER.md .
+.\" =========================================================================
+.SH PORTS
+.TP
+.B 5500/tcp
+Hotline protocol (plain).
+.TP
+.B 5501/tcp
+File transfers (plain).
+.TP
+.B 5600/tcp
+Hotline protocol (TLS), when configured.
+.TP
+.B 5601/tcp
+File transfers (TLS), when configured.
+.\" =========================================================================
+.SH EXAMPLES
+.PP
+Start with a fresh config in
+.IR ~/hotline-server :
+.PP
+.RS 4
+.EX
+lemoniscate \-\-init \-c ~/hotline-server
+lemoniscate \-c ~/hotline-server \-p 5500 \-l info
+.EE
+.RE
+.PP
+Run with TLS on port 5600 and log to a file:
+.PP
+.RS 4
+.EX
+lemoniscate \-c /etc/lemoniscate \-p 5500 \\
+    \-\-tls\-cert /etc/lemoniscate/cert.pem \\
+    \-\-tls\-key /etc/lemoniscate/key.pem \\
+    \-\-tls\-port 5600 \\
+    \-f /var/log/lemoniscate.log \-l info
+.EE
+.RE
+.PP
+Enable persistent chat history (opt\(hyin) by adding to
+.IR config.yaml :
+.PP
+.RS 4
+.EX
+ChatHistory:
+  Enabled: true
+  MaxMessages: 10000
+  MaxDays: 30
+  LegacyBroadcast: true
+  LegacyCount: 30
+  LogJoins: false
+.EE
+.RE
+.\" =========================================================================
+.SH EXIT STATUS
+.TP
+.B 0
+Server exited cleanly (e.g. via SIGINT) or
+.B \-\-help
+/
+.B \-\-version
+/
+.B \-\-init
+completed successfully.
+.TP
+.B 1
+Fatal error during startup or runtime (binding the port failed,
+config could not be parsed, etc.). See stderr.
+.\" =========================================================================
+.SH SEE ALSO
+.IR config/config.yaml.example " (annotated configuration reference),"
+.br
+.IR docs/SERVER.md ", " docs/LINUX.md ", " docs/SECURITY.md
+.br
+.IR docs/Capabilities-Chat-History.md " (chat history protocol spec),"
+.br
+.IR docs/MNEMOSYNE.md " (search index integration)."
+.\" =========================================================================
+.SH BUGS
+Report issues at
+.UR https://github.com/fuzzywalrus/lemoniscate
+.UE .
+.\" =========================================================================
+.SH AUTHOR
+Greg Gant and contributors. Based on the Mobius Hotline server by
+Jonathan Halter
+.RB ( https://github.com/jhalter/mobius ).
