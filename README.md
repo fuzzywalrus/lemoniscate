@@ -1,11 +1,13 @@
-# Lemoniscate - A modern Hotline Server for 10.4/10.5 Macs, macOS 10.11 - Current and Linux
+# Lemoniscate - A modern Hotline Server for PowerPC 10.4/10.5 Macs, Intel 10.6 Macs, modern macOS, and Linux
 
 
-A native C and Objective-C implementation of the 1.9 Hotline protocol with extended modern features for Mac OS X 10.4 Tiger and 10.5 Leopard on PowerPC and macOS 10.11 with a GUI and setup wizard.  The Linux version is CLI only.  This project is a ground-up port of [Mobius](https://github.com/jhalter/mobius), a modern Hotline server and client written in Go by Jeff Halter.
+A native C and Objective-C implementation of the 1.9 Hotline protocol with extended modern features for Mac OS X 10.4 Tiger and 10.5 Leopard on PowerPC, Mac OS X 10.6 Snow Leopard on Intel, and modern macOS (10.11 - Current) The Linux version is CLI only. This project is a ground-up rewrite of [Mobius](https://github.com/jhalter/mobius), a modern Hotline server and client written in Go by Jeff Halter.
+
+The goal of this project is modernize Hotline by adding much-neeeded quality of life features that modern users would expect: end-to-end encrpytion, chat history, ability to connect to Hotline search engines, with exciting features roadmapped like voice-over-ip.
 
 ![Lemoniscate](docs/images/lemoniscate-256.png)
 
-In short, this is a **Hotline Server** build for mutliple platforms and it is completely native. It is fast. It is light. It is feature rich.
+In short, this is a modern **Hotline Server** build for mutliple platforms and it is completely native. It is fast. It is light. It is feature rich.
 
 
 
@@ -14,9 +16,9 @@ In short, this is a **Hotline Server** build for mutliple platforms and it is co
 ![Lemoniscate](https://hotlinenavigator.com/lemoniscate-screenshot.png)
 
 
-This started as a from-scratch (well, Agentic) rewrite of the Mobius Hotline server and client in C and Objective-C, targeting the PowerPC Macs that Hotline was originally built for. The goal is a native, lightweight binary that runs on PPC Macs (10.4 and 10.5).  
+This started as a from-scratch (well, Agentic) rewrite of the Mobius Hotline server and client in C and Objective-C, targeting the PowerPC Macs that Hotline was originally built for. The goal is a native, lightweight binary that runs on PPC Macs (10.4 and 10.5), and now also on Intel Macs running 10.6 Snow Leopard.  
 
-Since then it has evolved into an advanced Hotline Server, meant to be user friendly for regular people with a setup wizard, ability to create TLS certificates for encryption with a click click of the mouse, and sports support for modern features, like HOPE encrypted logins for pure end-to-end encryption and mnemosyne search support. 
+Since then it has evolved into an advanced Hotline Server, meant to be user friendly for regular people with a setup wizard, ability to create TLS certificates for encryption with a click click of the mouse, and sports support for modern features, like HOPE encrypted logins for pure end-to-end encryption, mnemosyne search support and chat-history for a more Discord like chat experience. 
 
 With PowerPC OS X as the original target, Lemoniscate is extremely lightweight. Using generally under 50~ MB of RAM on both retro and modern systems. 
 
@@ -132,7 +134,8 @@ Granular per-account permissions including:
 
 ### Compatibility
 
-- Runs on Mac OS X 10.4 Tiger (PowerPC)
+- Runs on Mac OS X 10.4 Tiger and 10.5 Leopard on PowerPC, plus 10.6 Snow Leopard on Intel
+- Mac OS X 10.7 Lion on Intel is not currently supported because of the `libcrypto` dependency
 - Works with Hotline Navigator, the mierau Swift client, and classic Hotline clients
 - FILP file transfer format with INFO and DATA forks
 - Hotline 1.8+ protocol (version 190)
@@ -159,6 +162,18 @@ CFLAGS += -mmacosx-version-min=10.4 -I/usr/local/include
 OBJCFLAGS += -mmacosx-version-min=10.4 -I/usr/local/include
 YAML_LDFLAGS = -L/usr/local/lib -lyaml
 ```
+
+On Leopard PowerPC, you can stage separate `ppc` and `i386` builds and `lipo`
+them into a universal app bundle:
+
+```bash
+make universal-app \
+  UNIVERSAL_I386_SDKROOT=/Developer/SDKs/MacOSX10.4u.sdk \
+  UNIVERSAL_I386_YAML_LDFLAGS=/path/to/i386-or-universal/libyaml.a
+```
+
+Use `make universal` if you only want the universal `libhotline.a`,
+`lemoniscate`, and `lemoniscate-gui` binaries without packaging the app bundle.
 
 Dependencies:
 - CoreFoundation (ships with Tiger)
@@ -218,9 +233,11 @@ open Lemoniscate.app
 The app launches `Lemoniscate.app/Contents/MacOS/lemoniscate-server` through `NSTask`.
 
 Important caveats:
-- `make app` checks that `lemoniscate` and `lemoniscate-gui` have matching CPU architectures.
+- `make app` checks that `lemoniscate` and `lemoniscate-gui` have matching architecture slice sets.
 - Use `APP_SKIP_ARCH_CHECK=1 make app` only when intentionally bypassing that safety check.
 - The GUI creates the config directory if missing, but does not scaffold full default files; run `--init` first for a complete setup.
+- A Leopard PowerPC universal build still needs an `i386`-capable `libyaml` and the `MacOSX10.4u.sdk` installed under `/Developer/SDKs/`.
+- The current Intel support target is Mac OS X 10.6 Snow Leopard; Mac OS X 10.7 Lion is not supported because of the `libcrypto` dependency.
 
 
 ## Documentation

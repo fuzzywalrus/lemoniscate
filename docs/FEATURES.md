@@ -101,7 +101,8 @@ Granular per-account permissions including:
 
 ## Compatibility
 
-- Runs on Mac OS X 10.4 Tiger (PowerPC)
+- Runs on Mac OS X 10.4 Tiger and 10.5 Leopard on PowerPC, plus 10.6 Snow Leopard on Intel
+- Mac OS X 10.7 Lion on Intel is not currently supported because of the `libcrypto` dependency
 - Works with Hotline Navigator, the mierau Swift client, and classic Hotline clients
 - FILP file transfer format with INFO and DATA forks
 - Hotline 1.8+ protocol (version 190)
