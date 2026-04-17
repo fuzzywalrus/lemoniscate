@@ -5,20 +5,38 @@
 # On modern macOS for development/testing: CC = cc
 
 CC ?= cc
+ARCH ?=
+SDKROOT ?=
 
-# Auto-detect Tiger/PPC vs modern macOS
-IS_TIGER := $(shell test -d /usr/local/lib -a ! -d /opt/homebrew && echo yes)
+ARCH_FLAGS =
+ifneq ($(strip $(ARCH)),)
+  ARCH_FLAGS += -arch $(ARCH)
+endif
 
-ifeq ($(IS_TIGER),yes)
+SDK_FLAGS =
+ifneq ($(strip $(SDKROOT)),)
+  SDK_FLAGS += -isysroot $(SDKROOT)
+endif
+
+# Auto-detect PPC hosts vs modern macOS
+HOST_CPU := $(shell uname -p 2>/dev/null)
+HOST_ARCH := $(shell uname -m 2>/dev/null)
+HAS_ARM_HOMEBREW := $(shell test -d /opt/homebrew && echo yes)
+
+ifneq ($(filter powerpc ppc Power Macintosh,$(HOST_CPU) $(HOST_ARCH)),)
   # Tiger/Leopard PPC: gcc-4.0, /usr/local for libs
-  CC = gcc-4.0
+  CC = $(shell command -v gcc-4.0 >/dev/null 2>&1 && echo gcc-4.0 || echo gcc)
   EXTRA_INCLUDES = -I/usr/local/include
   YAML_LDFLAGS = /usr/local/lib/libyaml.a
   TIGER_FLAGS = -mmacosx-version-min=10.4
-else
-  # Modern macOS for development/testing
+else ifeq ($(HAS_ARM_HOMEBREW),yes)
+  # Apple Silicon Homebrew defaults
   EXTRA_INCLUDES = -I/opt/homebrew/include
   YAML_LDFLAGS = /opt/homebrew/lib/libyaml.a
+else
+  # Modern macOS Intel / generic /usr/local setups
+  EXTRA_INCLUDES = -I/usr/local/include
+  YAML_LDFLAGS = /usr/local/lib/libyaml.a
   TIGER_FLAGS =
 endif
 
@@ -26,6 +44,8 @@ CFLAGS = -std=c99 -Wall -Wextra -pedantic -O2 \
          -I./include \
          $(EXTRA_INCLUDES) \
          $(TIGER_FLAGS) \
+         $(SDK_FLAGS) \
+         $(ARCH_FLAGS) \
          -DTARGET_OS_MAC=1
 
 # Obj-C flags (no -std=c99 - Obj-C uses its own standard)
@@ -33,9 +53,13 @@ OBJCFLAGS = -Wall -Wextra -O2 \
             -I./include \
             $(EXTRA_INCLUDES) \
             $(TIGER_FLAGS) \
+            $(SDK_FLAGS) \
+            $(ARCH_FLAGS) \
             -DTARGET_OS_MAC=1
 
-LDFLAGS = -framework CoreFoundation \
+LDFLAGS = $(SDK_FLAGS) \
+          $(ARCH_FLAGS) \
+          -framework CoreFoundation \
           -framework Foundation \
           -lpthread
 
@@ -142,21 +166,31 @@ GUI_OBJC_SRCS = \
 GUI_OBJC_OBJS = $(GUI_OBJC_SRCS:.m=.o)
 
 # GUI needs AppKit + Foundation
-GUI_LDFLAGS = -framework AppKit \
+GUI_LDFLAGS = $(SDK_FLAGS) \
+              $(ARCH_FLAGS) \
+              -framework AppKit \
               -framework Foundation \
               -framework CoreFoundation
 
-# App bundle paths
-APP_BUNDLE = Lemoniscate.app
+# Version string sourced from Info.plist so bumping it there updates bundle names.
+VERSION ?= $(shell /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" resources/Info.plist 2>/dev/null)
+
+# App bundle paths — PPC is the default target, Intel is a separate `make intel-app`.
+APP_BUNDLE ?= Lemoniscate-OSX-PPC-v$(VERSION).app
 APP_CONTENTS = $(APP_BUNDLE)/Contents
 APP_MACOS = $(APP_CONTENTS)/MacOS
 APP_RESOURCES = $(APP_CONTENTS)/Resources
-SERVER_COMPAT_BIN = mobius-hotline-server
 APP_SKIP_ARCH_CHECK ?= 0
 
-.PHONY: all clean test test-wire test-chat-history test-client gui app
+# Intel (i386) standalone .app. Requires a libyaml.a with an i386 slice at
+# $(INTEL_YAML_LDFLAGS) — build one via autoconf against the 10.4u SDK.
+INTEL_APP_BUNDLE = Lemoniscate-OSX-Intel-v$(VERSION).app
+INTEL_SDK ?= /Developer/SDKs/MacOSX10.4u.sdk
+INTEL_YAML_LDFLAGS ?= /tmp/libyaml-fat/lib/libyaml.a
 
-all: libhotline.a lemoniscate $(SERVER_COMPAT_BIN)
+.PHONY: all clean slice-clean test test-wire test-chat-history test-client gui app intel-app
+
+all: libhotline.a lemoniscate
 
 # Static library (C wire format + Obj-C client)
 libhotline.a: $(HOTLINE_OBJS)
@@ -167,12 +201,6 @@ libhotline.a: $(HOTLINE_OBJS)
 lemoniscate: $(HOTLINE_C_OBJS) $(PLATFORM_OBJS) $(MOBIUS_OBJS) src/main.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(YAML_LDFLAGS)
 	@echo "Built lemoniscate server"
-
-# Compatibility alias used by MobiusAdmin launcher expectations
-$(SERVER_COMPAT_BIN): lemoniscate
-	cp lemoniscate $(SERVER_COMPAT_BIN)
-	chmod +x $(SERVER_COMPAT_BIN)
-	@echo "Built $(SERVER_COMPAT_BIN) compatibility binary"
 
 # Phase 1 wire format tests (C only, no Foundation needed)
 test-wire: $(TEST_C_OBJS) $(HOTLINE_C_OBJS) $(PLATFORM_OBJS)
@@ -201,22 +229,24 @@ test: test-wire test-chat-history test-client
 	$(CC) $(OBJCFLAGS) -c -o $@ $<
 
 # GUI binary (links against AppKit for the admin interface)
-gui: $(GUI_OBJC_OBJS)
+gui: lemoniscate-gui
+
+lemoniscate-gui: $(GUI_OBJC_OBJS)
 	$(CC) $(OBJCFLAGS) -o lemoniscate-gui $^ $(GUI_LDFLAGS)
 	@echo "Built lemoniscate-gui"
 
 # App bundle: Lemoniscate.app containing server binary + GUI
-app: lemoniscate $(SERVER_COMPAT_BIN) gui
+app: lemoniscate lemoniscate-gui
 	@if [ "$(APP_SKIP_ARCH_CHECK)" != "1" ]; then \
-		server_arch=`file lemoniscate | grep -Eo 'ppc64|ppc|x86_64|arm64|i386' | head -n1`; \
-		gui_arch=`file lemoniscate-gui | grep -Eo 'ppc64|ppc|x86_64|arm64|i386' | head -n1`; \
-		if [ -z "$$server_arch" ] || [ -z "$$gui_arch" ]; then \
+		server_archs=`lipo -info lemoniscate 2>/dev/null | sed -e 's/^Architectures in the fat file: .* are: //' -e 's/^Non-fat file: .* is architecture: //' | tr ' ' '\n' | sed -e 's/^ppc[0-9].*$$/ppc/' -e 's/^x86_64h$$/x86_64/' | sort -u | tr '\n' ' ' | sed 's/ $$//'`; \
+		gui_archs=`lipo -info lemoniscate-gui 2>/dev/null | sed -e 's/^Architectures in the fat file: .* are: //' -e 's/^Non-fat file: .* is architecture: //' | tr ' ' '\n' | sed -e 's/^ppc[0-9].*$$/ppc/' -e 's/^x86_64h$$/x86_64/' | sort -u | tr '\n' ' ' | sed 's/ $$//'`; \
+		if [ -z "$$server_archs" ] || [ -z "$$gui_archs" ]; then \
 			echo "ERROR: Could not detect binary architecture for app bundle."; \
 			exit 1; \
 		fi; \
-		if [ "$$server_arch" != "$$gui_arch" ]; then \
-			echo "ERROR: Architecture mismatch: lemoniscate ($$server_arch) vs lemoniscate-gui ($$gui_arch)."; \
-			echo "Build both binaries on the same target architecture (e.g. PPC + gcc-4.0 on Tiger)."; \
+		if [ "$$server_archs" != "$$gui_archs" ]; then \
+			echo "ERROR: Architecture mismatch: lemoniscate ($$server_archs) vs lemoniscate-gui ($$gui_archs)."; \
+			echo "Build both binaries with the same architecture slice set (for example ppc only or ppc+i386)."; \
 			echo "Set APP_SKIP_ARCH_CHECK=1 to bypass this safety check."; \
 			exit 1; \
 		fi; \
@@ -224,7 +254,6 @@ app: lemoniscate $(SERVER_COMPAT_BIN) gui
 	mkdir -p $(APP_MACOS) $(APP_RESOURCES)
 	cp lemoniscate-gui $(APP_MACOS)/Lemoniscate
 	cp lemoniscate $(APP_MACOS)/lemoniscate-server
-	cp $(SERVER_COMPAT_BIN) $(APP_MACOS)/$(SERVER_COMPAT_BIN)
 	cp resources/Info.plist $(APP_CONTENTS)/Info.plist
 	@test -f resources/lemoniscate.icns || (echo "ERROR: missing resources/lemoniscate.icns"; exit 1)
 	cp resources/lemoniscate.icns $(APP_RESOURCES)/Lemoniscate.icns
@@ -232,15 +261,28 @@ app: lemoniscate $(SERVER_COMPAT_BIN) gui
 	@test -f resources/default-banner.jpg && cp resources/default-banner.jpg $(APP_RESOURCES)/default-banner.jpg || true
 	@echo "Built $(APP_BUNDLE)"
 	@echo "  Server binary: $(APP_MACOS)/lemoniscate-server"
-	@echo "  Compat binary: $(APP_MACOS)/$(SERVER_COMPAT_BIN)"
 	@echo "  GUI binary:    $(APP_MACOS)/Lemoniscate"
 
-clean:
+# Intel (i386) standalone .app, built against the 10.4u SDK so it launches on
+# 10.4 Tiger through 10.6 Snow Leopard (Intel). Produces $(INTEL_APP_BUNDLE)
+# alongside the PPC bundle via a recursive make with overrides.
+intel-app:
+	$(MAKE) slice-clean APP_BUNDLE=$(INTEL_APP_BUNDLE)
+	$(MAKE) app \
+		APP_BUNDLE=$(INTEL_APP_BUNDLE) \
+		ARCH=i386 \
+		SDKROOT="$(INTEL_SDK)" \
+		YAML_LDFLAGS="$(INTEL_YAML_LDFLAGS)"
+
+slice-clean:
 	rm -f $(HOTLINE_OBJS) $(PLATFORM_OBJS) $(MOBIUS_OBJS) $(TEST_C_OBJS) $(TEST_OBJC_OBJS) \
 	      $(GUI_OBJC_OBJS) \
-	      libhotline.a lemoniscate $(SERVER_COMPAT_BIN) lemoniscate-gui test_runner test_client test_chat_history \
+	      libhotline.a lemoniscate lemoniscate-gui test_runner test_client test_chat_history \
 	      test/test_chat_history.o src/main.o
-	rm -rf $(APP_BUNDLE)
+	@if [ -d "$(APP_BUNDLE)" ]; then rm -rf "$(APP_BUNDLE)" 2>/dev/null || true; fi
+
+clean: slice-clean
+	rm -rf $(INTEL_APP_BUNDLE) build
 
 # Auto-dependency generation
 -include $(HOTLINE_C_OBJS:.o=.d)

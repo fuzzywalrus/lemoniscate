@@ -279,6 +279,22 @@ make CC=gcc-4.0 \
   app
 ```
 
+### On Leopard (PowerPC) for a PPC + Intel universal build
+
+```bash
+make universal-app \
+  UNIVERSAL_PPC_CC=gcc-4.0 \
+  UNIVERSAL_I386_CC=gcc-4.0 \
+  UNIVERSAL_I386_SDKROOT=/Developer/SDKs/MacOSX10.4u.sdk \
+  UNIVERSAL_I386_YAML_LDFLAGS=/path/to/i386-or-universal/libyaml.a
+```
+
+Notes:
+- `make universal` builds fat `libhotline.a`, `lemoniscate`, and `lemoniscate-gui` without packaging the app bundle.
+- The `i386` slice uses the 10.4u SDK when building from a Leopard PowerPC host.
+- If `/usr/local/lib/libyaml.a` is PPC-only, point `UNIVERSAL_I386_YAML_LDFLAGS` at an `i386` or universal libyaml archive instead.
+- The current Intel support target is Mac OS X 10.6 Snow Leopard. Mac OS X 10.7 Lion is not supported because of the `libcrypto` dependency.
+
 ### On modern macOS (development)
 
 ```bash

@@ -61,5 +61,5 @@ test_runner
 test_client
 lemoniscate
 lemoniscate-gui
-lemoniscate.zip
-Lemoniscate.app/
+*.zip
+*.app/
