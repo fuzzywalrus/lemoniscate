@@ -59,7 +59,14 @@ config/Users/
 libhotline.a
 test_runner
 test_client
+test_chacha20poly1305
+test_chat_history
+test_hope_aead
+test_threaded_news
 lemoniscate
 lemoniscate-gui
+lemoniscate-linux-*
+build/
 *.zip
 *.app/
+*.dmg
