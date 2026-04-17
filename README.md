@@ -10,9 +10,12 @@ A native implementation of the Hotline protocol with a full-featured AppKit admi
 
 Lemoniscate is a Hotline server written from the ground up in C and Objective-C. It was originally inspired by [Mobius](https://github.com/jhalter/mobius), a modern Hotline server written in Go by Jeff Halter, but has significantly diverged into its own project with features that have no upstream counterpart: HOPE challenge-response encryption, TLS support, end-to-end file content gating, a native AppKit admin GUI with disclosure sections and help popovers, and self-signed certificate generation.
 
-The `modern` branch targets macOS 10.11 El Capitan and later. The `main` branch targets Mac OS X 10.4 Tiger on PowerPC.
+This repo holds both codebases on `main`:
 
-See the releases for the latest version!
+- Modern (macOS 10.11+ / Linux) lives at the root — this README and `src/` cover it.
+- PowerPC Tiger 10.4 / Leopard 10.5 lives under [`ppc/`](ppc/) — see [`ppc/README.md`](ppc/README.md) for build and usage.
+
+See the releases for the latest version.
 
 ## What is Hotline?
 
