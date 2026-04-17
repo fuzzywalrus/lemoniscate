@@ -11,47 +11,47 @@
 
 ## 2. Backup refs (Phase 0)
 
-- [ ] 2.1 Create backup tag: `git tag ppc-pre-flip HEAD`
-- [ ] 2.2 Create backup branch: `git branch ppc-archive HEAD`
-- [ ] 2.3 Back up all 8 existing tags under `legacy/` prefix: `for t in v0.1.0 v0.1.1 v0.1.2 v0.1.3 v0.1.4 v0.1.5 v0.1.6 v0.1.7; do git tag legacy/$t $t; done`
-- [ ] 2.4 Push backup tag: `git push origin ppc-pre-flip`
-- [ ] 2.5 Push backup branch: `git push -u origin ppc-archive`
-- [ ] 2.6 Push legacy tags: `git push origin legacy/v0.1.0 legacy/v0.1.1 legacy/v0.1.2 legacy/v0.1.3 legacy/v0.1.4 legacy/v0.1.5 legacy/v0.1.6 legacy/v0.1.7`
-- [ ] 2.7 Verify all backup refs visible on origin via `git ls-remote origin | grep -E 'ppc-(pre-flip|archive)|legacy/'`
+- [x] 2.1 Create backup tag `ppc-pre-flip` → pre-flip HEAD 8c463b6
+- [x] 2.2 Create backup branch `ppc-archive` → pre-flip HEAD
+- [x] 2.3 Back up 8 tags under `legacy/` prefix
+- [x] 2.4 Push backup tag `ppc-pre-flip` → origin
+- [x] 2.5 Push backup branch `ppc-archive` → origin (tracking set)
+- [x] 2.6 Push 8 `legacy/*` tags → origin
+- [x] 2.7 Verified on origin: `ppc-pre-flip`, `ppc-archive`, `legacy/v0.1.0–v0.1.7`
 
 ## 3. Filter-repo PPC side (Phase 1a)
 
-- [ ] 3.1 Create scratch clone: `git clone --no-local . /tmp/scratch-ppc` (non-local to avoid hardlinks)
-- [ ] 3.2 In scratch-ppc, checkout main: `cd /tmp/scratch-ppc && git checkout main`
-- [ ] 3.3 Run filter-repo with subdirectory prefix + binary purge: `git filter-repo --to-subdirectory-filter ppc/ --path ppc/mobius-hotline-server --invert-paths --force`
-- [ ] 3.4 Verify paths are prefixed: `git log --name-only -5` should show `ppc/…` paths on recent commits
-- [ ] 3.5 Verify binary purge: `git log --all --diff-filter=A -- ppc/mobius-hotline-server` should be empty
-- [ ] 3.6 Verify tags rewrote: `git tag -l v0.1.5` should exist and `git show v0.1.5 --stat` should show `ppc/…` paths
+- [x] 3.1 Created scratch clone /tmp/scratch-ppc
+- [x] 3.2 Checked out main (pre-flip HEAD 8c463b6)
+- [x] 3.3 filter-repo: 93 commits parsed, HEAD rewritten to 0db251c
+- [x] 3.4 Verified paths prefixed with `ppc/`
+- [x] 3.5 Verified: no `ppc/mobius-hotline-server` adds in history
+- [x] 3.6 Verified: v0.1.5 tag points at ppc/-prefixed commit c7f64c6
 
 ## 4. Filter-repo modern side (Phase 1b)
 
-- [ ] 4.1 Create scratch clone: `git clone --no-local --branch modern . /tmp/scratch-modern`
-- [ ] 4.2 Run filter-repo to purge DMG and (if binary per task 1.7) `test_threaded_news`: `cd /tmp/scratch-modern && git filter-repo --path Lemoniscate-0.1.5.dmg --invert-paths --path test_threaded_news --invert-paths --force`
-- [ ] 4.3 Verify DMG purge: `git log --all --diff-filter=A -- Lemoniscate-0.1.5.dmg` should be empty
-- [ ] 4.4 Verify modern tree at root is intact: `ls` should show `Dockerfile`, `Makefile`, `src/`, etc.
-- [ ] 4.5 If `test_threaded_news` was source not binary, repeat task 4.2 without the `test_threaded_news` path
+- [x] 4.1 Created scratch clone /tmp/scratch-modern (used absolute path after an initial cwd bug)
+- [x] 4.2 filter-repo purged DMG + test_threaded_news; HEAD rewritten to 45ece6a
+- [x] 4.3 Verified: no `Lemoniscate-0.1.5.dmg` adds in history
+- [x] 4.4 Verified: modern root intact (Dockerfile, Makefile, src/, docs/, openspec/)
+- [x] 4.5 N/A — test_threaded_news confirmed binary in task 1.7
 
 ## 5. Perform the flip (Phase 2)
 
-- [ ] 5.1 In real repo, add scratches as remotes: `git remote add scratch-modern /tmp/scratch-modern && git remote add scratch-ppc /tmp/scratch-ppc`
-- [ ] 5.2 Fetch from both scratches: `git fetch scratch-modern && git fetch scratch-ppc`
-- [ ] 5.3 Reset `main` to scratch-modern's tip: `git reset --hard scratch-modern/modern`
-- [ ] 5.4 Merge scratch-ppc's main with unrelated histories: `git merge --allow-unrelated-histories scratch-ppc/main -m "Flip repo: modern at root, PPC under ppc/, histories joined"`
-- [ ] 5.5 Verify the merge tree: `ls` shows modern at root, `ls ppc/` shows PPC tree
-- [ ] 5.6 Verify both histories reachable: `git log --oneline --all | head -20` shows commits from both lines
+- [x] 5.1 Added scratch-modern + scratch-ppc remotes
+- [x] 5.2 Fetched from both scratches
+- [x] 5.3 Reset main to scratch-modern/modern (HEAD 45ece6a)
+- [x] 5.4 Merged scratch-ppc/main (unrelated histories) → merge commit 0abc1d5
+- [x] 5.5 Verified: root has modern tree, `ppc/` has PPC tree
+- [x] 5.6 Verified: both histories reachable in `git log --all`
 
 ## 6. Post-merge cleanup (Phase 3)
 
-- [ ] 6.1 Delete duplicate LICENSE: `rm ppc/LICENSE`
-- [ ] 6.2 Rewrite root `README.md` to document: repo layout overview, link to `ppc/README.md` for PPC build, modern build instructions, backport workflow, tag naming convention
-- [ ] 6.3 Review `.gitignore` at root vs `ppc/.gitignore`; merge PPC-specific patterns into root where they apply globally; delete `ppc/.gitignore` if empty
-- [ ] 6.4 Scan for any other path-dependent references that broke (grep for `src/` in docs/scripts that now should point to `ppc/src/`): `git grep -n '\bsrc/' README.md docs/`
-- [ ] 6.5 Commit cleanup as a single commit: `git commit -m "Post-flip cleanup: dedupe LICENSE, rewrite README, consolidate .gitignore"`
+- [x] 6.1 Deleted duplicate `ppc/LICENSE` (identical to root)
+- [x] 6.2 Minimal-stub rewrite of root `README.md` — single-repo layout description, link to ppc/README.md (full rewrite deferred per user preference)
+- [x] 6.3 Deleted `ppc/.gitignore` — contents fully covered by root `.gitignore` (which already has test_chacha20poly1305, test_chat_history, test_hope_aead, test_threaded_news, build/, lemoniscate-linux-*, Lemoniscate.app/, *.dmg)
+- [x] 6.4 Scanned `README.md` and `docs/` for `src/` refs: root README is clean. `docs/PPC_BACKPORT_CHAT_HISTORY.md` has `src/` refs that are semantically "modern side" in backport context — left as-is; can be clarified later
+- [ ] 6.5 Commit cleanup as a single commit
 
 ## 7. Tag reconciliation (Phase 4)
 
