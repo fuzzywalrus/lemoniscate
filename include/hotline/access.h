@@ -53,6 +53,10 @@
 #define ACCESS_DOWNLOAD_FOLDER    39   /* Can Download Folders */
 #define ACCESS_SEND_PRIV_MSG      40   /* Can Send Messages */
 
+/* Chat history extension — bit 56, after accessVoiceChat (55).
+ * Servers SHOULD check this bit; if not configured, fall back to ACCESS_READ_CHAT. */
+#define ACCESS_READ_CHAT_HISTORY  56   /* Can Request Chat History */
+
 /*
  * hl_access_set - Set a permission bit in the access bitmap.
  */

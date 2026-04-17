@@ -176,8 +176,8 @@ All new data objects use field IDs in the `0x0F01`–`0x0F1F` range, following t
 | `0x0F04` | 3844 | `DATA_HISTORY_LIMIT` | uint16 | Maximum number of messages to return in a single response. |
 | `0x0F05` | 3845 | `DATA_HISTORY_ENTRY` | binary | A single chat history entry in packed binary format. See [History Entry Format](#history-entry-format). |
 | `0x0F06` | 3846 | `DATA_HISTORY_HAS_MORE` | uint8 | `1` if more messages exist beyond this batch, `0` otherwise. |
-| `0x0F07` | 3847 | `DATA_HISTORY_MAX_MSGS` | uint32 | Server retention policy: maximum messages. `0` = unlimited. |
-| `0x0F08` | 3848 | `DATA_HISTORY_MAX_DAYS` | uint32 | Server retention policy: maximum days. `0` = unlimited. |
+| `0x0F07` | 3847 | `DATA_HISTORY_MAX_MSGS` | uint32 | Server retention policy: maximum messages. `0` = unlimited. Login reply only. |
+| `0x0F08` | 3848 | `DATA_HISTORY_MAX_DAYS` | uint32 | Server retention policy: maximum days. `0` = unlimited. Login reply only. |
 | `0x0F09`–`0x0F1F` | 3849–3871 | *Reserved* | — | Reserved for future channel management fields (e.g., channel name, topic, channel list entries). |
 
 All multi-byte integers are unsigned big-endian (network byte order).
@@ -324,7 +324,7 @@ These are illustrative examples, not commitments. Actual sub-field types will be
 
 | Bit | Mask | Name | Description |
 |---|---|---|---|
-| 0 | `0x0001` | `is_action` | Message was a `/me` emote (displayed as `*** nick does something`). |
+| 0 | `0x0001` | `is_action` | Message was a `/me` emote (displayed as `*** nick does something`). Corresponds to `DATA_CHATOPTIONS` (`0x006E`) value `1` on the live chat path — the server sets this flag when recording an emote. |
 | 1 | `0x0002` | `is_server_msg` | Message originated from the server (e.g., admin broadcast), not a user. |
 | 2 | `0x0004` | `is_deleted` | Message has been removed by an administrator (tombstone). See below. |
 | 3–15 | — | *Reserved* | MUST be zero. Clients MUST ignore unknown flag bits. |
@@ -393,6 +393,8 @@ function parse_history_entry(data, data_len):
 Channel 0 is the public chat room — the same global conversation that `TRAN_CHAT_MSG` (106) broadcasts to. Every server that enables chat history MUST support channel 0.
 
 When a client sends `TRAN_GET_CHAT_HISTORY` with `DATA_CHANNEL_ID = 0`, the server returns history for the public chat.
+
+**Note:** The existing live chat broadcast (`TRAN_CHAT_MSG`, type 106) does not carry a `DATA_CHANNEL_ID` field — it implicitly targets channel 0. If a future specification introduces named channels, the broadcast path will need to include `DATA_CHANNEL_ID` so that capable clients can associate incoming messages with the correct channel.
 
 ### Named Channels (Future)
 

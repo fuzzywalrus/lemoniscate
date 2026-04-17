@@ -930,6 +930,52 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [hdr release]; [c release];
     }
 
+    /* ===== Chat History (extension; opt-in) ===== */
+    {
+        NSButton *hdr = makeDisclosureHeader(@"Chat History", self, sectionIdx++);
+        [hdr setFrame:NSMakeRect(SECTION_MARGIN, 0, secWidth, DISC_HEADER_H)];
+        [doc addSubview:hdr];
+
+        FlippedView *c = [[FlippedView alloc]
+            initWithFrame:NSMakeRect(0, 0, contentWidth, 200)];
+        float iy = 0;
+
+        _chatHistoryEnableCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_chatHistoryEnableCheckbox setButtonType:NSButtonTypeSwitch];
+        [_chatHistoryEnableCheckbox setTitle:@"Persist public chat to disk"];
+        [_chatHistoryEnableCheckbox setState:NSControlStateValueOff];
+        iy = addCheckboxWithHelp(c, _chatHistoryEnableCheckbox, iy,
+            @"When on, public chat messages are appended to <FileRoot>/ChatHistory/channel-N.jsonl. Capability-aware clients can fetch backlog after disconnect via TranGetChatHistory (700). Private chats are NEVER persisted.", self);
+
+        _chatHistoryMaxMsgsField = makeEditField(80);
+        [_chatHistoryMaxMsgsField setIntValue:10000];
+        [_chatHistoryMaxMsgsField setToolTip:@"Per-channel message cap. The hourly prune drops oldest-first when over the limit. 0 = unlimited."];
+        iy = addRow(c, @"Max Messages:", _chatHistoryMaxMsgsField, iy, 80);
+
+        _chatHistoryMaxDaysField = makeEditField(80);
+        [_chatHistoryMaxDaysField setIntValue:0];
+        [_chatHistoryMaxDaysField setToolTip:@"Drop entries older than this many days on the next prune. 0 = unlimited."];
+        iy = addRow(c, @"Max Days:", _chatHistoryMaxDaysField, iy, 80);
+
+        _chatHistoryLegacyBroadcastCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_chatHistoryLegacyBroadcastCheckbox setButtonType:NSButtonTypeSwitch];
+        [_chatHistoryLegacyBroadcastCheckbox setTitle:@"Replay recent chat to legacy clients"];
+        [_chatHistoryLegacyBroadcastCheckbox setState:NSControlStateValueOff];
+        iy = addCheckboxWithHelp(c, _chatHistoryLegacyBroadcastCheckbox, iy,
+            @"On login, send the most recent N messages as ordinary TranChatMsg (106) to clients that don't advertise the chat-history capability. Lets older clients see recent context.", self);
+
+        _chatHistoryLegacyCountField = makeEditField(80);
+        [_chatHistoryLegacyCountField setIntValue:30];
+        [_chatHistoryLegacyCountField setToolTip:@"Number of recent messages to replay when the legacy fallback is enabled."];
+        iy = addRow(c, @"Legacy Count:", _chatHistoryLegacyCountField, iy, 80);
+
+        float contentH = iy;
+        [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
+        [doc addSubview:c];
+        [self registerDisclosureSection:hdr content:c contentHeight:contentH];
+        [hdr release]; [c release];
+    }
+
     /* ===== Limits ===== */
     {
         NSButton *hdr = makeDisclosureHeader(@"Limits", self, sectionIdx++);

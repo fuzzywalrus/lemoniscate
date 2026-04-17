@@ -87,6 +87,9 @@ static const hl_tran_type_t TRAN_SET_USER                = {0x01, 0x61}; /* 353 
 static const hl_tran_type_t TRAN_USER_ACCESS             = {0x01, 0x62}; /* 354 */
 static const hl_tran_type_t TRAN_USER_BROADCAST          = {0x01, 0x63}; /* 355 */
 
+/* Chat history extension (700-709) — see include/hotline/chat_history.h */
+static const hl_tran_type_t TRAN_GET_CHAT_HISTORY        = {0x02, 0xBC}; /* 700 */
+
 /* News operations (370-411) */
 static const hl_tran_type_t TRAN_GET_NEWS_CAT_NAME_LIST  = {0x01, 0x72}; /* 370 */
 static const hl_tran_type_t TRAN_GET_NEWS_ART_NAME_LIST  = {0x01, 0x73}; /* 371 */
@@ -150,7 +153,9 @@ static const hl_field_type_t FIELD_TRANSFER_SIZE_64     = {0x01, 0xF3}; /* 499 -
 static const hl_field_type_t FIELD_FOLDER_ITEM_COUNT_64 = {0x01, 0xF4}; /* 500 - DATA_FOLDER_ITEM_COUNT64 */
 
 /* Capability bitmask values */
-#define HL_CAPABILITY_LARGE_FILES  0x0001
+#define HL_CAPABILITY_LARGE_FILES     0x0001
+#define HL_CAPABILITY_TEXT_ENCODING   0x0002  /* bit 1 — UTF-8 negotiation */
+#define HL_CAPABILITY_CHAT_HISTORY    0x0010  /* bit 4 — server-side chat history */
 static const hl_field_type_t FIELD_NEWS_ART_LIST_DATA   = {0x01, 0x41}; /* 321 */
 static const hl_field_type_t FIELD_NEWS_CAT_NAME        = {0x01, 0x42}; /* 322 */
 static const hl_field_type_t FIELD_NEWS_CAT_LIST_DATA15 = {0x01, 0x43}; /* 323 */

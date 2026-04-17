@@ -175,6 +175,31 @@ int mobius_load_config_plist(hl_config_t *cfg, const char *plist_path)
     plist_get_bool(dict, "MnemosyneIndexNews", &cfg->mnemosyne_index_news);
     plist_get_bool(dict, "MnemosyneIndexMsgboard", &cfg->mnemosyne_index_msgboard);
 
+    /* Chat history */
+    {
+        int tmp;
+        plist_get_bool(dict, "ChatHistoryEnabled", &cfg->chat_history_enabled);
+        plist_get_bool(dict, "ChatHistoryLegacyBroadcast", &cfg->chat_history_legacy_broadcast);
+        tmp = (int)cfg->chat_history_max_msgs;
+        plist_get_int(dict, "ChatHistoryMaxMessages", &tmp);
+        cfg->chat_history_max_msgs = (uint32_t)tmp;
+        tmp = (int)cfg->chat_history_max_days;
+        plist_get_int(dict, "ChatHistoryMaxDays", &tmp);
+        cfg->chat_history_max_days = (uint32_t)tmp;
+        tmp = (int)cfg->chat_history_legacy_count;
+        plist_get_int(dict, "ChatHistoryLegacyCount", &tmp);
+        cfg->chat_history_legacy_count = (uint32_t)tmp;
+        tmp = (int)cfg->chat_history_rate_capacity;
+        plist_get_int(dict, "ChatHistoryRateCapacity", &tmp);
+        cfg->chat_history_rate_capacity = (uint32_t)tmp;
+        tmp = (int)cfg->chat_history_rate_refill_per_sec;
+        plist_get_int(dict, "ChatHistoryRateRefillPerSec", &tmp);
+        cfg->chat_history_rate_refill_per_sec = (uint32_t)tmp;
+        plist_get_string(dict, "ChatHistoryEncryptionKey",
+                         cfg->chat_history_encryption_key_path,
+                         sizeof(cfg->chat_history_encryption_key_path));
+    }
+
     CFRelease(plist);
     return 0;
 }

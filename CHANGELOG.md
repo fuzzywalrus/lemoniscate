@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.1.7 — 2026-04-16
+
+### Added
+
+- **Persistent public chat history (extension)**: Opt-in server-side persistence of public chat. Capability bit 4 (`HL_CAPABILITY_CHAT_HISTORY`) is negotiated at login; capability-aware clients fetch backlog via the new `TranGetChatHistory` (700) transaction with cursor-based pagination (BEFORE / AFTER / LIMIT, default 50, max 200). Private chats (`FieldChatID` present) are never persisted. See [docs/Capabilities-Chat-History.md](docs/Capabilities-Chat-History.md) and [openspec/changes/chat-history/](openspec/changes/chat-history/).
+- **JSONL storage backend**: One append-only `ChatHistory/channel-N.jsonl` per channel under `FileRoot`, with a per-channel in-memory index for O(log n) cursor queries. Crash-safe — the startup scan trims any partial last-line garbage via `ftruncate`. PPC-safe (`_FILE_OFFSET_BITS=64`, `ftello`/`fseeko`, `fgets`, no pthreads).
+- **Optional ChaCha20-Poly1305 body encryption at rest**: Set `ChatHistory.encryption_key` to a 32-byte key file. Bodies are stored as `"ENC:<base64(nonce||ciphertext||tag)>"`; metadata (id, ts, nick, flags) stays plaintext so external tooling and the index scan still work.
+- **Tombstone sidecar**: `lm_chat_history_tombstone()` records redactions in `ChatHistory/tombstones.jsonl`; queries return the entry with body cleared and `HL_CHAT_FLAG_IS_DELETED` set.
+- **Retention pruning**: Configurable per-channel message cap (`max_messages`) and age cap (`max_days`). Runs once on startup and every 3600s thereafter via the existing idle-check timer.
+- **Per-connection rate limiting**: Token bucket on `TranGetChatHistory` (defaults: 20-token capacity, 10 tokens/sec refill). Over the limit, the server replies with `"chat history rate limited"`.
+- **Legacy fallback**: When `legacy_broadcast: true`, clients without the chat-history capability bit receive the last `legacy_count` messages as ordinary `TranChatMsg` (106) right after login, formatted with the right `\r %nick%: %body%` (or action / server-msg variants) and transcoded to the wire encoding.
+- **Permission bit 56 (`ACCESS_READ_CHAT_HISTORY`)**: New per-account permission gating the read path. Falls back to bit 9 (`ACCESS_READ_CHAT`) when bit 56 is unset.
+- **New config block**: `ChatHistory:` in `config.yaml` (and equivalent flat `ChatHistory*` keys in `config.plist`) — `enabled`, `max_messages`, `max_days`, `legacy_broadcast`, `legacy_count`, `encryption_key`, `rate_capacity`, `rate_refill_per_sec`. CLI/YAML/plist paths all wired; GUI surface deferred to a separate PR.
+- **Chat history tests**: 10 new unit tests in `test/test_chat_history.c` covering pagination (BEFORE / AFTER / range / empty), crash-truncate recovery, tombstone semantics, count- and age-based prune, and encryption round-trip across close/reopen. All pass; full suite 52/52 (no regressions).
+
 ## 0.1.5 — 2026-04-03
 
 ### Added

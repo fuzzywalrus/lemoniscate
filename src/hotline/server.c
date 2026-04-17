@@ -25,6 +25,8 @@
 #include "mobius/transaction_handlers.h"
 #include "mobius/mnemosyne_sync.h"
 #include "mobius/config_loader.h"
+#include "hotline/chat_history.h"
+#include "hotline/encoding.h"
 
 #include "hotline/platform/platform_event.h"
 #include <sys/socket.h>
@@ -1077,6 +1079,23 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
             hl_log_info(srv->logger, "Large file mode enabled for %s",
                         cc->remote_addr);
         }
+        /* If the client advertises UTF-8 capability, send chat / nicks /
+         * history bodies as UTF-8 on the wire, regardless of the server's
+         * default Encoding setting. Stored bytes (chat history JSONL) are
+         * always UTF-8; this just controls the on-wire transcoding. */
+        if (client_caps & HL_CAPABILITY_TEXT_ENCODING) {
+            cc->utf8_encoding = 1;
+            hl_log_info(srv->logger, "UTF-8 wire encoding enabled for %s",
+                        cc->remote_addr);
+        }
+        /* Negotiate chat history: requires both client capability bit and
+         * server-side enablement. */
+        if ((client_caps & HL_CAPABILITY_CHAT_HISTORY) &&
+            srv->config.chat_history_enabled && srv->chat_history) {
+            cc->chat_history_capable = 1;
+            hl_log_info(srv->logger, "Chat history capability enabled for %s",
+                        cc->remote_addr);
+        }
     }
 
     /* Activate HOPE transport encryption BEFORE sending login reply.
@@ -1111,7 +1130,8 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
         uint8_t version_bytes[2] = {0x00, 0xBE}; /* 190 = Hotline 1.8+ */
         uint8_t banner_id[2] = {0, 0};
 
-        hl_field_t reply_fields[4]; /* +1 for capabilities */
+        /* base 3 fields + caps + max_msgs + max_days */
+        hl_field_t reply_fields[6];
         int fc = 0;
         hl_field_new(&reply_fields[fc++], FIELD_VERSION, version_bytes, 2);
         hl_field_new(&reply_fields[fc++], FIELD_COMMUNITY_BANNER_ID, banner_id, 2);
@@ -1120,10 +1140,34 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
                      (uint16_t)strlen(srv->config.name));
 
         /* Echo confirmed capabilities back to client */
-        if (cc->large_file_mode) {
+        uint16_t echoed_caps = 0;
+        if (cc->large_file_mode)        echoed_caps |= HL_CAPABILITY_LARGE_FILES;
+        if (cc->utf8_encoding)          echoed_caps |= HL_CAPABILITY_TEXT_ENCODING;
+        if (cc->chat_history_capable)   echoed_caps |= HL_CAPABILITY_CHAT_HISTORY;
+        if (echoed_caps) {
             uint8_t caps[2];
-            hl_write_u16(caps, HL_CAPABILITY_LARGE_FILES);
+            hl_write_u16(caps, echoed_caps);
             hl_field_new(&reply_fields[fc++], FIELD_CAPABILITIES, caps, 2);
+        }
+
+        /* Advertise retention limits when chat history is active for this client. */
+        uint8_t max_msgs_be[4];
+        uint8_t max_days_be[4];
+        if (cc->chat_history_capable) {
+            uint32_t mm = srv->config.chat_history_max_msgs;
+            uint32_t md = srv->config.chat_history_max_days;
+            max_msgs_be[0] = (uint8_t)(mm >> 24);
+            max_msgs_be[1] = (uint8_t)(mm >> 16);
+            max_msgs_be[2] = (uint8_t)(mm >> 8);
+            max_msgs_be[3] = (uint8_t)mm;
+            max_days_be[0] = (uint8_t)(md >> 24);
+            max_days_be[1] = (uint8_t)(md >> 16);
+            max_days_be[2] = (uint8_t)(md >> 8);
+            max_days_be[3] = (uint8_t)md;
+            hl_field_new(&reply_fields[fc++], FIELD_HISTORY_MAX_MSGS,
+                         max_msgs_be, 4);
+            hl_field_new(&reply_fields[fc++], FIELD_HISTORY_MAX_DAYS,
+                         max_days_be, 4);
         }
 
         hl_transaction_t reply;
@@ -1181,6 +1225,72 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
             send_transaction_to_client(cc, &na_tran);
             hl_field_free(&na_field);
             hl_transaction_free(&na_tran);
+        }
+    }
+
+    /* Step 4 (legacy fallback): If the client lacks the chat-history
+     * capability but the server has it enabled with legacy broadcast on,
+     * replay the last N messages as standard TranChatMsg (106) so the
+     * user sees recent context. */
+    if (!cc->chat_history_capable && srv->chat_history &&
+        srv->config.chat_history_enabled &&
+        srv->config.chat_history_legacy_broadcast &&
+        srv->config.chat_history_legacy_count > 0 &&
+        hl_client_conn_authorize(cc, ACCESS_READ_CHAT)) {
+        lm_chat_entry_t *entries = NULL;
+        size_t n = 0;
+        uint8_t has_more = 0;
+        uint16_t limit = (uint16_t)srv->config.chat_history_legacy_count;
+        if (limit > LM_CHAT_HISTORY_MAX_LIMIT) limit = LM_CHAT_HISTORY_MAX_LIMIT;
+        if (lm_chat_history_query(srv->chat_history, 0, 0, 0, limit,
+                                  &entries, &n, &has_more) == 0 && entries) {
+            size_t i;
+            for (i = 0; i < n; i++) {
+                lm_chat_entry_t *e = &entries[i];
+                char line[4200];
+                int line_len;
+                if (e->flags & HL_CHAT_FLAG_IS_ACTION) {
+                    line_len = snprintf(line, sizeof(line),
+                                        "\r *** %s %s", e->nick, e->body);
+                } else if (e->flags & HL_CHAT_FLAG_IS_SERVER_MSG) {
+                    line_len = snprintf(line, sizeof(line),
+                                        "\r %s", e->body);
+                } else {
+                    line_len = snprintf(line, sizeof(line),
+                                        "\r %s: %s", e->nick, e->body);
+                }
+                if (line_len < 0) continue;
+                if (line_len > (int)sizeof(line) - 1) line_len = (int)sizeof(line) - 1;
+
+                /* Transcode stored UTF-8 body back to this client's wire
+                 * encoding. Per-connection negotiation overrides the
+                 * server-wide default. */
+                int want_macroman = cc->utf8_encoding ? 0 : srv->use_mac_roman;
+                char wire[4200];
+                int wire_len = line_len;
+                if (want_macroman) {
+                    int w = hl_utf8_to_macroman(line, (size_t)line_len,
+                                                wire, sizeof(wire));
+                    if (w < 0) {
+                        memcpy(wire, line, (size_t)line_len);
+                        wire_len = line_len;
+                    } else {
+                        wire_len = w;
+                    }
+                } else {
+                    memcpy(wire, line, (size_t)line_len);
+                }
+
+                hl_field_t cf;
+                hl_field_new(&cf, FIELD_DATA, (const uint8_t *)wire,
+                             (uint16_t)wire_len);
+                hl_transaction_t ct;
+                hl_transaction_new(&ct, TRAN_CHAT_MSG, cc->id, &cf, 1);
+                send_transaction_to_client(cc, &ct);
+                hl_field_free(&cf);
+                hl_transaction_free(&ct);
+            }
+            lm_chat_history_entries_free(entries);
         }
     }
 
@@ -2012,6 +2122,17 @@ int hl_server_listen_and_serve(hl_server_t *srv)
     /* Tracker registration timer — register immediately, then every 300s */
     int tracker_elapsed = HL_TRACKER_UPDATE_FREQ; /* trigger on first tick */
 
+    /* Chat history retention prune — every 3600s when enabled. Startup pass
+     * was performed in main.c after the index build, so we want to wait one
+     * full interval before the next one fires. */
+    int chat_prune_elapsed = 0;
+    const int chat_prune_freq = 3600;
+
+    /* Chat history periodic fsync — bounds the power-loss window without
+     * paying fsync cost on every write. */
+    int chat_fsync_elapsed = 0;
+    const int chat_fsync_freq = 60;
+
     while (!srv->shutdown) {
         hl_event_t events[64];
 
@@ -2046,6 +2167,24 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                         pthread_rwlock_unlock(&cc->mu);
                     }
                     free(clients);
+                }
+
+                /* Chat history prune (hourly) + periodic fsync (60s) */
+                if (srv->chat_history && srv->config.chat_history_enabled) {
+                    chat_prune_elapsed += HL_IDLE_CHECK_INTERVAL;
+                    if (chat_prune_elapsed >= chat_prune_freq) {
+                        chat_prune_elapsed = 0;
+                        if (lm_chat_history_prune(srv->chat_history) == 0) {
+                            hl_log_info(srv->logger, "chat history prune: completed");
+                        } else {
+                            hl_log_error(srv->logger, "chat history prune: failed");
+                        }
+                    }
+                    chat_fsync_elapsed += HL_IDLE_CHECK_INTERVAL;
+                    if (chat_fsync_elapsed >= chat_fsync_freq) {
+                        chat_fsync_elapsed = 0;
+                        lm_chat_history_fsync(srv->chat_history);
+                    }
                 }
 
                 /* Periodic tracker registration */

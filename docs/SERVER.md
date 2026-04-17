@@ -88,6 +88,15 @@ E2ERequireTLS: false          # Require TLS for E2E file access
 TLSCertFile: ""               # Path to PEM certificate
 TLSKeyFile: ""                # Path to PEM private key
 TLSPort: 5600                 # TLS listener port
+
+# Persistent chat history (opt-in extension)
+ChatHistory:
+  Enabled: false              # Master switch — no persistence when false
+  MaxMessages: 10000          # Per-channel cap; 0 = unlimited
+  MaxDays: 0                  # Age cap in days; 0 = unlimited
+  LegacyBroadcast: false      # Replay recent messages to non-capable clients
+  LegacyCount: 30             # Number replayed when LegacyBroadcast is on
+  # EncryptionKey: /path/to/chat-history.key  # 32-byte key (optional)
 ```
 
 ### User Account Files (Users/*.yaml)

@@ -12,6 +12,7 @@
 - Auto-reply when a user is away or idle
 - /me action messages
 - Admin broadcast messages to all users
+- Persistent public chat history (opt-in) — capability-negotiated, cursor-paginated; legacy clients can receive a configurable replay of recent messages on login. See [Capabilities-Chat-History.md](Capabilities-Chat-History.md).
 
 ## User Management
 

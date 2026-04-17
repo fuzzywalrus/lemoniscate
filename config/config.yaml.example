@@ -150,3 +150,49 @@ HOPELegacyMode: false
 #
 #   # Index threaded news articles. Default: true
 #   index_news: true
+
+# ─── Chat History (extension) ─────────────────────────────
+
+# Persist public chat messages to disk so capability-aware clients can
+# fetch backlog after disconnect. Private chats (FieldChatID present)
+# are NEVER persisted. Disabled by default — opt-in.
+#
+# Storage: <FileRoot>/ChatHistory/channel-N.jsonl + tombstones.jsonl.
+# Wire protocol: capability bit 4 negotiated at login; clients fetch via
+# transaction 700 (TranGetChatHistory). See docs/Capabilities-Chat-History.md.
+#
+# ChatHistory:
+#   # Master switch. When false, no persistence happens regardless of
+#   # other settings. Default: false
+#   Enabled: false
+#
+#   # Maximum messages retained per channel. 0 = unlimited.
+#   # The hourly prune drops oldest-first when over the limit.
+#   # Default: 10000
+#   MaxMessages: 10000
+#
+#   # Maximum age in days. Entries with ts < (now - MaxDays·86400) are
+#   # dropped on the next prune pass. 0 = unlimited.
+#   # Default: 0
+#   MaxDays: 0
+#
+#   # When a client connects without the chat-history capability bit, send
+#   # the last N messages as ordinary TranChatMsg (106) so legacy clients
+#   # see recent context. Default: false
+#   LegacyBroadcast: false
+#
+#   # Number of messages replayed when LegacyBroadcast is true.
+#   # Default: 30
+#   LegacyCount: 30
+#
+#   # Optional ChaCha20-Poly1305 body encryption at rest. Path to a 32-byte
+#   # key file. Metadata (id, ts, nick, flags) stays plaintext so external
+#   # tooling and the startup index scan still work.
+#   # If unset, bodies are stored as plaintext JSON.
+#   # EncryptionKey: /path/to/chat-history.key
+#
+#   # Per-connection rate limit (token bucket). Defaults: 20-token capacity
+#   # refilling at 10 tokens/sec. Each TranGetChatHistory consumes 1 token;
+#   # over the limit replies with "chat history rate limited".
+#   RateCapacity: 20
+#   RateRefillPerSec: 10
