@@ -83,11 +83,6 @@
 #define NSControlStateValueOff NSOffState
 #endif
 
-/* NSModalResponse typedef — 10.9+ */
-#if MAC_OS_X_VERSION_MAX_ALLOWED < 1090
-typedef NSInteger NSModalResponse;
-#endif
-
 /* NSInteger/NSUInteger — added in 10.5, backfill for 10.4 */
 #ifndef NSINTEGER_DEFINED
 #define NSINTEGER_DEFINED
@@ -96,6 +91,22 @@ typedef unsigned int NSUInteger;
 #define NSIntegerMax  INT_MAX
 #define NSIntegerMin  INT_MIN
 #define NSUIntegerMax UINT_MAX
+#endif
+
+/* CGFloat — added in 10.5, backfill for 10.4. 32-bit only on PPC/i386,
+ * so float is correct. Needed when building i386 against the 10.4u SDK. */
+#if MAC_OS_X_VERSION_MAX_ALLOWED < 1050
+#ifndef CGFLOAT_DEFINED
+#define CGFLOAT_DEFINED
+typedef float CGFloat;
+#define CGFLOAT_IS_DOUBLE 0
+#endif
+#endif
+
+/* NSModalResponse typedef — 10.9+. Must come after NSInteger backfill so
+ * i386 builds against the 10.4u SDK (which has no NSInteger) still parse. */
+#if MAC_OS_X_VERSION_MAX_ALLOWED < 1090
+typedef NSInteger NSModalResponse;
 #endif
 
 /* NSString methods added in 10.5 */

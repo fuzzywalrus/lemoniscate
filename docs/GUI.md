@@ -15,6 +15,14 @@ make gui
 make app
 ```
 
+For a Leopard PowerPC host that needs a PPC + Intel universal app targeting PowerPC 10.4/10.5 and Intel 10.6:
+
+```bash
+make universal-app \
+  UNIVERSAL_I386_SDKROOT=/Developer/SDKs/MacOSX10.4u.sdk \
+  UNIVERSAL_I386_YAML_LDFLAGS=/path/to/i386-or-universal/libyaml.a
+```
+
 This produces:
 - `lemoniscate` (server binary)
 - `lemoniscate-gui` (GUI executable)
@@ -53,7 +61,7 @@ At runtime, the GUI looks for `lemoniscate-server` in:
 
 ## Architecture compatibility
 
-`make app` validates that `lemoniscate` and `lemoniscate-gui` target the same CPU architecture before packaging.
+`make app` validates that `lemoniscate` and `lemoniscate-gui` contain the same architecture slice set before packaging.
 
 If architectures do not match, packaging fails with a clear error.
 You can bypass this with:
@@ -63,6 +71,8 @@ APP_SKIP_ARCH_CHECK=1 make app
 ```
 
 Use bypass only for intentional advanced cases.
+
+The current Intel target is Mac OS X 10.6 Snow Leopard. Mac OS X 10.7 Lion is not supported because of the `libcrypto` dependency.
 
 ## How GUI launches server
 
@@ -92,7 +102,9 @@ Then point the GUI at that directory.
   - Ensure `lemoniscate-server` exists in `Lemoniscate.app/Contents/MacOS/`.
   - Or place `lemoniscate-server` next to the app bundle for fallback detection.
 - "Architecture mismatch" during `make app`
-  - Rebuild both `lemoniscate` and `lemoniscate-gui` on the same target architecture/toolchain.
+  - Rebuild both `lemoniscate` and `lemoniscate-gui` with the same slice set (`ppc`, `i386`, or both).
+- App launches on Intel 10.6 but not 10.7
+  - 10.6 Snow Leopard is the current Intel target. 10.7 Lion is not supported because of the `libcrypto` dependency.
 - Server fails to start from GUI
   - Confirm the selected config directory exists and contains valid files.
   - If this is first run, create defaults with `./lemoniscate --init -c <dir>`.
