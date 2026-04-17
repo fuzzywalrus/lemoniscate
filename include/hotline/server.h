@@ -23,6 +23,8 @@
 #include "mobius/threaded_news_yaml.h"
 #include <pthread.h>
 
+struct lm_chat_history_s;
+
 /* Rate limiter entry (token bucket) — maps to Go rate.Limiter */
 typedef struct hl_rate_limiter {
     char                     ip[64];
@@ -67,6 +69,7 @@ typedef struct hl_server {
     mobius_threaded_news_t *threaded_news;    /* Go: ThreadedNewsMgr ThreadedNewsMgr */
     hl_ban_mgr_t       *ban_list;            /* Go: BanList BanMgr */
     mobius_flat_news_t *flat_news;            /* Go: MessageBoard io.ReadWriteSeeker */
+    struct lm_chat_history_s *chat_history;   /* ChatHistory extension storage */
 
     /* Text encoding — maps to Go TextDecoder/TextEncoder
      * Config "encoding" field selects macintosh (MacRoman) or utf-8.

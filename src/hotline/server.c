@@ -25,6 +25,8 @@
 #include "mobius/transaction_handlers.h"
 #include "mobius/mnemosyne_sync.h"
 #include "mobius/config_loader.h"
+#include "hotline/chat_history.h"
+#include "hotline/encoding.h"
 
 #include "hotline/platform/platform_event.h"
 #include <sys/socket.h>
@@ -186,6 +188,39 @@ void hl_server_send_to_client(hl_client_conn_t *cc, hl_transaction_t *t)
 {
     memcpy(t->client_id, cc->id, 2);
     send_transaction_to_client(cc, t);
+}
+
+static void log_chat_history_event(hl_client_conn_t *cc, const char *verb)
+{
+    char nick_utf8[LM_CHAT_MAX_NICK_LEN + 1];
+    char body[LM_CHAT_MAX_BODY_LEN + 1];
+    int sender_is_macroman;
+    int n;
+
+    if (!cc || !cc->server) return;
+    if (!cc->server->chat_history || !cc->server->config.chat_history_enabled) return;
+    if (!cc->server->config.chat_history_log_joins) return;
+    if (cc->user_name_len == 0) return;
+
+    sender_is_macroman = cc->utf8_encoding ? 0 : cc->server->use_mac_roman;
+    if (sender_is_macroman) {
+        n = hl_macroman_to_utf8((const char *)cc->user_name,
+                                cc->user_name_len,
+                                nick_utf8, sizeof(nick_utf8));
+        if (n < 0) n = 0;
+        nick_utf8[n] = '\0';
+    } else {
+        size_t nl = cc->user_name_len < LM_CHAT_MAX_NICK_LEN
+                  ? cc->user_name_len : LM_CHAT_MAX_NICK_LEN;
+        memcpy(nick_utf8, cc->user_name, nl);
+        nick_utf8[nl] = '\0';
+    }
+
+    n = snprintf(body, sizeof(body), "%s %s", nick_utf8, verb);
+    if (n <= 0) return;
+
+    lm_chat_history_append(cc->server->chat_history, 0,
+                           HL_CHAT_FLAG_IS_SERVER_MSG, 0, "", body);
 }
 
 /* Notify all other clients that this user's visible profile changed.
@@ -389,6 +424,8 @@ static void disconnect_client(hl_server_t *srv, hl_client_conn_t *cc, hl_event_l
 {
     hl_log_info(srv->logger, "Client disconnected: %s (id=%d)",
                 cc->remote_addr, hl_read_u16(cc->id));
+
+    log_chat_history_event(cc, "signed off");
 
     /* Remove from event loop (closing fd does this automatically, but be explicit) */
     hl_event_remove_fd(evloop, cc->fd);
@@ -1077,6 +1114,17 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
             hl_log_info(srv->logger, "Large file mode enabled for %s",
                         cc->remote_addr);
         }
+        if (client_caps & HL_CAPABILITY_TEXT_ENCODING) {
+            cc->utf8_encoding = 1;
+            hl_log_info(srv->logger, "UTF-8 wire encoding enabled for %s",
+                        cc->remote_addr);
+        }
+        if ((client_caps & HL_CAPABILITY_CHAT_HISTORY) &&
+            srv->config.chat_history_enabled && srv->chat_history) {
+            cc->chat_history_capable = 1;
+            hl_log_info(srv->logger, "Chat history capability enabled for %s",
+                        cc->remote_addr);
+        }
     }
 
     /* Activate HOPE transport encryption BEFORE sending login reply.
@@ -1110,8 +1158,7 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
     {
         uint8_t version_bytes[2] = {0x00, 0xBE}; /* 190 = Hotline 1.8+ */
         uint8_t banner_id[2] = {0, 0};
-
-        hl_field_t reply_fields[4]; /* +1 for capabilities */
+        hl_field_t reply_fields[6];
         int fc = 0;
         hl_field_new(&reply_fields[fc++], FIELD_VERSION, version_bytes, 2);
         hl_field_new(&reply_fields[fc++], FIELD_COMMUNITY_BANNER_ID, banner_id, 2);
@@ -1120,10 +1167,35 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
                      (uint16_t)strlen(srv->config.name));
 
         /* Echo confirmed capabilities back to client */
-        if (cc->large_file_mode) {
-            uint8_t caps[2];
-            hl_write_u16(caps, HL_CAPABILITY_LARGE_FILES);
-            hl_field_new(&reply_fields[fc++], FIELD_CAPABILITIES, caps, 2);
+        {
+            uint16_t echoed_caps = 0;
+            if (cc->large_file_mode)      echoed_caps |= HL_CAPABILITY_LARGE_FILES;
+            if (cc->utf8_encoding)        echoed_caps |= HL_CAPABILITY_TEXT_ENCODING;
+            if (cc->chat_history_capable) echoed_caps |= HL_CAPABILITY_CHAT_HISTORY;
+            if (echoed_caps) {
+                uint8_t caps[2];
+                hl_write_u16(caps, echoed_caps);
+                hl_field_new(&reply_fields[fc++], FIELD_CAPABILITIES, caps, 2);
+            }
+        }
+
+        if (cc->chat_history_capable) {
+            uint8_t max_msgs_be[4];
+            uint8_t max_days_be[4];
+            uint32_t mm = srv->config.chat_history_max_msgs;
+            uint32_t md = srv->config.chat_history_max_days;
+
+            max_msgs_be[0] = (uint8_t)(mm >> 24);
+            max_msgs_be[1] = (uint8_t)(mm >> 16);
+            max_msgs_be[2] = (uint8_t)(mm >> 8);
+            max_msgs_be[3] = (uint8_t)mm;
+            max_days_be[0] = (uint8_t)(md >> 24);
+            max_days_be[1] = (uint8_t)(md >> 16);
+            max_days_be[2] = (uint8_t)(md >> 8);
+            max_days_be[3] = (uint8_t)md;
+
+            hl_field_new(&reply_fields[fc++], FIELD_HISTORY_MAX_MSGS, max_msgs_be, 4);
+            hl_field_new(&reply_fields[fc++], FIELD_HISTORY_MAX_DAYS, max_days_be, 4);
         }
 
         hl_transaction_t reply;
@@ -1184,12 +1256,77 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
         }
     }
 
+    if (!cc->chat_history_capable && srv->chat_history &&
+        srv->config.chat_history_enabled &&
+        srv->config.chat_history_legacy_broadcast &&
+        srv->config.chat_history_legacy_count > 0 &&
+        hl_client_conn_authorize(cc, ACCESS_READ_CHAT)) {
+        lm_chat_entry_t *entries = NULL;
+        size_t n = 0;
+        uint8_t has_more = 0;
+        uint16_t limit = (uint16_t)srv->config.chat_history_legacy_count;
+        if (limit > LM_CHAT_HISTORY_MAX_LIMIT) limit = LM_CHAT_HISTORY_MAX_LIMIT;
+        if (lm_chat_history_query(srv->chat_history, 0, 0, 0, limit,
+                                  &entries, &n, &has_more) == 0 && entries) {
+            size_t i;
+            for (i = 0; i < n; i++) {
+                lm_chat_entry_t *e = &entries[i];
+                char line[4200];
+                char wire[4200];
+                int line_len;
+                int wire_len;
+                int want_macroman;
+
+                if (e->flags & HL_CHAT_FLAG_IS_ACTION) {
+                    line_len = snprintf(line, sizeof(line),
+                                        "\r *** %s %s", e->nick, e->body);
+                } else if (e->flags & HL_CHAT_FLAG_IS_SERVER_MSG) {
+                    line_len = snprintf(line, sizeof(line), "\r %s", e->body);
+                } else {
+                    line_len = snprintf(line, sizeof(line),
+                                        "\r %s: %s", e->nick, e->body);
+                }
+                if (line_len < 0) continue;
+                if (line_len > (int)sizeof(line) - 1)
+                    line_len = (int)sizeof(line) - 1;
+
+                want_macroman = cc->utf8_encoding ? 0 : srv->use_mac_roman;
+                wire_len = line_len;
+                if (want_macroman) {
+                    int w = hl_utf8_to_macroman(line, (size_t)line_len,
+                                                wire, sizeof(wire));
+                    if (w < 0) {
+                        memcpy(wire, line, (size_t)line_len);
+                    } else {
+                        wire_len = w;
+                    }
+                } else {
+                    memcpy(wire, line, (size_t)line_len);
+                }
+
+                {
+                    hl_field_t cf;
+                    hl_transaction_t ct;
+                    hl_field_new(&cf, FIELD_DATA, (const uint8_t *)wire,
+                                 (uint16_t)wire_len);
+                    hl_transaction_new(&ct, TRAN_CHAT_MSG, cc->id, &cf, 1);
+                    send_transaction_to_client(cc, &ct);
+                    hl_field_free(&cf);
+                    hl_transaction_free(&ct);
+                }
+            }
+            lm_chat_history_entries_free(entries);
+        }
+    }
+
     /* Notify others immediately for 1.2.3-style login flows where the
      * nickname was already provided in TranLogin. Newer clients are
      * announced on TranAgreed after sending user info/options. */
     if (f_name && f_name->data_len > 0) {
         broadcast_notify_change_user(srv, cc);
     }
+
+    log_chat_history_event(cc, "signed on");
 
     hl_transaction_free(&login_tran);
 
@@ -2011,6 +2148,10 @@ int hl_server_listen_and_serve(hl_server_t *srv)
 
     /* Tracker registration timer — register immediately, then every 300s */
     int tracker_elapsed = HL_TRACKER_UPDATE_FREQ; /* trigger on first tick */
+    int chat_prune_elapsed = 0;
+    const int chat_prune_freq = 3600;
+    int chat_fsync_elapsed = 0;
+    const int chat_fsync_freq = 60;
 
     while (!srv->shutdown) {
         hl_event_t events[64];
@@ -2046,6 +2187,24 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                         pthread_rwlock_unlock(&cc->mu);
                     }
                     free(clients);
+                }
+
+                if (srv->chat_history && srv->config.chat_history_enabled) {
+                    chat_prune_elapsed += HL_IDLE_CHECK_INTERVAL;
+                    if (chat_prune_elapsed >= chat_prune_freq) {
+                        chat_prune_elapsed = 0;
+                        if (lm_chat_history_prune(srv->chat_history) == 0) {
+                            hl_log_info(srv->logger, "chat history prune: completed");
+                        } else {
+                            hl_log_error(srv->logger, "chat history prune: failed");
+                        }
+                    }
+
+                    chat_fsync_elapsed += HL_IDLE_CHECK_INTERVAL;
+                    if (chat_fsync_elapsed >= chat_fsync_freq) {
+                        chat_fsync_elapsed = 0;
+                        lm_chat_history_fsync(srv->chat_history);
+                    }
                 }
 
                 /* Periodic tracker registration */

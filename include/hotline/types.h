@@ -102,6 +102,7 @@ static const hl_tran_type_t TRAN_DEL_NEWS_ART            = {0x01, 0x9B}; /* 411 
 
 /* Keepalive (500) */
 static const hl_tran_type_t TRAN_KEEP_ALIVE              = {0x01, 0xF4}; /* 500 */
+static const hl_tran_type_t TRAN_GET_CHAT_HISTORY        = {0x02, 0xBC}; /* 700 */
 
 
 /* --- Field type constants (from hotline/field.go) --- */
@@ -167,6 +168,8 @@ static const hl_field_type_t FIELD_TRANSFER_SIZE_64     = {0x01, 0xF3}; /* 499 *
 static const hl_field_type_t FIELD_FOLDER_ITEM_COUNT_64 = {0x01, 0xF4}; /* 500 */
 
 #define HL_CAPABILITY_LARGE_FILES  0x0001
+#define HL_CAPABILITY_TEXT_ENCODING 0x0002
+#define HL_CAPABILITY_CHAT_HISTORY  0x0010
 
 
 /* HOPE field constants are now defined in hope.h */
