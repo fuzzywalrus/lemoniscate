@@ -196,3 +196,8 @@ HOPELegacyMode: false
 #   # over the limit replies with "chat history rate limited".
 #   RateCapacity: 20
 #   RateRefillPerSec: 10
+#
+#   # When on, every login appends a system message to chat history
+#   # ("greg signed on") and disconnect appends another ("greg signed off").
+#   # Off by default — some operators find these noisy on busy servers.
+#   LogJoins: false
