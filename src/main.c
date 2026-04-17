@@ -21,6 +21,7 @@
 #include "mobius/logger_impl.h"
 #include "mobius/ban_file.h"
 #include "mobius/mnemosyne_sync.h"
+#include "hotline/chat_history.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -309,7 +310,7 @@ int main(int argc, char **argv)
     }
 
     if (show_version) {
-        printf("lemoniscate 0.1.6\n");
+        printf("lemoniscate 0.1.7\n");
         return 0;
     }
 
@@ -401,6 +402,8 @@ int main(int argc, char **argv)
             }
         }
 
+        srv->use_mac_roman = (strcmp(srv->config.encoding, "utf-8") != 0);
+
         /* Resolve relative FileRoot against config directory */
         if (srv->config.file_root[0] != '\0' &&
             srv->config.file_root[0] != '/') {
@@ -452,6 +455,35 @@ int main(int argc, char **argv)
         snprintf(path, sizeof(path), "%s/ThreadedNews.yaml", config_dir);
         strncpy(srv->threaded_news->file_path, path, sizeof(srv->threaded_news->file_path) - 1);
         tn_load(srv->threaded_news);
+
+        if (srv->config.chat_history_enabled && srv->config.file_root[0]) {
+            lm_chat_history_config_t chcfg;
+            memset(&chcfg, 0, sizeof(chcfg));
+            chcfg.enabled = srv->config.chat_history_enabled;
+            chcfg.max_msgs = srv->config.chat_history_max_msgs;
+            chcfg.max_days = srv->config.chat_history_max_days;
+            chcfg.legacy_broadcast = srv->config.chat_history_legacy_broadcast;
+            chcfg.legacy_count = srv->config.chat_history_legacy_count;
+            strncpy(chcfg.encryption_key_path,
+                    srv->config.chat_history_encryption_key_path,
+                    sizeof(chcfg.encryption_key_path) - 1);
+
+            srv->chat_history = lm_chat_history_open(srv->config.file_root, &chcfg);
+            if (srv->chat_history) {
+                hl_log_info(srv->logger,
+                            "Chat history enabled: max_msgs=%u max_days=%u legacy=%d",
+                            srv->config.chat_history_max_msgs,
+                            srv->config.chat_history_max_days,
+                            srv->config.chat_history_legacy_broadcast);
+                if (lm_chat_history_prune(srv->chat_history) != 0) {
+                    hl_log_error(srv->logger, "chat history startup prune: failed");
+                }
+            } else {
+                hl_log_error(srv->logger,
+                             "Chat history failed to open under %s",
+                             srv->config.file_root);
+            }
+        }
 
         /* Load banner */
         if (srv->config.banner_file[0]) {
@@ -577,6 +609,17 @@ int main(int argc, char **argv)
     if (bonjour) {
         hl_bonjour_unregister(bonjour);
     }
+
+    if (srv->chat_history) lm_chat_history_close(srv->chat_history);
+    srv->chat_history = NULL;
+    if (srv->account_mgr) mobius_yaml_account_mgr_free(srv->account_mgr);
+    srv->account_mgr = NULL;
+    if (srv->ban_list) mobius_ban_file_free(srv->ban_list);
+    srv->ban_list = NULL;
+    if (srv->threaded_news) mobius_threaded_news_free(srv->threaded_news);
+    srv->threaded_news = NULL;
+    if (srv->flat_news) mobius_flat_news_free(srv->flat_news);
+    srv->flat_news = NULL;
 
     hl_server_free(srv);
     g_server = NULL;
