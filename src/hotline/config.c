@@ -33,4 +33,5 @@ void hl_config_init(hl_config_t *cfg)
     cfg->chat_history_legacy_count = 30;
     cfg->chat_history_rate_capacity = 20;
     cfg->chat_history_rate_refill_per_sec = 10;
+    cfg->chat_history_log_joins = 0;
 }

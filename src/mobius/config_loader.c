@@ -139,6 +139,8 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
                         cfg->chat_history_rate_capacity = (uint32_t)strtoul(val, NULL, 10);
                     else if (strcmp(chat_history_key, "RateRefillPerSec") == 0)
                         cfg->chat_history_rate_refill_per_sec = (uint32_t)strtoul(val, NULL, 10);
+                    else if (strcmp(chat_history_key, "LogJoins") == 0)
+                        cfg->chat_history_log_joins = yaml_parse_bool(val);
                     chat_history_key[0] = '\0';
                 }
             } else if (parsing_trackers) {

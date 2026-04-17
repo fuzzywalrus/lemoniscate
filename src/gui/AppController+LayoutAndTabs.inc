@@ -969,6 +969,13 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_chatHistoryLegacyCountField setToolTip:@"Number of recent messages to replay when the legacy fallback is enabled."];
         iy = addRow(c, @"Legacy Count:", _chatHistoryLegacyCountField, iy, 80);
 
+        _chatHistoryLogJoinsCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_chatHistoryLogJoinsCheckbox setButtonType:NSButtonTypeSwitch];
+        [_chatHistoryLogJoinsCheckbox setTitle:@"Record sign-on / sign-off events"];
+        [_chatHistoryLogJoinsCheckbox setState:NSControlStateValueOff];
+        iy = addCheckboxWithHelp(c, _chatHistoryLogJoinsCheckbox, iy,
+            @"When on, every login and disconnect appends a system message to chat history (e.g. \"greg signed on\"). Off by default — some servers find these noisy.", self);
+
         float contentH = iy;
         [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
         [doc addSubview:c];

@@ -409,6 +409,10 @@
     val = [dict objectForKey:@"ChatHistoryLegacyCount"];
     if (val && _chatHistoryLegacyCountField)
         [_chatHistoryLegacyCountField setIntValue:[val intValue]];
+    boolVal = [dict objectForKey:@"ChatHistoryLogJoins"];
+    if (_chatHistoryLogJoinsCheckbox)
+        [_chatHistoryLogJoinsCheckbox setState:
+            (boolVal && [boolVal boolValue]) ? NSControlStateValueOn : NSControlStateValueOff];
 
     if (_filesTableView) [self refreshFilesList:nil];
     if (_accountsTableView) [self refreshAccountsList:nil];
@@ -546,11 +550,15 @@
         if (chMaxDays   < 0) chMaxDays   = 0;
         if (chLegacyCnt < 0) chLegacyCnt = 0;
 
+        BOOL chLogJoins = _chatHistoryLogJoinsCheckbox &&
+            [_chatHistoryLogJoinsCheckbox state] == NSControlStateValueOn;
+
         [dict setObject:[NSNumber numberWithBool:chEnabled]    forKey:@"ChatHistoryEnabled"];
         [dict setObject:[NSNumber numberWithInt:chMaxMsgs]     forKey:@"ChatHistoryMaxMessages"];
         [dict setObject:[NSNumber numberWithInt:chMaxDays]     forKey:@"ChatHistoryMaxDays"];
         [dict setObject:[NSNumber numberWithBool:chLegacy]     forKey:@"ChatHistoryLegacyBroadcast"];
         [dict setObject:[NSNumber numberWithInt:chLegacyCnt]   forKey:@"ChatHistoryLegacyCount"];
+        [dict setObject:[NSNumber numberWithBool:chLogJoins]   forKey:@"ChatHistoryLogJoins"];
     }
 
     /* Write to ~/Library/Preferences/com.lemoniscate.server.plist */

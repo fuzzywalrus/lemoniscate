@@ -109,6 +109,7 @@
     NSTextField *_chatHistoryMaxDaysField;
     NSButton *_chatHistoryLegacyBroadcastCheckbox;
     NSTextField *_chatHistoryLegacyCountField;
+    NSButton *_chatHistoryLogJoinsCheckbox;
 
     /* Monitoring section */
     NSPopUpButton *_pollingRatePopup;
