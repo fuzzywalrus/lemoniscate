@@ -24,6 +24,9 @@
 /* Forward declaration for Mnemosyne sync */
 typedef struct mn_sync mn_sync_opaque_t;
 
+/* Forward declaration for chat history storage (see hotline/chat_history.h) */
+typedef struct lm_chat_history_s lm_chat_history_t;
+
 /* Rate limiter entry (token bucket) */
 typedef struct hl_rate_limiter {
     char                     ip[64];
@@ -73,6 +76,8 @@ typedef struct hl_server {
     int                 use_mac_roman;       /* 1 = MacRoman, 0 = UTF-8 */
 
     void               *mnemosyne_sync;       /* mn_sync_t* (opaque to hotline layer) */
+
+    lm_chat_history_t  *chat_history;         /* Chat history storage (NULL if disabled) */
 
     volatile int        shutdown;            /* Go: context cancellation */
     volatile int        reload_pending;      /* Set by SIGHUP handler */

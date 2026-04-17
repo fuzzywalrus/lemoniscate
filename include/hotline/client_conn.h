@@ -96,6 +96,12 @@ struct hl_client_conn {
 
     struct hl_hope_state *hope;          /* HOPE state (NULL for non-HOPE clients) */
     int                 large_file_mode; /* 1 = 64-bit file sizes negotiated */
+    int                 chat_history_capable; /* 1 = client + server both support chat history */
+    int                 utf8_encoding;   /* 1 = client wants UTF-8 wire (else server-wide encoding) */
+
+    /* Chat history rate limiter (token bucket; tokens stored ×10 for sub-token resolution) */
+    uint16_t            chat_rl_tokens_x10;
+    uint64_t            chat_rl_last_refill_ms;
 
     pthread_rwlock_t    mu;              /* Go: mu sync.RWMutex */
 };

@@ -24,4 +24,13 @@ void hl_config_init(hl_config_t *cfg)
     cfg->mnemosyne_index_files = 1;
     cfg->mnemosyne_index_news = 1;
     cfg->mnemosyne_index_msgboard = 1;
+
+    /* Chat history defaults — feature is opt-in, conservative retention/rate */
+    cfg->chat_history_enabled = 0;
+    cfg->chat_history_max_msgs = 10000;
+    cfg->chat_history_max_days = 0;
+    cfg->chat_history_legacy_broadcast = 0;
+    cfg->chat_history_legacy_count = 30;
+    cfg->chat_history_rate_capacity = 20;
+    cfg->chat_history_rate_refill_per_sec = 10;
 }

@@ -21,11 +21,14 @@
 #include "hotline/password.h"
 #include "hotline/hope.h"
 #include "hotline/file_name_with_info.h"
+#include "hotline/chat_history.h"
+#include "hotline/encoding.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <time.h>
 
@@ -262,6 +265,48 @@ static int handle_chat_send(hl_client_conn_t *cc, const hl_transaction_t *req,
             }
             free(clients);
         }
+
+        /* Persist to chat history (public chat only — never private).
+         * Storage is always UTF-8. The sender's wire encoding (per-conn
+         * UTF-8 if negotiated, else server default) tells us whether to
+         * transcode. */
+        if (cc->server->chat_history && cc->server->config.chat_history_enabled) {
+            char nick_utf8[LM_CHAT_MAX_NICK_LEN + 1];
+            char body_utf8[LM_CHAT_MAX_BODY_LEN + 1];
+            const char *nick_in = (const char *)cc->user_name;
+            size_t       nick_in_len = cc->user_name_len;
+            const char *body_in = (const char *)f_data->data;
+            size_t       body_in_len = f_data->data_len;
+
+            int sender_is_macroman = cc->utf8_encoding ? 0 : cc->server->use_mac_roman;
+
+            if (sender_is_macroman) {
+                int n = hl_macroman_to_utf8(nick_in, nick_in_len,
+                                            nick_utf8, sizeof(nick_utf8));
+                if (n < 0) n = 0;
+                nick_utf8[n] = '\0';
+                int b = hl_macroman_to_utf8(body_in, body_in_len,
+                                            body_utf8, sizeof(body_utf8));
+                if (b < 0) b = 0;
+                body_utf8[b] = '\0';
+            } else {
+                size_t nl = nick_in_len < LM_CHAT_MAX_NICK_LEN
+                          ? nick_in_len : LM_CHAT_MAX_NICK_LEN;
+                memcpy(nick_utf8, nick_in, nl);
+                nick_utf8[nl] = '\0';
+                size_t bl = body_in_len < LM_CHAT_MAX_BODY_LEN
+                          ? body_in_len : LM_CHAT_MAX_BODY_LEN;
+                memcpy(body_utf8, body_in, bl);
+                body_utf8[bl] = '\0';
+            }
+
+            uint16_t flags = is_action ? HL_CHAT_FLAG_IS_ACTION : 0;
+            uint16_t icon_id = (uint16_t)((cc->icon[0] << 8) | cc->icon[1]);
+
+            lm_chat_history_append(cc->server->chat_history,
+                                   0, /* channel_id 0 = public */
+                                   flags, icon_id, nick_utf8, body_utf8);
+        }
     }
 
     hl_field_free(&chat_field);
@@ -476,6 +521,37 @@ static int handle_user_broadcast(hl_client_conn_t *cc, const hl_transaction_t *r
     msg.fields = NULL;
     hl_field_free(&msg_fields[0]);
     hl_field_free(&msg_fields[1]);
+
+    /* Persist admin broadcast to chat history with is_server_msg flag.
+     * Storage is always UTF-8; transcode the wire bytes accordingly. */
+    if (cc->server->chat_history && cc->server->config.chat_history_enabled) {
+        char body_utf8[LM_CHAT_MAX_BODY_LEN + 1];
+        const char *body_in = (const char *)f_data->data;
+        size_t       body_in_len = f_data->data_len;
+
+        int sender_is_macroman = cc->utf8_encoding ? 0 : cc->server->use_mac_roman;
+
+        if (sender_is_macroman) {
+            int b = hl_macroman_to_utf8(body_in, body_in_len,
+                                        body_utf8, sizeof(body_utf8));
+            if (b < 0) b = 0;
+            body_utf8[b] = '\0';
+        } else {
+            size_t bl = body_in_len < LM_CHAT_MAX_BODY_LEN
+                      ? body_in_len : LM_CHAT_MAX_BODY_LEN;
+            memcpy(body_utf8, body_in, bl);
+            body_utf8[bl] = '\0';
+        }
+
+        const char *nick = cc->server->config.name[0]
+                         ? cc->server->config.name : "";
+        lm_chat_history_append(cc->server->chat_history,
+                               0,
+                               HL_CHAT_FLAG_IS_SERVER_MSG,
+                               0,
+                               nick,
+                               body_utf8);
+    }
 
     return reply_empty(cc, req, out, out_count);
 }
@@ -762,6 +838,222 @@ static int handle_set_chat_subject(hl_client_conn_t *cc, const hl_transaction_t 
     }
 
     return reply_empty(cc, req, out, out_count);
+}
+
+/* --- TRAN_GET_CHAT_HISTORY (700) helpers --- */
+
+/* Wall clock in milliseconds for rate limiter. */
+static uint64_t lm_now_ms(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)(tv.tv_usec / 1000);
+}
+
+/* Token-bucket consume: thin wrapper around the pure helper in
+ * chat_history.c so that test/test_chat_history.c can drive it
+ * deterministically with synthetic timestamps. */
+static int lm_chat_rl_take(hl_client_conn_t *cc)
+{
+    return lm_chat_rl_consume(
+        &cc->chat_rl_tokens_x10,
+        &cc->chat_rl_last_refill_ms,
+        lm_now_ms(),
+        cc->server->config.chat_history_rate_capacity,
+        cc->server->config.chat_history_rate_refill_per_sec);
+}
+
+/* Pack one entry per the on-wire layout from the spec. `use_mac_roman`
+ * controls the outbound transcoding for THIS recipient: if 1, transcode
+ * stored UTF-8 → MacRoman; if 0, send UTF-8 unchanged. The caller picks
+ * this from the per-connection negotiated encoding (cc->utf8_encoding)
+ * with a fallback to the server-wide default. Returns bytes written,
+ * or -1 if the entry won't fit. */
+static int lm_pack_history_entry(const lm_chat_entry_t *e,
+                                  int use_mac_roman,
+                                  uint8_t *out, size_t out_max)
+{
+    char nick_wire[LM_CHAT_MAX_NICK_LEN + 1];
+    char body_wire[LM_CHAT_MAX_BODY_LEN + 1];
+    size_t nick_in_len = strlen(e->nick);
+    size_t body_in_len = strlen(e->body);
+    int nick_wire_len, body_wire_len;
+
+    if (use_mac_roman) {
+        int n = hl_utf8_to_macroman(e->nick, nick_in_len,
+                                    nick_wire, sizeof(nick_wire));
+        if (n < 0) {
+            size_t cl = nick_in_len < sizeof(nick_wire) ? nick_in_len : sizeof(nick_wire);
+            memcpy(nick_wire, e->nick, cl);
+            n = (int)cl;
+        }
+        nick_wire_len = n;
+
+        int b = hl_utf8_to_macroman(e->body, body_in_len,
+                                    body_wire, sizeof(body_wire));
+        if (b < 0) {
+            size_t cl = body_in_len < sizeof(body_wire) ? body_in_len : sizeof(body_wire);
+            memcpy(body_wire, e->body, cl);
+            b = (int)cl;
+        }
+        body_wire_len = b;
+    } else {
+        size_t nl = nick_in_len < sizeof(nick_wire) ? nick_in_len : sizeof(nick_wire);
+        memcpy(nick_wire, e->nick, nl);
+        nick_wire_len = (int)nl;
+        size_t bl = body_in_len < sizeof(body_wire) ? body_in_len : sizeof(body_wire);
+        memcpy(body_wire, e->body, bl);
+        body_wire_len = (int)bl;
+    }
+
+    /* id u64 + ts i64 + flags u16 + icon u16 + nick_len u16 + nick + msg_len u16 + msg */
+    size_t need = 8 + 8 + 2 + 2 + 2 + (size_t)nick_wire_len
+                + 2 + (size_t)body_wire_len;
+    if (need > out_max) return -1;
+
+    uint8_t *p = out;
+    uint64_t id = e->id;
+    p[0] = (uint8_t)(id >> 56); p[1] = (uint8_t)(id >> 48);
+    p[2] = (uint8_t)(id >> 40); p[3] = (uint8_t)(id >> 32);
+    p[4] = (uint8_t)(id >> 24); p[5] = (uint8_t)(id >> 16);
+    p[6] = (uint8_t)(id >> 8);  p[7] = (uint8_t)id;
+    p += 8;
+
+    uint64_t ts = (uint64_t)e->ts;
+    p[0] = (uint8_t)(ts >> 56); p[1] = (uint8_t)(ts >> 48);
+    p[2] = (uint8_t)(ts >> 40); p[3] = (uint8_t)(ts >> 32);
+    p[4] = (uint8_t)(ts >> 24); p[5] = (uint8_t)(ts >> 16);
+    p[6] = (uint8_t)(ts >> 8);  p[7] = (uint8_t)ts;
+    p += 8;
+
+    p[0] = (uint8_t)(e->flags >> 8);   p[1] = (uint8_t)e->flags;   p += 2;
+    p[0] = (uint8_t)(e->icon_id >> 8); p[1] = (uint8_t)e->icon_id; p += 2;
+
+    p[0] = (uint8_t)(nick_wire_len >> 8); p[1] = (uint8_t)nick_wire_len; p += 2;
+    memcpy(p, nick_wire, (size_t)nick_wire_len); p += nick_wire_len;
+
+    p[0] = (uint8_t)(body_wire_len >> 8); p[1] = (uint8_t)body_wire_len; p += 2;
+    memcpy(p, body_wire, (size_t)body_wire_len); p += body_wire_len;
+
+    return (int)(p - out);
+}
+
+static int handle_get_chat_history(hl_client_conn_t *cc, const hl_transaction_t *req,
+                                   hl_transaction_t **out, int *out_count)
+{
+    hl_server_t *srv = cc->server;
+
+    if (!srv->chat_history || !srv->config.chat_history_enabled)
+        return reply_err(cc, req, "Chat history is not enabled on this server.",
+                         out, out_count);
+
+    /* Access check: bit 56 OR bit 9. */
+    int allowed = 0;
+    if (cc->account) {
+        if (hl_access_is_set(cc->account->access, ACCESS_READ_CHAT_HISTORY)) allowed = 1;
+        else if (hl_access_is_set(cc->account->access, ACCESS_READ_CHAT))    allowed = 1;
+    }
+    if (!allowed)
+        return reply_err(cc, req, "You are not allowed to read chat history.",
+                         out, out_count);
+
+    /* Rate limit. */
+    if (!lm_chat_rl_take(cc))
+        return reply_err(cc, req, "chat history rate limited", out, out_count);
+
+    /* Parse fields. */
+    const hl_field_t *f_chan   = hl_transaction_get_field(req, FIELD_CHANNEL_ID);
+    const hl_field_t *f_before = hl_transaction_get_field(req, FIELD_HISTORY_BEFORE);
+    const hl_field_t *f_after  = hl_transaction_get_field(req, FIELD_HISTORY_AFTER);
+    const hl_field_t *f_limit  = hl_transaction_get_field(req, FIELD_HISTORY_LIMIT);
+
+    if (!f_chan || f_chan->data_len < 2)
+        return reply_err(cc, req, "Missing channel ID.", out, out_count);
+
+    uint16_t channel_id = (uint16_t)((f_chan->data[0] << 8) | f_chan->data[1]);
+
+    uint64_t before = 0;
+    uint64_t after  = 0;
+    if (f_before && f_before->data_len >= 8) {
+        const uint8_t *b = f_before->data;
+        before = ((uint64_t)b[0] << 56) | ((uint64_t)b[1] << 48)
+               | ((uint64_t)b[2] << 40) | ((uint64_t)b[3] << 32)
+               | ((uint64_t)b[4] << 24) | ((uint64_t)b[5] << 16)
+               | ((uint64_t)b[6] << 8)  | (uint64_t)b[7];
+    }
+    if (f_after && f_after->data_len >= 8) {
+        const uint8_t *b = f_after->data;
+        after = ((uint64_t)b[0] << 56) | ((uint64_t)b[1] << 48)
+              | ((uint64_t)b[2] << 40) | ((uint64_t)b[3] << 32)
+              | ((uint64_t)b[4] << 24) | ((uint64_t)b[5] << 16)
+              | ((uint64_t)b[6] << 8)  | (uint64_t)b[7];
+    }
+
+    uint16_t limit = LM_CHAT_HISTORY_DEFAULT_LIMIT;
+    if (f_limit && f_limit->data_len >= 2) {
+        limit = (uint16_t)((f_limit->data[0] << 8) | f_limit->data[1]);
+    }
+    if (limit == 0) limit = LM_CHAT_HISTORY_DEFAULT_LIMIT;
+    if (limit > LM_CHAT_HISTORY_MAX_LIMIT) limit = LM_CHAT_HISTORY_MAX_LIMIT;
+
+    /* Query. */
+    lm_chat_entry_t *entries = NULL;
+    size_t n = 0;
+    uint8_t has_more = 0;
+    if (lm_chat_history_query(srv->chat_history, channel_id,
+                              before, after, limit,
+                              &entries, &n, &has_more) != 0) {
+        return reply_err(cc, req, "Failed to query chat history.",
+                         out, out_count);
+    }
+
+    /* Build reply: one FIELD_HISTORY_ENTRY per result + FIELD_HISTORY_HAS_MORE. */
+    size_t field_cap = n + 1;
+    hl_field_t *fields = (hl_field_t *)calloc(field_cap, sizeof(hl_field_t));
+    if (!fields) {
+        if (entries) lm_chat_history_entries_free(entries);
+        return reply_err(cc, req, "Out of memory.", out, out_count);
+    }
+
+    /* Recipient-side transcoding: per-connection UTF-8 wins; otherwise
+     * fall back to server-wide encoding default. */
+    int want_macroman = cc->utf8_encoding ? 0 : srv->use_mac_roman;
+
+    uint8_t entry_buf[8192];
+    int field_count = 0;
+    size_t i;
+    for (i = 0; i < n; i++) {
+        int written = lm_pack_history_entry(&entries[i],
+                                            want_macroman,
+                                            entry_buf, sizeof(entry_buf));
+        if (written <= 0) continue;
+        if (hl_field_new(&fields[field_count], FIELD_HISTORY_ENTRY,
+                         entry_buf, (uint16_t)written) == 0) {
+            field_count++;
+        }
+    }
+
+    uint8_t hm = has_more ? 1 : 0;
+    if (hl_field_new(&fields[field_count], FIELD_HISTORY_HAS_MORE, &hm, 1) == 0) {
+        field_count++;
+    }
+
+    *out = (hl_transaction_t *)calloc(1, sizeof(hl_transaction_t));
+    if (!*out) {
+        int j;
+        for (j = 0; j < field_count; j++) hl_field_free(&fields[j]);
+        free(fields);
+        if (entries) lm_chat_history_entries_free(entries);
+        return -1;
+    }
+    hl_client_conn_new_reply(cc, req, *out, fields, (uint16_t)field_count);
+    *out_count = 1;
+
+    int j;
+    for (j = 0; j < field_count; j++) hl_field_free(&fields[j]);
+    free(fields);
+    if (entries) lm_chat_history_entries_free(entries);
+    return 0;
 }
 
 /* ====================================================================
@@ -2626,6 +2918,7 @@ void mobius_register_handlers(hl_server_t *srv)
     hl_server_handle_func(srv, TRAN_LEAVE_CHAT,          handle_leave_chat);
     hl_server_handle_func(srv, TRAN_REJECT_CHAT_INVITE,  handle_reject_chat_invite);
     hl_server_handle_func(srv, TRAN_SET_CHAT_SUBJECT,    handle_set_chat_subject);
+    hl_server_handle_func(srv, TRAN_GET_CHAT_HISTORY,    handle_get_chat_history);
 
     hl_server_handle_func(srv, TRAN_GET_USER,            handle_get_user);
     hl_server_handle_func(srv, TRAN_SET_USER,            handle_set_user);

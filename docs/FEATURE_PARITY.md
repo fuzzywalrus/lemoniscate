@@ -18,6 +18,15 @@ Legend: [x] = implemented, [~] = partial/stub, [ ] = missing
 - [x] **TranGetUserNameList** (300) - Connected user list
 - [x] **TranGetClientInfoText** (303) - User info panel
 - [x] **TranUserBroadcast** (355) - Admin broadcast to all users
+- [x] **TranGetChatHistory** (700) - Persistent public chat history (extension; opt-in via `ChatHistoryEnabled`). Capability bit 4 negotiated at login; cursor-paginated; per-channel JSONL backend with optional ChaCha20-Poly1305 body encryption; legacy clients can receive a configurable replay on login.
+
+  | Server | Public chat history |
+  |---|---|
+  | **Lemoniscate** | Native — JSONL backend, capability-negotiated, cursor pagination, encryption at rest, legacy replay |
+  | **Mobius (Go)** | Not implemented — chat is broadcast-only, no persistence |
+  | **Janus** | Not implemented — chat is broadcast-only, no persistence |
+
+  Spec: [Capabilities-Chat-History.md](Capabilities-Chat-History.md). Permission bit 56 (`ACCESS_READ_CHAT_HISTORY`) gates the read path; falls back to bit 9 (`ACCESS_READ_CHAT`) when bit 56 is unset.
 
 ### Private Chat Rooms
 

@@ -103,6 +103,13 @@
     NSButton *_mnemosyneIndexMsgboardCheckbox;
     NSString *_mnemosyneSavedURL;
 
+    /* Chat History section (extension; opt-in) */
+    NSButton *_chatHistoryEnableCheckbox;
+    NSTextField *_chatHistoryMaxMsgsField;
+    NSTextField *_chatHistoryMaxDaysField;
+    NSButton *_chatHistoryLegacyBroadcastCheckbox;
+    NSTextField *_chatHistoryLegacyCountField;
+
     /* Monitoring section */
     NSPopUpButton *_pollingRatePopup;
     NSTimeInterval _pollingInterval;

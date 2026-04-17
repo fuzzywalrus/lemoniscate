@@ -26,7 +26,8 @@ CFLAGS = -std=c11 -Wall -Wextra -pedantic -O2 \
          -mmacosx-version-min=10.11 \
          -I./include \
          -I$(HOMEBREW_PREFIX)/include \
-         -DTARGET_OS_MAC=1
+         -DTARGET_OS_MAC=1 \
+         -MMD -MP
 
 YAML_LDFLAGS = $(HOMEBREW_PREFIX)/lib/libyaml.a
 
@@ -41,7 +42,8 @@ OBJCFLAGS = -Wall -Wextra -O2 \
             -mmacosx-version-min=10.11 \
             -I./include \
             -I$(HOMEBREW_PREFIX)/include \
-            -DTARGET_OS_MAC=1
+            -DTARGET_OS_MAC=1 \
+            -MMD -MP
 
 # Tiger-specific flags (uncomment on Tiger):
 # CC = gcc-4.0
@@ -113,6 +115,7 @@ HOTLINE_COMMON_SRCS = \
 	src/hotline/password.c \
 	src/hotline/hope.c \
 	src/hotline/chacha20poly1305.c \
+	src/hotline/chat_history.c \
 	src/hotline/http_client.c
 
 # Combined C sources: common + platform
@@ -221,6 +224,11 @@ test-chacha20: test/test_chacha20poly1305.o src/hotline/chacha20poly1305.o
 	$(CC) $(CFLAGS) -o test_chacha20poly1305 $^
 	./test_chacha20poly1305
 
+# Chat history storage tests (JSONL backend, encryption, prune, tombstone)
+test-chat-history: test/test_chat_history.o src/hotline/chat_history.o src/hotline/chacha20poly1305.o
+	$(CC) $(CFLAGS) -o test_chat_history $^
+	./test_chat_history
+
 # HOPE AEAD unit tests (HMAC-SHA256, HKDF, nonce, frame scan, key derivation)
 test-hope-aead: test/test_hope_aead.o $(HOTLINE_C_OBJS) $(MOBIUS_OBJS)
 	$(CC) $(CFLAGS) -o test_hope_aead $^ $(LDFLAGS) $(YAML_LDFLAGS)
@@ -237,9 +245,9 @@ test-client: $(TEST_OBJC_OBJS) $(HOTLINE_OBJS)
 	$(CC) $(OBJCFLAGS) -o test_client $^ $(LDFLAGS)
 	./test_client
 
-test: test-wire test-mnemosyne test-client
+test: test-wire test-mnemosyne test-chat-history test-client
 else
-test: test-wire test-mnemosyne
+test: test-wire test-mnemosyne test-chat-history
 endif
 
 # --- Pattern rules ---
@@ -288,10 +296,20 @@ clean:
 	rm -f $(HOTLINE_C_OBJS) $(HOTLINE_OBJC_OBJS) $(MOBIUS_OBJS) \
 	      $(TEST_C_OBJS) $(TEST_OBJC_OBJS) $(GUI_OBJC_OBJS) \
 	      libhotline.a lemoniscate $(SERVER_COMPAT_BIN) lemoniscate-gui test_runner test_mnemosyne test_mnemosyne_live test_client src/main.o test/test_mnemosyne.o test/test_mnemosyne_live.o
+	@find src test -name '*.d' -delete 2>/dev/null || true
 	rm -rf $(APP_BUNDLE)
 
 # Auto-dependency generation
--include $(HOTLINE_C_OBJS:.o=.d)
-
-%.d: %.c
-	@$(CC) $(CFLAGS) -MM -MT $(@:.d=.o) $< > $@ 2>/dev/null || true
+#
+# `-MMD -MP` in CFLAGS / OBJCFLAGS makes the compiler emit a sibling
+# `<obj>.d` next to every `<obj>.o`, listing exactly which headers that
+# translation unit included. We `-include` all of them below so any header
+# change forces the affected objects to recompile. `-MP` adds phantom
+# targets for each header so deleting a header doesn't break the build.
+#
+# This is what stops the "I changed a header but only some .o files
+# rebuilt → struct layout mismatch → segfault" footgun.
+ALL_OBJS = $(HOTLINE_C_OBJS) $(HOTLINE_OBJC_OBJS) $(MOBIUS_OBJS) \
+           $(TEST_C_OBJS) $(TEST_OBJC_OBJS) $(GUI_OBJC_OBJS) \
+           src/main.o test/test_mnemosyne.o test/test_mnemosyne_live.o
+-include $(ALL_OBJS:.o=.d)

@@ -93,6 +93,7 @@ Important caveats:
 - Auto-reply when a user is away or idle
 - /me action messages
 - Admin broadcast messages to all users
+- Persistent public chat history (opt-in) — capability-negotiated, cursor-paginated, with optional ChaCha20-Poly1305 body encryption at rest. Configure under `ChatHistory:` in `config.yaml`; see [config/config.yaml.example](config/config.yaml.example) and [docs/Capabilities-Chat-History.md](docs/Capabilities-Chat-History.md).
 
 ### User Management
 

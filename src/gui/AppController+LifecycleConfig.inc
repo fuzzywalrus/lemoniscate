@@ -391,6 +391,25 @@
         }
     }
 
+    /* Chat History (extension) */
+    boolVal = [dict objectForKey:@"ChatHistoryEnabled"];
+    if (_chatHistoryEnableCheckbox)
+        [_chatHistoryEnableCheckbox setState:
+            (boolVal && [boolVal boolValue]) ? NSControlStateValueOn : NSControlStateValueOff];
+    val = [dict objectForKey:@"ChatHistoryMaxMessages"];
+    if (val && _chatHistoryMaxMsgsField)
+        [_chatHistoryMaxMsgsField setIntValue:[val intValue]];
+    val = [dict objectForKey:@"ChatHistoryMaxDays"];
+    if (val && _chatHistoryMaxDaysField)
+        [_chatHistoryMaxDaysField setIntValue:[val intValue]];
+    boolVal = [dict objectForKey:@"ChatHistoryLegacyBroadcast"];
+    if (_chatHistoryLegacyBroadcastCheckbox)
+        [_chatHistoryLegacyBroadcastCheckbox setState:
+            (boolVal && [boolVal boolValue]) ? NSControlStateValueOn : NSControlStateValueOff];
+    val = [dict objectForKey:@"ChatHistoryLegacyCount"];
+    if (val && _chatHistoryLegacyCountField)
+        [_chatHistoryLegacyCountField setIntValue:[val intValue]];
+
     if (_filesTableView) [self refreshFilesList:nil];
     if (_accountsTableView) [self refreshAccountsList:nil];
     if (_bannedIPsTableView || _bannedUsersTableView || _bannedNicksTableView)
@@ -447,8 +466,22 @@
         banner = [_configDir stringByAppendingPathComponent:@"banner.jpg"];
     }
 
-    /* Build plist dictionary */
+    /* Build plist dictionary.
+     *
+     * Start from the EXISTING plist on disk (if any) so we preserve keys
+     * the GUI doesn't manage. Without this, every quit/save would
+     * silently wipe extension keys (e.g. legacy ChatHistory* slots that
+     * predate the GUI surface, or any third-party additions).
+     *
+     * `[NSMutableDictionary dictionaryWithContentsOfFile:]` historically
+     * returns an immutable instance on some Foundation versions despite
+     * the class — addEntriesFromDictionary onto a known-mutable dict
+     * is the safe form. */
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+    NSString *existingPath = [NSHomeDirectory()
+        stringByAppendingPathComponent:@"Library/Preferences/com.lemoniscate.server.plist"];
+    NSDictionary *existing = [NSDictionary dictionaryWithContentsOfFile:existingPath];
+    if (existing) [dict addEntriesFromDictionary:existing];
     [dict setObject:name forKey:@"ServerName"];
     [dict setObject:desc forKey:@"ServerDescription"];
     [dict setObject:banner forKey:@"BannerFile"];
@@ -498,6 +531,26 @@
         [dict setObject:[NSNumber numberWithBool:mnFiles] forKey:@"MnemosyneIndexFiles"];
         [dict setObject:[NSNumber numberWithBool:mnNews] forKey:@"MnemosyneIndexNews"];
         [dict setObject:[NSNumber numberWithBool:mnMsgboard] forKey:@"MnemosyneIndexMsgboard"];
+    }
+
+    /* Chat History (extension) */
+    {
+        BOOL chEnabled = _chatHistoryEnableCheckbox &&
+            [_chatHistoryEnableCheckbox state] == NSControlStateValueOn;
+        BOOL chLegacy = _chatHistoryLegacyBroadcastCheckbox &&
+            [_chatHistoryLegacyBroadcastCheckbox state] == NSControlStateValueOn;
+        int  chMaxMsgs    = _chatHistoryMaxMsgsField    ? [_chatHistoryMaxMsgsField    intValue] : 10000;
+        int  chMaxDays    = _chatHistoryMaxDaysField    ? [_chatHistoryMaxDaysField    intValue] : 0;
+        int  chLegacyCnt  = _chatHistoryLegacyCountField? [_chatHistoryLegacyCountField intValue] : 30;
+        if (chMaxMsgs   < 0) chMaxMsgs   = 0;
+        if (chMaxDays   < 0) chMaxDays   = 0;
+        if (chLegacyCnt < 0) chLegacyCnt = 0;
+
+        [dict setObject:[NSNumber numberWithBool:chEnabled]    forKey:@"ChatHistoryEnabled"];
+        [dict setObject:[NSNumber numberWithInt:chMaxMsgs]     forKey:@"ChatHistoryMaxMessages"];
+        [dict setObject:[NSNumber numberWithInt:chMaxDays]     forKey:@"ChatHistoryMaxDays"];
+        [dict setObject:[NSNumber numberWithBool:chLegacy]     forKey:@"ChatHistoryLegacyBroadcast"];
+        [dict setObject:[NSNumber numberWithInt:chLegacyCnt]   forKey:@"ChatHistoryLegacyCount"];
     }
 
     /* Write to ~/Library/Preferences/com.lemoniscate.server.plist */

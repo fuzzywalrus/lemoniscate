@@ -26,7 +26,10 @@ typedef int (*hl_handler_func_t)(hl_client_conn_t *cc,
                                  hl_transaction_t **out_transactions,
                                  int *out_count);
 
-/* Max transaction type code for handler lookup table */
-#define HL_HANDLER_TABLE_SIZE 512
+/* Max transaction type code for handler lookup table.
+ * Must be larger than the highest registered TRAN_* code. The chat
+ * history extension uses 700 (TranGetChatHistory), so 1024 leaves
+ * headroom for future extensions in the same range. */
+#define HL_HANDLER_TABLE_SIZE 1024
 
 #endif /* HOTLINE_HANDLERS_H */

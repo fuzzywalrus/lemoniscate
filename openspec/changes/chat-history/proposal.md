@@ -8,6 +8,7 @@ This extension is designed for adoption beyond Lemoniscate. The spec defines wir
 
 **Reference**: [Hotline Protocol Docs](https://github.com/fogWraith/Hotline/tree/main/Docs/Protocol)
 **Protocol Specification**: [docs/Capabilities-Chat-History.md](../../docs/Capabilities-Chat-History.md)
+**Implementation Design**: [design.md](./design.md) — storage, encryption, pruning, rate limiting, crash safety
 
 ## What Changes
 
