@@ -1,13 +1,13 @@
 ## 1. Pre-flight verification
 
-- [ ] 1.1 Confirm `git-filter-repo` is installed (`git filter-repo --version`); if missing, install via `brew install git-filter-repo`
-- [ ] 1.2 Confirm working tree is clean aside from known pending items (`RELEASE_NOTES_0.1.5.md` staged delete, `..openspec.yaml.TsYk9xjbpE` untracked stray)
-- [ ] 1.3 Resolve the working-tree pending items — commit the RELEASE_NOTES deletion or restore the file; delete the swap file
-- [ ] 1.4 Run `git fetch origin` to ensure local refs are current with remote
-- [ ] 1.5 Verify no open GitHub PRs exist against `main` or `modern` (`gh pr list --state open`) — expect empty
-- [ ] 1.6 Verify GitHub branch protection rules on `main` permit force-push (repo settings); document any rules that need temporary disabling
-- [ ] 1.7 Inspect `test_threaded_news` on `origin/modern` — run `git show origin/modern:test_threaded_news | file -` to confirm it's a compiled binary and not source
-- [ ] 1.8 Manually review the orphan tag `v0.1.0` (`git show v0.1.0`) and grep project docs for any mention — confirm it's safe to drop
+- [x] 1.1 Confirm `git-filter-repo` is installed — version `a40bce548d2c`
+- [x] 1.2 Confirm working tree is clean aside from known pending items — the spec's original pending items (RELEASE_NOTES, swap file) no longer exist; actual pending items were ~16 untracked build artifacts (DMGs, `build/`, `lemoniscate-linux-*`, test binaries)
+- [x] 1.3 Resolve the working-tree pending items — extended `.gitignore` to cover `*.dmg`, `build/`, `lemoniscate-linux-*`, `test_chacha20poly1305/_chat_history/_hope_aead/_threaded_news`
+- [x] 1.4 Run `git fetch origin` to ensure local refs are current with remote
+- [x] 1.5 Verify no open GitHub PRs exist against `main` or `modern` — empty
+- [x] 1.6 Verify GitHub branch protection rules on `main` permit force-push — main has no protection (HTTP 404), force-push allowed
+- [x] 1.7 Inspect `test_threaded_news` on `origin/modern` — confirmed Mach-O 64-bit x86_64 executable (binary, purge in task 4.2)
+- [x] 1.8 Manually review the orphan tag `v0.1.0` — points at 3723cdf "Error handling" (GUI fixes, 2026-03-19); only referenced in this change's own docs; safe to drop with `legacy/v0.1.0` backup
 
 ## 2. Backup refs (Phase 0)
 
