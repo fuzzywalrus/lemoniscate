@@ -564,7 +564,10 @@
     [dict writeToFile:plistPath atomically:YES];
 }
 
-/* Create directory and all intermediate parents (Tiger compatible) */
+/* Create directory and all intermediate parents.
+ * Tiger-compatible: -createDirectoryAtPath:withIntermediateDirectories:attributes:error:
+ * is 10.5+ and raises doesNotRecognizeSelector: on 10.4, so we recurse manually
+ * and use the 10.0-era -createDirectoryAtPath:attributes:. */
 static void createDirectoryWithParents(NSFileManager *fm, NSString *path)
 {
     BOOL isDir = NO;
@@ -574,7 +577,7 @@ static void createDirectoryWithParents(NSFileManager *fm, NSString *path)
     if (parent && [parent length] > 1) {
         createDirectoryWithParents(fm, parent);
     }
-    [fm createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:NULL];
+    [fm createDirectoryAtPath:path attributes:nil];
 }
 
 - (void)ensureConfigScaffolding
@@ -587,12 +590,12 @@ static void createDirectoryWithParents(NSFileManager *fm, NSString *path)
 
     NSString *filesDir = [_configDir stringByAppendingPathComponent:@"Files"];
     if (![fm fileExistsAtPath:filesDir isDirectory:&isDir]) {
-        [fm createDirectoryAtPath:filesDir withIntermediateDirectories:YES attributes:nil error:NULL];
+        createDirectoryWithParents(fm, filesDir);
     }
 
     NSString *usersDir = [_configDir stringByAppendingPathComponent:@"Users"];
     if (![fm fileExistsAtPath:usersDir isDirectory:&isDir]) {
-        [fm createDirectoryAtPath:usersDir withIntermediateDirectories:YES attributes:nil error:NULL];
+        createDirectoryWithParents(fm, usersDir);
     }
 
     NSString *agreement = [_configDir stringByAppendingPathComponent:@"Agreement.txt"];
@@ -615,13 +618,15 @@ static void createDirectoryWithParents(NSFileManager *fm, NSString *path)
                encoding:NSUTF8StringEncoding error:nil];
     }
 
-    /* Copy default banner from app bundle if none exists */
+    /* Copy default banner from app bundle if none exists.
+     * -copyItemAtPath:toPath:error: is 10.5+; use the 10.0-era
+     * -copyPath:toPath:handler: for Tiger compatibility. */
     NSString *bannerDest = [_configDir stringByAppendingPathComponent:@"banner.jpg"];
     if (![fm fileExistsAtPath:bannerDest]) {
         NSString *bundleBanner = [[NSBundle mainBundle]
             pathForResource:@"default-banner" ofType:@"jpg"];
         if (bundleBanner) {
-            [fm copyItemAtPath:bundleBanner toPath:bannerDest error:NULL];
+            [fm copyPath:bundleBanner toPath:bannerDest handler:nil];
         }
     }
 

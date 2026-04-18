@@ -65,8 +65,10 @@ lemoniscate-linux-*
 mobius-hotline-server
 lemoniscate.zip
 Lemoniscate.app/
+*.app/
 *.dmg
 Lemoniscate.zip
+Lemoniscate-*.zip
 
 # Release script intermediates (libyaml universal, per-arch app builds)
 build/
