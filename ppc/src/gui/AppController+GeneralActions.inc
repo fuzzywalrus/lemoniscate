@@ -55,7 +55,7 @@
     [panel setAllowsMultipleSelection:NO];
     [panel setTitle:@"Select config directory"];
     if ([panel runModal] == NSModalResponseOK) {
-        NSString *path = [[[panel URLs] objectAtIndex:0] path];
+        NSString *path = [[panel filenames] objectAtIndex:0];
         [_configDir release];
         _configDir = [path retain];
         [_configDirField setStringValue:_configDir];
@@ -79,7 +79,7 @@
     [panel setTitle:@"Select files directory"];
     if ([panel runModal] == NSModalResponseOK) {
         [_fileRootField setStringValue:
-            [[[panel URLs] objectAtIndex:0] path]];
+            [[panel filenames] objectAtIndex:0]];
         [self refreshFilesList:nil];
     }
 }
@@ -94,7 +94,7 @@
     [panel setTitle:@"Select banner image (JPG or GIF)"];
     if ([panel runModal] == NSModalResponseOK) {
         [_bannerFileField setStringValue:
-            [[[panel URLs] objectAtIndex:0] path]];
+            [[panel filenames] objectAtIndex:0]];
     }
 }
 
@@ -108,7 +108,7 @@
     [panel setTitle:@"Select files directory"];
     if ([panel runModal] == NSModalResponseOK) {
         [_wizardFileRootField setStringValue:
-            [[[panel URLs] objectAtIndex:0] path]];
+            [[panel filenames] objectAtIndex:0]];
     }
 }
 
@@ -122,7 +122,7 @@
     [panel setTitle:@"Select banner image (JPG or GIF)"];
     if ([panel runModal] == NSModalResponseOK) {
         [_wizardBannerField setStringValue:
-            [[[panel URLs] objectAtIndex:0] path]];
+            [[panel filenames] objectAtIndex:0]];
     }
 }
 
@@ -955,7 +955,7 @@ static int pollingIntervalCount = 8;
     [panel setTitle:@"Select TLS certificate (PEM)"];
     if ([panel runModal] == NSModalResponseOK) {
         [_tlsCertField setStringValue:
-            [[[panel URLs] objectAtIndex:0] path]];
+            [[panel filenames] objectAtIndex:0]];
     }
 }
 
@@ -969,7 +969,7 @@ static int pollingIntervalCount = 8;
     [panel setTitle:@"Select TLS private key (PEM)"];
     if ([panel runModal] == NSModalResponseOK) {
         [_tlsKeyField setStringValue:
-            [[[panel URLs] objectAtIndex:0] path]];
+            [[panel filenames] objectAtIndex:0]];
     }
 }
 
@@ -1043,13 +1043,10 @@ static int pollingIntervalCount = 8;
     if (!kcPassword || [kcPassword length] == 0)
         kcPassword = @"lemoniscate-default-kc";
 
-    /* Ensure config directory exists */
+    /* Ensure config directory exists (Tiger-compatible helper) */
     NSFileManager *fm = [NSFileManager defaultManager];
     if (![fm fileExistsAtPath:_configDir]) {
-        [fm createDirectoryAtPath:_configDir
-      withIntermediateDirectories:YES
-                       attributes:nil
-                            error:nil];
+        createDirectoryWithParents(fm, _configDir);
     }
 
     NSString *certPath = [_configDir stringByAppendingPathComponent:@"cert.pem"];
