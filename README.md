@@ -15,6 +15,10 @@ This repo holds both codebases on `main`:
 - Modern (macOS 10.11+ / Linux) lives at the root — this README and `src/` cover it.
 - PowerPC Tiger 10.4 / Leopard 10.5 lives under [`ppc/`](ppc/) — see [`ppc/README.md`](ppc/README.md) for build and usage.
 
+> **Repository layout changed April 2026.** This used to be a two-branch repo (`modern` and `main` = PPC). The branches were unified onto a single `main` via a filter-repo rewrite, with modern at root and PPC moved under `ppc/`. The pre-flip modern branch is preserved at [`archive/pre-flip-modern`](../../tree/archive/pre-flip-modern) and the pre-flip PPC `main` at [`ppc-archive`](../../tree/ppc-archive). If you have a pre-flip clone, reset to origin/main rather than pulling.
+
+PPC-line release tags were renamed `v0.1.4`–`v0.1.7` → `ppc/v0.1.4`–`ppc/v0.1.7`. Ancestor tags `v0.1.1`–`v0.1.3` are unchanged. Pre-flip tags are preserved under `legacy/v0.1.0`–`legacy/v0.1.7`.
+
 See the releases for the latest version.
 
 ## What is Hotline?
