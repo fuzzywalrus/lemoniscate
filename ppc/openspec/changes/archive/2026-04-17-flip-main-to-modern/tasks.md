@@ -82,6 +82,6 @@
 ## 10. Follow-ups (non-blocking)
 
 - [x] 10.1 Updated `~/.claude/skills/powerpc-development/SKILL.md` (lines 71, 78): project path now `/Users/me/Public/lemoniscate-ppc/ppc`; added note about 2026-04-17 monorepo flip
-- [ ] 10.2 Test the PPC build end-to-end from the G4 via the updated skill to confirm nothing broke
-- [ ] 10.3 (Optional) Rename the G4's SMB share top-level directory from `lemoniscate-ppc` to `lemoniscate/` so the path reflects the combined contents
-- [ ] 10.4 Announce in any project-adjacent channels (Discord, README banner, release notes) that the branch flip occurred and point to this change as the record
+- [x] 10.2 Built successfully on PowerMac G4 from `/Users/me/Public/lemoniscate-ppc/ppc` — libhotline.a and lemoniscate server both linked. Only pre-existing warnings (unused `proto` in tls_sectransport, pragma clang diagnostics in client.m, unused generate_sync_id/push_dir/pop_dir in mnemosyne_sync) — flip introduced no new build issues
+- [ ] 10.3 (Optional) Rename the G4's SMB share top-level directory from `lemoniscate-ppc` to `lemoniscate/` — left to user's convenience
+- [x] 10.4 README callout added (commit 54bf93d) with pointers to archive branches and tag rename scheme; broader Discord/release-notes announcement deferred to user
