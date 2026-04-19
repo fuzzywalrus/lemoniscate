@@ -1,25 +1,25 @@
 ## 1. Protocol Constants and Types
 
-- [ ] 1.1 Add `HL_FIELD_USER_COLOR` (0x0500) to `include/hotline/types.h` next to other field ID constants.
-- [ ] 1.2 Add `ADMIN_ACCESS_TEMPLATE` and `GUEST_ACCESS_TEMPLATE` constants to `include/hotline/access.h`. Match the GUI's `adminAccessTemplate` / `guestAccessTemplate` bit sets exactly.
-- [ ] 1.3 Add `enum hl_account_class { HL_CLASS_ADMIN, HL_CLASS_GUEST, HL_CLASS_CUSTOM }` to `include/hotline/access.h`.
-- [ ] 1.4 Add `enum hl_colored_nicknames_delivery { HL_CN_DELIVERY_OFF, HL_CN_DELIVERY_AUTO, HL_CN_DELIVERY_ALWAYS }` to `include/hotline/config.h` (names per fogWraith spec).
+- [x] 1.1 Added `HL_FIELD_USER_COLOR = {0x05, 0x00}` to `include/hotline/types.h` after the news fields.
+- [x] 1.2 Added `ADMIN_ACCESS_TEMPLATE` and `GUEST_ACCESS_TEMPLATE` to `include/hotline/access.h`. Templates match `kAccountPermissionDefs` and `guestAccessTemplate` respectively.
+- [x] 1.3 Added `typedef enum hl_account_class_t { HL_CLASS_CUSTOM, HL_CLASS_GUEST, HL_CLASS_ADMIN }` to `include/hotline/access.h`.
+- [x] 1.4 Added `enum hl_colored_nicknames_delivery { HL_CN_DELIVERY_OFF, _AUTO, _ALWAYS }` plus a nested `colored_nicknames` struct to `hl_config_t` in `include/hotline/config.h`.
 
 ## 2. Connection State
 
-- [ ] 2.1 Add `uint32_t nick_color` and `bool color_aware` fields to `hl_client_conn` in `include/hotline/client_conn.h`.
-- [ ] 2.2 Initialize both to `0` / `false` in `hl_client_conn_init()`.
-- [ ] 2.3 No teardown work — both fields are POD.
+- [x] 2.1 Added `uint32_t nick_color` and `int color_aware` to `hl_client_conn` in `include/hotline/client_conn.h`.
+- [x] 2.2 Satisfied by `calloc` in `hl_client_conn_new` — both fields zero-initialize automatically.
+- [x] 2.3 No teardown work (POD fields).
 
 ## 3. Account Class Detection
 
-- [ ] 3.1 Implement `hl_account_class_t hl_account_class(const hl_account_t *a)` in `src/hotline/access.c` (create file if needed). Exact `==` compare of `a->access` against each template.
+- [x] 3.1 Created `src/hotline/access.c` with `hl_access_classify(const hl_access_bitmap_t)` using `memcmp` against the two templates. Added to Makefile's `HOTLINE_COMMON_SRCS`. (Signature takes bitmap directly rather than `hl_account_t *` to avoid a circular include between access.h and client_conn.h.)
 - [ ] 3.2 Unit-test the three branches (admin exact match, guest exact match, anything-else → custom) in `test/test_access.c`.
 
 ## 4. Color Cascade
 
-- [ ] 4.1 Implement `uint32_t hl_nick_color_resolve(const hl_client_conn *c, const hl_config_t *cfg)` in `src/hotline/client_conn.c` following the design's 5-step cascade. Gate cascade step 2 (client-sent color) on `cfg->colored_nicknames.honor_client_colors`.
-- [ ] 4.2 Return `0xFFFFFFFF` for "no color" in all fall-through cases; return account's per-account YAML `Color` as highest priority.
+- [x] 4.1 Implemented `hl_nick_color_resolve(const hl_client_conn_t *, const hl_config_t *)` in `src/hotline/client_conn.c`. Tier 2 gated on `cfg->colored_nicknames.honor_client_colors`. Added `#include "hotline/config.h"` to `client_conn.h` to make the typedef visible to callers.
+- [x] 4.2 Returns `0xFFFFFFFF` in fall-through cases; per-account `nick_color != 0` wins as highest priority (tier 1 uses `c->account->nick_color`, populated by upcoming task 7.2).
 - [ ] 4.3 Unit-test each cascade step in `test/test_nick_color.c` (new file). Include coverage for both `honor_client_colors == true` and `== false`.
 
 ## 5. Config Surface — YAML
@@ -39,7 +39,7 @@
 
 ## 7. Account YAML — Color Key
 
-- [ ] 7.1 Add `uint32_t nick_color` field to `hl_account_t` (account struct).
+- [x] 7.1 Added `uint32_t nick_color` to `hl_account_t` in `include/hotline/client_conn.h` (done in Checkpoint 1 so the cascade's tier 1 has something to read). YAML parse/write still pending in 7.2/7.3.
 - [ ] 7.2 Parse optional `Color: "#RRGGBB"` in `src/mobius/yaml_account_manager.c::yaml_account_parse`. Invalid → log + treat as absent.
 - [ ] 7.3 Write `Color: "#RRGGBB"` in `yaml_account_write` when `nick_color != 0`; omit the key entirely when `nick_color == 0`.
 - [ ] 7.4 Round-trip test: parse → write → parse yields identical `nick_color`, in `test/test_yaml_account.c`.

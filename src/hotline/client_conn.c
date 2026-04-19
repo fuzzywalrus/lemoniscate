@@ -5,10 +5,45 @@
  */
 
 #include "hotline/client_conn.h"
+#include "hotline/config.h"
 #include "hotline/tls.h"
 #include "hotline/hope.h"
 #include <stdlib.h>
 #include <string.h>
+
+/* --- Colored Nicknames: color resolution cascade (fogWraith DATA_COLOR extension) ---
+ * See openspec/changes/colored-nicknames/design.md Decision 3.
+ */
+uint32_t hl_nick_color_resolve(const hl_client_conn_t *c, const hl_config_t *cfg)
+{
+    if (!c || !cfg) return 0xFFFFFFFFu;
+
+    /* Tier 1: per-account YAML Color (always wins when set). */
+    if (c->account && c->account->nick_color != 0u) {
+        return c->account->nick_color;
+    }
+
+    /* Tier 2: client-sent color, gated by honor_client_colors. */
+    if (cfg->colored_nicknames.honor_client_colors && c->nick_color != 0u) {
+        return c->nick_color;
+    }
+
+    /* Tiers 3/4: class default. */
+    if (c->account) {
+        hl_account_class_t klass = hl_access_classify(c->account->access);
+        if (klass == HL_CLASS_ADMIN &&
+            cfg->colored_nicknames.default_admin_color != 0xFFFFFFFFu) {
+            return cfg->colored_nicknames.default_admin_color;
+        }
+        if (klass == HL_CLASS_GUEST &&
+            cfg->colored_nicknames.default_guest_color != 0xFFFFFFFFu) {
+            return cfg->colored_nicknames.default_guest_color;
+        }
+    }
+
+    /* Tier 5: no color. */
+    return 0xFFFFFFFFu;
+}
 
 hl_client_conn_t *hl_client_conn_new(int fd, const char *remote_addr,
                                      struct hl_server *server)

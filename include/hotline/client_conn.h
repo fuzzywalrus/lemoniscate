@@ -10,6 +10,7 @@
 #include "hotline/user.h"
 #include "hotline/transaction.h"
 #include "hotline/logger.h"
+#include "hotline/config.h"
 #include <pthread.h>
 
 /* Forward declarations */
@@ -32,6 +33,10 @@ typedef struct {
     hl_access_bitmap_t access;
     char               file_root[1024]; /* Optional per-account file root */
     int                require_encryption; /* Require HOPE encryption for file transfers */
+    uint32_t           nick_color;      /* Colored Nicknames: per-account admin-set color.
+                                           0 = absent (falls through cascade).
+                                           0x00RRGGBB = explicit color.
+                                           Stored as YAML key "Color". */
 } hl_account_t;
 
 /* AccountManager vtable */
@@ -103,6 +108,10 @@ struct hl_client_conn {
     uint16_t            chat_rl_tokens_x10;
     uint64_t            chat_rl_last_refill_ms;
 
+    /* Colored nicknames (fogWraith DATA_COLOR extension) */
+    uint32_t            nick_color;      /* 0x00RRGGBB, or 0xFFFFFFFF for "explicitly no color", 0 = unset */
+    int                 color_aware;     /* 1 if client sent DATA_COLOR in its 304 (opt-in) */
+
     pthread_rwlock_t    mu;              /* Go: mu sync.RWMutex */
 };
 
@@ -119,6 +128,14 @@ void hl_client_conn_free(hl_client_conn_t *cc);
  * hl_client_conn_authorize - Check if client has a specific permission.
  */
 int hl_client_conn_authorize(const hl_client_conn_t *cc, int access_bit);
+
+/*
+ * hl_nick_color_resolve - Resolve the effective nickname color for a client
+ * via the 5-tier cascade: per-account YAML → client-sent (when honored) →
+ * admin class default → guest class default → no color (0xFFFFFFFF).
+ */
+uint32_t hl_nick_color_resolve(const hl_client_conn_t *c,
+                               const hl_config_t *cfg);
 
 /*
  * hl_client_conn_new_reply - Create a reply transaction.

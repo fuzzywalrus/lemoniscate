@@ -61,7 +61,22 @@ typedef struct {
     uint32_t chat_history_rate_capacity;                 /* ChatHistoryRateCapacity (tokens) */
     uint32_t chat_history_rate_refill_per_sec;           /* ChatHistoryRateRefillPerSec */
     int      chat_history_log_joins;                     /* ChatHistoryLogJoins (record sign on/off as system messages) */
+
+    /* Colored Nicknames (fogWraith DATA_COLOR extension) — see openspec/changes/colored-nicknames/ */
+    struct {
+        int       delivery;                              /* HL_CN_DELIVERY_OFF | _AUTO | _ALWAYS */
+        int       honor_client_colors;                   /* bool: client-sent DATA_COLOR enters cascade */
+        uint32_t  default_admin_color;                   /* 0x00RRGGBB, or 0xFFFFFFFF for no color */
+        uint32_t  default_guest_color;                   /* 0x00RRGGBB, or 0xFFFFFFFF for no color */
+    } colored_nicknames;
 } hl_config_t;
+
+/* Colored Nicknames delivery modes (names per fogWraith canonical spec) */
+enum hl_colored_nicknames_delivery {
+    HL_CN_DELIVERY_OFF    = 0,
+    HL_CN_DELIVERY_AUTO   = 1,
+    HL_CN_DELIVERY_ALWAYS = 2
+};
 
 /* Initialize config with defaults */
 void hl_config_init(hl_config_t *cfg);

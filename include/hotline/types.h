@@ -172,6 +172,9 @@ static const hl_field_type_t FIELD_NEWS_ART_PARENT_ART  = {0x01, 0x4F}; /* 335 *
 static const hl_field_type_t FIELD_NEWS_ART_1ST_CHILD   = {0x01, 0x50}; /* 336 */
 static const hl_field_type_t FIELD_NEWS_ART_RECURSE_DEL = {0x01, 0x51}; /* 337 */
 
+/* Colored Nicknames extension (fogWraith) */
+static const hl_field_type_t HL_FIELD_USER_COLOR        = {0x05, 0x00}; /* 1280 - DATA_COLOR (0x00RRGGBB, 0xFFFFFFFF = no color) */
+
 
 /* --- Well-known magic values --- */
 

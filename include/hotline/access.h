@@ -81,4 +81,50 @@ static inline void hl_access_clear(hl_access_bitmap_t bits, int i)
     bits[i / 8] &= (uint8_t)~(1 << (7 - (i % 8)));
 }
 
+/* --- Account class templates (for colored-nicknames and future class-based features) ---
+ *
+ * These match the GUI's kAccountPermissionDefs list exactly. The admin
+ * template has all GUI-known permission bits set (bits 0-18, 20-40).
+ * The guest template has the specific subset the GUI's guestAccessTemplate
+ * returns (10 permissions). Class detection is exact bitwise match.
+ */
+
+/* Admin template: bits 0-18, 20-40. Bit 19 unused. Bit 56 (ACCESS_READ_CHAT_HISTORY)
+ * is intentionally excluded — the GUI's kAccountPermissionDefs does not include it. */
+static const hl_access_bitmap_t ADMIN_ACCESS_TEMPLATE = {
+    0xFF, /* bits  0-7  */
+    0xFF, /* bits  8-15 */
+    0xEF, /* bits 16-23 (bit 19 unset) */
+    0xFF, /* bits 24-31 */
+    0xFF, /* bits 32-39 */
+    0x80, /* bits 40-47 (only bit 40 set) */
+    0x00, /* bits 48-55 */
+    0x00  /* bits 56-63 */
+};
+
+/* Guest template: bits 2, 9, 10, 11, 13, 20, 21, 24, 39, 40 set.
+ * Matches guestAccessTemplate in AppController+AccountsData.inc. */
+static const hl_access_bitmap_t GUEST_ACCESS_TEMPLATE = {
+    0x20, /* bit 2                          */
+    0x74, /* bits 9, 10, 11, 13             */
+    0x0C, /* bits 20, 21                    */
+    0x80, /* bit 24                         */
+    0x01, /* bit 39                         */
+    0x80, /* bit 40                         */
+    0x00,
+    0x00
+};
+
+typedef enum {
+    HL_CLASS_CUSTOM = 0,
+    HL_CLASS_GUEST,
+    HL_CLASS_ADMIN
+} hl_account_class_t;
+
+/*
+ * hl_access_classify - Classify an access bitmap against the admin/guest
+ * templates using exact bitwise equality. Any divergence → HL_CLASS_CUSTOM.
+ */
+hl_account_class_t hl_access_classify(const hl_access_bitmap_t access);
+
 #endif /* HOTLINE_ACCESS_H */

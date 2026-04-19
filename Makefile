@@ -94,6 +94,7 @@ HOTLINE_COMMON_SRCS = \
 	src/hotline/user.c \
 	src/hotline/time_conv.c \
 	src/hotline/file_resume_data.c \
+	src/hotline/access.c \
 	src/hotline/config.c \
 	src/hotline/logger.c \
 	src/hotline/file_store.c \
