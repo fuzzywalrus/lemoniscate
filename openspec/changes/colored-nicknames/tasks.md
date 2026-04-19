@@ -14,13 +14,13 @@
 ## 3. Account Class Detection
 
 - [x] 3.1 Created `src/hotline/access.c` with `hl_access_classify(const hl_access_bitmap_t)` using `memcmp` against the two templates. Added to Makefile's `HOTLINE_COMMON_SRCS`. (Signature takes bitmap directly rather than `hl_account_t *` to avoid a circular include between access.h and client_conn.h.)
-- [ ] 3.2 Unit-test the three branches (admin exact match, guest exact match, anything-else → custom) in `test/test_access.c`.
+- [x] 3.2 Wrote `test/test_access.c` — 6 scenarios (admin exact, guest exact, empty, admin-minus-one, guest-plus-one, all-bits-set). All pass. Makefile target `test-access`.
 
 ## 4. Color Cascade
 
 - [x] 4.1 Implemented `hl_nick_color_resolve(const hl_client_conn_t *, const hl_config_t *)` in `src/hotline/client_conn.c`. Tier 2 gated on `cfg->colored_nicknames.honor_client_colors`. Added `#include "hotline/config.h"` to `client_conn.h` to make the typedef visible to callers.
 - [x] 4.2 Returns `0xFFFFFFFF` in fall-through cases; per-account `nick_color != 0` wins as highest priority (tier 1 uses `c->account->nick_color`, populated by upcoming task 7.2).
-- [ ] 4.3 Unit-test each cascade step in `test/test_nick_color.c` (new file). Include coverage for both `honor_client_colors == true` and `== false`.
+- [x] 4.3 Wrote `test/test_nick_color.c` — 10 scenarios covering all 5 cascade tiers plus null-safety and no-account fallthrough. Coverage for both `honor_client_colors == true` and `== false`. All pass. Makefile target `test-nick-color`.
 
 ## 5. Config Surface — YAML
 

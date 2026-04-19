@@ -225,6 +225,16 @@ test-chacha20: test/test_chacha20poly1305.o src/hotline/chacha20poly1305.o
 	$(CC) $(CFLAGS) -o test_chacha20poly1305 $^
 	./test_chacha20poly1305
 
+# Colored Nicknames: account class detection tests
+test-access: test/test_access.o src/hotline/access.o
+	$(CC) $(CFLAGS) -o test_access $^
+	./test_access
+
+# Colored Nicknames: color resolution cascade tests
+test-nick-color: test/test_nick_color.o $(HOTLINE_C_OBJS) $(MOBIUS_OBJS)
+	$(CC) $(CFLAGS) -o test_nick_color $^ $(LDFLAGS) $(YAML_LDFLAGS)
+	./test_nick_color
+
 # Chat history storage tests (JSONL backend, encryption, prune, tombstone)
 test-chat-history: test/test_chat_history.o src/hotline/chat_history.o src/hotline/chacha20poly1305.o
 	$(CC) $(CFLAGS) -o test_chat_history $^
@@ -246,9 +256,9 @@ test-client: $(TEST_OBJC_OBJS) $(HOTLINE_OBJS)
 	$(CC) $(OBJCFLAGS) -o test_client $^ $(LDFLAGS)
 	./test_client
 
-test: test-wire test-mnemosyne test-chat-history test-client
+test: test-wire test-mnemosyne test-chat-history test-access test-nick-color test-client
 else
-test: test-wire test-mnemosyne test-chat-history
+test: test-wire test-mnemosyne test-chat-history test-access test-nick-color
 endif
 
 # --- Pattern rules ---
