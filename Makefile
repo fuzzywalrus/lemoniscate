@@ -235,6 +235,11 @@ test-nick-color: test/test_nick_color.o $(HOTLINE_C_OBJS) $(MOBIUS_OBJS)
 	$(CC) $(CFLAGS) -o test_nick_color $^ $(LDFLAGS) $(YAML_LDFLAGS)
 	./test_nick_color
 
+# Colored Nicknames: account YAML Color round-trip
+test-account-color: test/test_account_color.o $(HOTLINE_C_OBJS) $(MOBIUS_OBJS)
+	$(CC) $(CFLAGS) -o test_account_color $^ $(LDFLAGS) $(YAML_LDFLAGS)
+	./test_account_color
+
 # Chat history storage tests (JSONL backend, encryption, prune, tombstone)
 test-chat-history: test/test_chat_history.o src/hotline/chat_history.o src/hotline/chacha20poly1305.o
 	$(CC) $(CFLAGS) -o test_chat_history $^
@@ -256,9 +261,9 @@ test-client: $(TEST_OBJC_OBJS) $(HOTLINE_OBJS)
 	$(CC) $(OBJCFLAGS) -o test_client $^ $(LDFLAGS)
 	./test_client
 
-test: test-wire test-mnemosyne test-chat-history test-access test-nick-color test-client
+test: test-wire test-mnemosyne test-chat-history test-access test-nick-color test-account-color test-client
 else
-test: test-wire test-mnemosyne test-chat-history test-access test-nick-color
+test: test-wire test-mnemosyne test-chat-history test-access test-nick-color test-account-color
 endif
 
 # --- Pattern rules ---

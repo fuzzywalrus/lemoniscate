@@ -19,6 +19,35 @@ static int yaml_parse_bool(const char *val)
     return (strcasecmp(val, "true") == 0 || strcasecmp(val, "yes") == 0);
 }
 
+/* Parse "#RRGGBB" (case-insensitive) into 0x00RRGGBB. Empty string or
+ * invalid format returns 0xFFFFFFFF (meaning "no color"). Used by the
+ * ColoredNicknames config section. */
+static uint32_t yaml_parse_color_hex(const char *val)
+{
+    if (!val || val[0] == '\0') return 0xFFFFFFFFu;
+    const char *p = val;
+    if (*p == '#') p++;
+    if (strlen(p) != 6) {
+        fprintf(stderr, "config: invalid Color value '%s' (expected #RRGGBB), treating as no color\n", val);
+        return 0xFFFFFFFFu;
+    }
+    uint32_t result = 0;
+    int i;
+    for (i = 0; i < 6; i++) {
+        char c = p[i];
+        int nibble;
+        if (c >= '0' && c <= '9') nibble = c - '0';
+        else if (c >= 'a' && c <= 'f') nibble = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') nibble = c - 'A' + 10;
+        else {
+            fprintf(stderr, "config: invalid hex in Color '%s', treating as no color\n", val);
+            return 0xFFFFFFFFu;
+        }
+        result = (result << 4) | (uint32_t)nibble;
+    }
+    return result & 0x00FFFFFFu;
+}
+
 const char *mobius_config_search_paths[MOBIUS_CONFIG_SEARCH_COUNT] = {
     "config",
     "/usr/local/var/mobius/config",
@@ -61,6 +90,8 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
     char mnemosyne_key[128] = {0};
     int parsing_chat_history = 0;
     char chat_history_key[64] = {0};
+    int parsing_colored_nicknames = 0;
+    char colored_nicknames_key[64] = {0};
     int done = 0;
 
     while (!done) {
@@ -80,6 +111,18 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
                 parsing_chat_history = 1;
                 chat_history_key[0] = '\0';
                 current_key[0] = '\0';
+            } else if (in_mapping && strcmp(current_key, "ColoredNicknames") == 0) {
+                parsing_colored_nicknames = 1;
+                colored_nicknames_key[0] = '\0';
+                current_key[0] = '\0';
+                /* Section present but keys absent defaults to auto. Only
+                 * set delivery=auto if it is still at the section-absent
+                 * default (off). If the user explicitly wrote
+                 * Delivery: off, that value wins because the scalar
+                 * branch below overwrites it. */
+                if (cfg->colored_nicknames.delivery == HL_CN_DELIVERY_OFF) {
+                    cfg->colored_nicknames.delivery = HL_CN_DELIVERY_AUTO;
+                }
             } else {
                 in_mapping = 1;
             }
@@ -90,6 +133,8 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
                 parsing_mnemosyne = 0;
             } else if (parsing_chat_history) {
                 parsing_chat_history = 0;
+            } else if (parsing_colored_nicknames) {
+                parsing_colored_nicknames = 0;
             } else {
                 in_mapping = 0;
             }
@@ -142,6 +187,33 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
                     else if (strcmp(chat_history_key, "LogJoins") == 0)
                         cfg->chat_history_log_joins = yaml_parse_bool(val);
                     chat_history_key[0] = '\0';
+                }
+            } else if (parsing_colored_nicknames) {
+                /* Inside ColoredNicknames mapping — key/value pairs */
+                const char *val = (const char *)event.data.scalar.value;
+                if (colored_nicknames_key[0] == '\0') {
+                    strncpy(colored_nicknames_key, val,
+                            sizeof(colored_nicknames_key) - 1);
+                } else {
+                    if (strcmp(colored_nicknames_key, "Delivery") == 0) {
+                        if (strcasecmp(val, "off") == 0)
+                            cfg->colored_nicknames.delivery = HL_CN_DELIVERY_OFF;
+                        else if (strcasecmp(val, "auto") == 0)
+                            cfg->colored_nicknames.delivery = HL_CN_DELIVERY_AUTO;
+                        else if (strcasecmp(val, "always") == 0)
+                            cfg->colored_nicknames.delivery = HL_CN_DELIVERY_ALWAYS;
+                        else {
+                            fprintf(stderr, "config: unknown ColoredNicknames.Delivery '%s', treating as off\n", val);
+                            cfg->colored_nicknames.delivery = HL_CN_DELIVERY_OFF;
+                        }
+                    } else if (strcmp(colored_nicknames_key, "HonorClientColors") == 0) {
+                        cfg->colored_nicknames.honor_client_colors = yaml_parse_bool(val);
+                    } else if (strcmp(colored_nicknames_key, "DefaultAdminColor") == 0) {
+                        cfg->colored_nicknames.default_admin_color = yaml_parse_color_hex(val);
+                    } else if (strcmp(colored_nicknames_key, "DefaultGuestColor") == 0) {
+                        cfg->colored_nicknames.default_guest_color = yaml_parse_color_hex(val);
+                    }
+                    colored_nicknames_key[0] = '\0';
                 }
             } else if (parsing_trackers) {
                 /* Inside Trackers sequence — each scalar is a tracker entry */

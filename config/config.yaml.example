@@ -201,3 +201,36 @@ HOPELegacyMode: false
 #   # ("greg signed on") and disconnect appends another ("greg signed off").
 #   # Off by default — some operators find these noisy on busy servers.
 #   LogJoins: false
+
+# ─── Colored Nicknames (fogWraith DATA_COLOR extension) ────────────────
+#
+# Adds per-user nickname colors via the DATA_COLOR (0x0500) protocol
+# extension. Color-aware clients (e.g. Hotline Navigator) render them;
+# legacy clients ignore the trailing field and see no change.
+#
+# Two orthogonal axes:
+#   Delivery           — when to send DATA_COLOR to receivers
+#   HonorClientColors  — whether client-sent DATA_COLOR values enter the cascade
+#
+# Color resolution order (highest to lowest priority):
+#   1. Per-account 'Color' key in the account YAML file
+#   2. Client-sent DATA_COLOR (only when HonorClientColors is true)
+#   3. DefaultAdminColor (account matches admin permission template)
+#   4. DefaultGuestColor (account matches guest permission template)
+#   5. No color
+#
+# ColoredNicknames:
+#   # Off | Auto | Always (fogWraith canonical names).
+#   # Off    — never send DATA_COLOR; feature is fully disabled.
+#   # Auto   — send only to clients that have opted in (default behavior).
+#   # Always — send to every client regardless of opt-in; legacy clients ignore.
+#   Delivery: auto
+#
+#   # When true, a client's DATA_COLOR in its TranSetClientUserInfo (304)
+#   # becomes tier 2 of the cascade. When false, client-sent values are
+#   # used only to mark the session color-aware and the value is discarded.
+#   HonorClientColors: false
+#
+#   # Hex "#RRGGBB", or empty to mean 'no default'.
+#   DefaultAdminColor: "#FFD700"
+#   DefaultGuestColor: "#999999"

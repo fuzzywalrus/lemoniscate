@@ -58,6 +58,29 @@ static int plist_get_int(CFDictionaryRef dict, const char *key, int *out)
 }
 
 /* Helper: extract a string array from a CFDictionary by key */
+/* Parse "#RRGGBB" (case-insensitive) into 0x00RRGGBB. Empty or invalid
+ * returns 0xFFFFFFFF ("no color"). Mirrors yaml_parse_color_hex in
+ * config_loader.c. */
+static uint32_t plist_parse_color_hex(const char *val)
+{
+    if (!val || val[0] == '\0') return 0xFFFFFFFFu;
+    const char *p = val;
+    if (*p == '#') p++;
+    if (strlen(p) != 6) return 0xFFFFFFFFu;
+    uint32_t result = 0;
+    int i;
+    for (i = 0; i < 6; i++) {
+        char c = p[i];
+        int nibble;
+        if (c >= '0' && c <= '9') nibble = c - '0';
+        else if (c >= 'a' && c <= 'f') nibble = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') nibble = c - 'A' + 10;
+        else return 0xFFFFFFFFu;
+        result = (result << 4) | (uint32_t)nibble;
+    }
+    return result & 0x00FFFFFFu;
+}
+
 static int plist_get_string_array(CFDictionaryRef dict, const char *key,
                                    char out[][256], int max_count, int *count)
 {
@@ -199,6 +222,32 @@ int mobius_load_config_plist(hl_config_t *cfg, const char *plist_path)
                          cfg->chat_history_encryption_key_path,
                          sizeof(cfg->chat_history_encryption_key_path));
         plist_get_bool(dict, "ChatHistoryLogJoins", &cfg->chat_history_log_joins);
+    }
+
+    /* Colored Nicknames */
+    {
+        char buf[16] = {0};
+        plist_get_string(dict, "ColoredNicknamesDelivery", buf, sizeof(buf));
+        if (buf[0] == '\0' || strcasecmp(buf, "off") == 0)
+            cfg->colored_nicknames.delivery = HL_CN_DELIVERY_OFF;
+        else if (strcasecmp(buf, "auto") == 0)
+            cfg->colored_nicknames.delivery = HL_CN_DELIVERY_AUTO;
+        else if (strcasecmp(buf, "always") == 0)
+            cfg->colored_nicknames.delivery = HL_CN_DELIVERY_ALWAYS;
+        else
+            cfg->colored_nicknames.delivery = HL_CN_DELIVERY_OFF;
+
+        plist_get_bool(dict, "ColoredNicknamesHonorClientColors",
+                       &cfg->colored_nicknames.honor_client_colors);
+
+        char color_buf[16] = {0};
+        plist_get_string(dict, "DefaultAdminColor", color_buf, sizeof(color_buf));
+        cfg->colored_nicknames.default_admin_color =
+            plist_parse_color_hex(color_buf);
+        color_buf[0] = '\0';
+        plist_get_string(dict, "DefaultGuestColor", color_buf, sizeof(color_buf));
+        cfg->colored_nicknames.default_guest_color =
+            plist_parse_color_hex(color_buf);
     }
 
     CFRelease(plist);

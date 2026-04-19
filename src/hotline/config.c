@@ -34,4 +34,10 @@ void hl_config_init(hl_config_t *cfg)
     cfg->chat_history_rate_capacity = 20;
     cfg->chat_history_rate_refill_per_sec = 10;
     cfg->chat_history_log_joins = 0;
+
+    /* Colored Nicknames defaults: feature off, no colors set. */
+    cfg->colored_nicknames.delivery = HL_CN_DELIVERY_OFF;
+    cfg->colored_nicknames.honor_client_colors = 0;
+    cfg->colored_nicknames.default_admin_color = 0xFFFFFFFFu;
+    cfg->colored_nicknames.default_guest_color = 0xFFFFFFFFu;
 }

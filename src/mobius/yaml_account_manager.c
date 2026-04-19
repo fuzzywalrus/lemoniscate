@@ -152,6 +152,30 @@ static int parse_account_file(hl_account_t *acct, const char *filepath)
                         strncpy(acct->file_root, val, sizeof(acct->file_root) - 1);
                     else if (strcmp(current_key, "RequireEncryption") == 0)
                         acct->require_encryption = (strcmp(val, "true") == 0 || strcmp(val, "1") == 0);
+                    else if (strcmp(current_key, "Color") == 0) {
+                        /* Parse "#RRGGBB" (case-insensitive). Invalid -> 0 (absent). */
+                        const char *p = val;
+                        if (*p == '#') p++;
+                        if (strlen(p) == 6) {
+                            uint32_t result = 0;
+                            int i, ok = 1;
+                            for (i = 0; i < 6; i++) {
+                                char c = p[i];
+                                int nibble;
+                                if (c >= '0' && c <= '9') nibble = c - '0';
+                                else if (c >= 'a' && c <= 'f') nibble = c - 'a' + 10;
+                                else if (c >= 'A' && c <= 'F') nibble = c - 'A' + 10;
+                                else { ok = 0; break; }
+                                result = (result << 4) | (uint32_t)nibble;
+                            }
+                            if (ok) acct->nick_color = result & 0x00FFFFFFu;
+                            else {
+                                fprintf(stderr, "yaml_account_manager: invalid hex in Color '%s', treating as absent\n", val);
+                            }
+                        } else {
+                            fprintf(stderr, "yaml_account_manager: invalid Color '%s' (expected #RRGGBB), treating as absent\n", val);
+                        }
+                    }
 
                     current_key[0] = '\0';
                 }
@@ -198,6 +222,10 @@ static int write_account_yaml(const char *dir, const hl_account_t *acct)
 
     if (acct->file_root[0] != '\0') {
         fprintf(f, "FileRoot: %s\n", acct->file_root);
+    }
+
+    if (acct->nick_color != 0) {
+        fprintf(f, "Color: \"#%06X\"\n", acct->nick_color & 0x00FFFFFFu);
     }
 
     if (acct->require_encryption) {

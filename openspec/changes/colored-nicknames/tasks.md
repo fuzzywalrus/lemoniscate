@@ -24,25 +24,25 @@
 
 ## 5. Config Surface — YAML
 
-- [ ] 5.1 Extend `hl_config_t` in `include/hotline/config.h` with a nested `colored_nicknames` struct (`delivery` enum, `honor_client_colors` bool, `default_admin_color`, `default_guest_color`).
-- [ ] 5.2 Parse the `ColoredNicknames:` section in `src/mobius/config_loader.c` with keys `Delivery`, `HonorClientColors`, `DefaultAdminColor`, `DefaultGuestColor`. Treat missing section as `delivery = off`, `honor_client_colors = false`.
-- [ ] 5.3 Invalid hex values → `log_warn` + treat as absent. Unknown `Delivery` → `log_warn` + `off`. Non-bool `HonorClientColors` → `log_warn` + `false`.
-- [ ] 5.4 Add defaults in `hl_config_init()`: `delivery = off`, `honor_client_colors = false`, both default colors `0xFFFFFFFF`.
-- [ ] 5.5 Update `config/config.yaml.example` with a commented `ColoredNicknames:` section showing `Delivery: auto`, `HonorClientColors: false`, and example default colors.
+- [x] 5.1 Extended `hl_config_t` with nested `colored_nicknames` struct (done in Checkpoint 1).
+- [x] 5.2 Parsed `ColoredNicknames:` section in `src/mobius/config_loader.c`. When section is present but `Delivery` is absent, auto-defaults to `HL_CN_DELIVERY_AUTO`; section absent keeps `off`.
+- [x] 5.3 Invalid hex → stderr warning + `0xFFFFFFFF`. Unknown `Delivery` → stderr warning + `off`. `HonorClientColors` uses existing `yaml_parse_bool`.
+- [x] 5.4 Added defaults to `hl_config_init()`: `delivery = HL_CN_DELIVERY_OFF`, `honor_client_colors = 0`, both colors `0xFFFFFFFF`.
+- [x] 5.5 Appended commented `ColoredNicknames:` section to `config/config.yaml.example` with cascade explanation and example values.
 
 ## 6. Config Surface — Plist (GUI)
 
-- [ ] 6.1 Add four plist keys to `src/mobius/config_plist.c`: `ColoredNicknamesDelivery` (string), `ColoredNicknamesHonorClientColors` (bool), `DefaultAdminColor` (string), `DefaultGuestColor` (string).
-- [ ] 6.2 In `config_plist_read`: map `ColoredNicknamesDelivery` string to enum (empty/missing → `off`); read `ColoredNicknamesHonorClientColors` as bool (missing → `false`).
-- [ ] 6.3 In `config_plist_write`: emit delivery as a string, honor-client-colors as bool, and colors as `"#RRGGBB"` (empty string when no color set).
-- [ ] 6.4 Wire plist → YAML translation in the GUI's save path so the running server picks up changes.
+- [x] 6.1 Added four plist keys to `src/mobius/config_plist.c` read path (`ColoredNicknamesDelivery`, `ColoredNicknamesHonorClientColors`, `DefaultAdminColor`, `DefaultGuestColor`).
+- [x] 6.2 Delivery string → enum (empty → `off`, `auto`/`always` honored, unknown → `off`). Bool via existing `plist_get_bool`. Colors via new static `plist_parse_color_hex`.
+- [ ] 6.3 Plist WRITE path (`config_plist_write`) — deferred. This file only implements the read path; the write path lives in the GUI's `writeConfigToDisk` which is task 11.8.
+- [ ] 6.4 Plist → YAML translation in GUI save path — deferred to section 11 (GUI work).
 
 ## 7. Account YAML — Color Key
 
 - [x] 7.1 Added `uint32_t nick_color` to `hl_account_t` in `include/hotline/client_conn.h` (done in Checkpoint 1 so the cascade's tier 1 has something to read). YAML parse/write still pending in 7.2/7.3.
-- [ ] 7.2 Parse optional `Color: "#RRGGBB"` in `src/mobius/yaml_account_manager.c::yaml_account_parse`. Invalid → log + treat as absent.
-- [ ] 7.3 Write `Color: "#RRGGBB"` in `yaml_account_write` when `nick_color != 0`; omit the key entirely when `nick_color == 0`.
-- [ ] 7.4 Round-trip test: parse → write → parse yields identical `nick_color`, in `test/test_yaml_account.c`.
+- [x] 7.2 Parsed optional `Color: "#RRGGBB"` in `yaml_account_manager.c` at the scalar branch. Accepts upper/lower hex. Invalid → stderr warning + field absent.
+- [x] 7.3 Writes `Color: "#RRGGBB"` when `nick_color != 0`; omits the key entirely when zero.
+- [x] 7.4 Wrote `test/test_account_color.c` — 4 scenarios: round-trip with color, round-trip without color, no `Color:` key in YAML when absent, high-byte stripped to 3 channels. All pass. Makefile target `test-account-color`.
 
 ## 8. Transaction Handlers — Incoming
 

@@ -80,3 +80,4 @@ test_chat_history
 test_threaded_news
 test_access
 test_nick_color
+test_account_color
