@@ -27,23 +27,26 @@ The controls SHALL consist of three widgets on a single row, placed between the 
 
 ### Requirement: Server Settings colored-nicknames section
 
-The GUI SHALL expose a "Colored Nicknames" disclosure section in the left settings panel with mode selection and class default colors.
+The GUI SHALL expose a "Colored Nicknames" disclosure section in the left settings panel with delivery selection, client-color input toggle, and class default colors.
 
 The section SHALL contain:
 
-- A mode popup (`NSPopUpButton`) with three items: "Off", "Server-assigned only", "User choice".
+- A delivery popup (`NSPopUpButton`) with three items: "Off", "Auto", "Always" (matching fogWraith's canonical names).
+- A "Honor client colors" checkbox (`NSButton`).
 - A Default Admin Color row: `NSColorWell` + hex field + "None" checkbox (same pattern as Account Editor).
 - A Default Guest Color row: same widget set.
 
-#### Scenario: Default color controls disabled in Off mode
-- **WHEN** the mode popup is set to "Off"
-- **THEN** both Default Admin Color and Default Guest Color rows have all three widgets disabled (but remain visible)
+#### Scenario: Sub-controls disabled in Off delivery
+- **WHEN** the delivery popup is set to "Off"
+- **THEN** the "Honor client colors" checkbox is disabled
+- **AND** both Default Admin Color and Default Guest Color rows have all three widgets disabled (but remain visible)
 
-#### Scenario: Default color controls enabled otherwise
-- **WHEN** the mode popup is set to "Server-assigned only" or "User choice"
-- **THEN** both Default Admin Color and Default Guest Color rows are enabled
+#### Scenario: Sub-controls enabled in Auto or Always delivery
+- **WHEN** the delivery popup is set to "Auto" or "Always"
+- **THEN** the "Honor client colors" checkbox is enabled
+- **AND** both Default Admin Color and Default Guest Color rows are enabled
 
 #### Scenario: Settings persist across GUI restarts
-- **WHEN** the operator sets mode to "User choice" and default admin color to `#FFD700`, then quits and relaunches the GUI
+- **WHEN** the operator sets delivery to "Auto", checks "Honor client colors", sets default admin color to `#FFD700`, then quits and relaunches the GUI
 - **THEN** the settings panel shows the same values
-- **AND** the running server is configured with `Mode: user_choice` and `DefaultAdminColor: "#FFD700"` in its generated `config.yaml`
+- **AND** the running server is configured with `Delivery: auto`, `HonorClientColors: true`, and `DefaultAdminColor: "#FFD700"` in its generated `config.yaml`

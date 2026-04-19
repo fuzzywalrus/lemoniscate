@@ -24,10 +24,10 @@ The following are described in full in the modern sibling's `proposal.md`:
 - `DATA_COLOR` field (0x0500) definition and 4-byte payload format.
 - `nick_color` and `color_aware` fields on `hl_client_conn`.
 - Parse from `TRAN_SET_CLIENT_USER_INFO` (304), emit in `TRAN_NOTIFY_CHANGE_USER` (301), `TRAN_NOTIFY_CHAT_USER_CHANGE` (117), user self-info reply, and `TRAN_GET_USER_NAME_LIST` entries.
-- Four-tier color resolution cascade (per-account YAML → client-sent → class default → none).
-- Three operator modes (`off` / `server_only` / `user_choice`).
+- Four-tier color resolution cascade (per-account YAML → client-sent when `HonorClientColors` → class default → none).
+- Two-axis configuration: `Delivery` (`off` / `auto` / `always`, fogWraith canonical names) gating output, and `HonorClientColors` (bool) gating input sourcing.
 - Account YAML `Color` key.
-- `ColoredNicknames:` config section with `Mode`, `DefaultAdminColor`, `DefaultGuestColor`.
+- `ColoredNicknames:` config section with `Delivery`, `HonorClientColors`, `DefaultAdminColor`, `DefaultGuestColor`.
 - Account class detection via exact permission-set match against admin and guest templates (Option A). Known fragility is accepted.
 - GUI Account Editor color row (color well + hex field + None checkbox).
 - GUI Server Settings disclosure section.
@@ -41,7 +41,7 @@ The following are described in full in the modern sibling's `proposal.md`:
 
 ### Modified Capabilities
 - `user-management`: Account YAML gains an optional `Color` field. User change notifications (301, 117) gain an optional `DATA_COLOR` trailing field. User list entries may include color data.
-- `server-config`: `config.yaml` gains a `ColoredNicknames` section with `Mode`, `DefaultAdminColor`, and `DefaultGuestColor` keys.
+- `server-config`: `config.yaml` gains a `ColoredNicknames` section with `Delivery`, `HonorClientColors`, `DefaultAdminColor`, and `DefaultGuestColor` keys.
 
 ## Impact
 

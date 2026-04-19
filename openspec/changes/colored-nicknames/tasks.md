@@ -3,7 +3,7 @@
 - [ ] 1.1 Add `HL_FIELD_USER_COLOR` (0x0500) to `include/hotline/types.h` next to other field ID constants.
 - [ ] 1.2 Add `ADMIN_ACCESS_TEMPLATE` and `GUEST_ACCESS_TEMPLATE` constants to `include/hotline/access.h`. Match the GUI's `adminAccessTemplate` / `guestAccessTemplate` bit sets exactly.
 - [ ] 1.3 Add `enum hl_account_class { HL_CLASS_ADMIN, HL_CLASS_GUEST, HL_CLASS_CUSTOM }` to `include/hotline/access.h`.
-- [ ] 1.4 Add `enum hl_colored_nicknames_mode { HL_CN_OFF, HL_CN_SERVER_ONLY, HL_CN_USER_CHOICE }` to `include/hotline/config.h`.
+- [ ] 1.4 Add `enum hl_colored_nicknames_delivery { HL_CN_DELIVERY_OFF, HL_CN_DELIVERY_AUTO, HL_CN_DELIVERY_ALWAYS }` to `include/hotline/config.h` (names per fogWraith spec).
 
 ## 2. Connection State
 
@@ -18,23 +18,23 @@
 
 ## 4. Color Cascade
 
-- [ ] 4.1 Implement `uint32_t hl_nick_color_resolve(const hl_client_conn *c, const hl_config_t *cfg)` in `src/hotline/client_conn.c` following the design's 5-step cascade.
+- [ ] 4.1 Implement `uint32_t hl_nick_color_resolve(const hl_client_conn *c, const hl_config_t *cfg)` in `src/hotline/client_conn.c` following the design's 5-step cascade. Gate cascade step 2 (client-sent color) on `cfg->colored_nicknames.honor_client_colors`.
 - [ ] 4.2 Return `0xFFFFFFFF` for "no color" in all fall-through cases; return account's per-account YAML `Color` as highest priority.
-- [ ] 4.3 Unit-test each cascade step in `test/test_nick_color.c` (new file).
+- [ ] 4.3 Unit-test each cascade step in `test/test_nick_color.c` (new file). Include coverage for both `honor_client_colors == true` and `== false`.
 
 ## 5. Config Surface — YAML
 
-- [ ] 5.1 Extend `hl_config_t` in `include/hotline/config.h` with a nested `colored_nicknames` struct (mode, default_admin_color, default_guest_color).
-- [ ] 5.2 Parse the `ColoredNicknames:` section in `src/mobius/config_loader.c`. Treat missing section as `mode = off`.
-- [ ] 5.3 Invalid hex values → `log_warn` + treat as absent. Mode values other than the three enums → `log_warn` + `off`.
-- [ ] 5.4 Add defaults in `hl_config_init()`: mode `off`, both default colors `0xFFFFFFFF`.
-- [ ] 5.5 Update `config/config.yaml.example` with a commented `ColoredNicknames:` section showing typical values.
+- [ ] 5.1 Extend `hl_config_t` in `include/hotline/config.h` with a nested `colored_nicknames` struct (`delivery` enum, `honor_client_colors` bool, `default_admin_color`, `default_guest_color`).
+- [ ] 5.2 Parse the `ColoredNicknames:` section in `src/mobius/config_loader.c` with keys `Delivery`, `HonorClientColors`, `DefaultAdminColor`, `DefaultGuestColor`. Treat missing section as `delivery = off`, `honor_client_colors = false`.
+- [ ] 5.3 Invalid hex values → `log_warn` + treat as absent. Unknown `Delivery` → `log_warn` + `off`. Non-bool `HonorClientColors` → `log_warn` + `false`.
+- [ ] 5.4 Add defaults in `hl_config_init()`: `delivery = off`, `honor_client_colors = false`, both default colors `0xFFFFFFFF`.
+- [ ] 5.5 Update `config/config.yaml.example` with a commented `ColoredNicknames:` section showing `Delivery: auto`, `HonorClientColors: false`, and example default colors.
 
 ## 6. Config Surface — Plist (GUI)
 
-- [ ] 6.1 Add three plist keys to `src/mobius/config_plist.c`: `ColoredNicknamesMode`, `DefaultAdminColor`, `DefaultGuestColor`.
-- [ ] 6.2 In `config_plist_read`, map `ColoredNicknamesMode` string to enum; empty/missing → `off`.
-- [ ] 6.3 In `config_plist_write`, emit mode as a string and colors as `"#RRGGBB"` (empty string when no color set).
+- [ ] 6.1 Add four plist keys to `src/mobius/config_plist.c`: `ColoredNicknamesDelivery` (string), `ColoredNicknamesHonorClientColors` (bool), `DefaultAdminColor` (string), `DefaultGuestColor` (string).
+- [ ] 6.2 In `config_plist_read`: map `ColoredNicknamesDelivery` string to enum (empty/missing → `off`); read `ColoredNicknamesHonorClientColors` as bool (missing → `false`).
+- [ ] 6.3 In `config_plist_write`: emit delivery as a string, honor-client-colors as bool, and colors as `"#RRGGBB"` (empty string when no color set).
 - [ ] 6.4 Wire plist → YAML translation in the GUI's save path so the running server picks up changes.
 
 ## 7. Account YAML — Color Key
@@ -47,18 +47,20 @@
 ## 8. Transaction Handlers — Incoming
 
 - [ ] 8.1 In `TRAN_SET_CLIENT_USER_INFO` (304) handler in `src/mobius/transaction_handlers_clean.c`, parse `DATA_COLOR` (0x0500) if present.
-- [ ] 8.2 Set `conn->color_aware = true` when the field is present (regardless of value) and `mode != off`.
-- [ ] 8.3 When `mode == user_choice`, store parsed value (including `0xFFFFFFFF`) in `conn->nick_color`. In `server_only` or `off`, discard the value.
-- [ ] 8.4 Unit-test 304 parsing with and without `DATA_COLOR`, across all three modes.
+- [ ] 8.2 Set `conn->color_aware = true` when the field is present (regardless of value) and `delivery != off`.
+- [ ] 8.3 When `honor_client_colors == true`, store parsed value (including `0xFFFFFFFF`) in `conn->nick_color`. Otherwise discard the value.
+- [ ] 8.4 When `delivery == off`, silently ignore the entire field (no `color_aware` set, no value stored).
+- [ ] 8.5 Unit-test 304 parsing across the delivery × honor-client-colors matrix (at minimum: off, auto+honor=false, auto+honor=true, always+honor=true).
 
 ## 9. Transaction Handlers — Outgoing
 
-- [ ] 9.1 Extend user-info emission helper (the one shared by 301, 117, self-info reply, and user-list) to append `DATA_COLOR` when `receiver->color_aware && resolved_color != 0xFFFFFFFF`.
-- [ ] 9.2 `TRAN_NOTIFY_CHANGE_USER` (301): emit per receiver.
-- [ ] 9.3 `TRAN_NOTIFY_CHAT_USER_CHANGE` (117): emit per receiver.
-- [ ] 9.4 User self-info response: emit when the requesting client is color-aware.
-- [ ] 9.5 `TRAN_GET_USER_NAME_LIST` response: for each listed user, emit `DATA_COLOR` when the requester is color-aware and the listed user has a resolved color.
-- [ ] 9.6 Integration test: color-aware client connects, legacy client connects, admin changes nick, both receive correct notifications (colored for color-aware, uncolored for legacy).
+- [ ] 9.1 Extend user-info emission helper (the one shared by 301, 117, self-info reply, and user-list) to compute a "should emit DATA_COLOR" predicate per receiver: `delivery == always ? (resolved != 0xFFFFFFFF) : (delivery == auto && receiver->color_aware && resolved != 0xFFFFFFFF)`. `delivery == off` → never.
+- [ ] 9.2 `TRAN_NOTIFY_CHANGE_USER` (301): emit per receiver using the predicate.
+- [ ] 9.3 `TRAN_NOTIFY_CHAT_USER_CHANGE` (117): emit per receiver using the predicate.
+- [ ] 9.4 User self-info response: emit when the predicate allows (receiver = requesting client).
+- [ ] 9.5 `TRAN_GET_USER_NAME_LIST` response: for each listed user, emit `DATA_COLOR` per-entry using the predicate (requester is the receiver).
+- [ ] 9.6 Integration test: in `delivery == auto` + `honor_client_colors == false`, a color-aware client and a legacy client connect simultaneously; admin changes nick; color-aware receives `DATA_COLOR`, legacy does not.
+- [ ] 9.7 Integration test: in `delivery == always`, legacy client receives `DATA_COLOR` in notifications and ignores it without disconnecting (behavior per fogWraith spec).
 
 ## 10. GUI — Account Editor
 
@@ -72,16 +74,19 @@
 ## 11. GUI — Server Settings Section
 
 - [ ] 11.1 Add disclosure section "Colored Nicknames" in the left settings panel, following Mnemosyne/Encoding disclosure pattern in `AppController+LayoutAndTabs.inc`.
-- [ ] 11.2 Mode popup with three items (Off / Server-assigned only / User choice); `NSPopUpButton` IBOutlet `coloredNicknamesModePopup`.
-- [ ] 11.3 Default Admin Color: `NSColorWell` + hex field + None checkbox. IBOutlets `defaultAdminColorWell`, `defaultAdminColorHexField`, `defaultAdminColorNoneCheckbox`.
-- [ ] 11.4 Default Guest Color: same set of widgets, IBOutlets with `defaultGuest...` names.
-- [ ] 11.5 When mode is `off`, disable (do not hide) default-color widgets.
-- [ ] 11.6 Load from plist in `AppController+LifecycleConfig.inc::loadConfigFromDisk`.
-- [ ] 11.7 Save to plist in `AppController+LifecycleConfig.inc::writeConfigToDisk`.
+- [ ] 11.2 Delivery popup with three items (Off / Auto / Always); `NSPopUpButton` IBOutlet `coloredNicknamesDeliveryPopup`.
+- [ ] 11.3 "Honor client colors" checkbox; `NSButton` IBOutlet `coloredNicknamesHonorClientColorsCheckbox`.
+- [ ] 11.4 Default Admin Color: `NSColorWell` + hex field + None checkbox. IBOutlets `defaultAdminColorWell`, `defaultAdminColorHexField`, `defaultAdminColorNoneCheckbox`.
+- [ ] 11.5 Default Guest Color: same set of widgets, IBOutlets with `defaultGuest...` names.
+- [ ] 11.6 When delivery is `off`, disable (do not hide) the checkbox and both default-color row widgets. When delivery is `auto` or `always`, enable them.
+- [ ] 11.7 Load from plist in `AppController+LifecycleConfig.inc::loadConfigFromDisk` (reads delivery string, honor-client-colors bool, both default color strings).
+- [ ] 11.8 Save to plist in `AppController+LifecycleConfig.inc::writeConfigToDisk`.
 
-## 12. GUI — Template Popup Reconciliation (follow-up)
+## 12. Access template consolidation (required)
 
-- [ ] 12.1 Replace the GUI's hardcoded `adminAccessTemplate`/`guestAccessTemplate` sets in `AppController+AccountsData.inc:124` / `:132` with calls through to the shared constants in `include/hotline/access.h`. (Prevents drift — see design Q3.)
+- [ ] 12.1 Replace the GUI's hardcoded `adminAccessTemplate`/`guestAccessTemplate` sets in `AppController+AccountsData.inc:124` / `:132` with values derived from the shared constants in `include/hotline/access.h`. The GUI methods may remain as `NSMutableSet` wrappers for Obj-C consumers; their content comes from the C constants.
+- [ ] 12.2 Verify no GUI callsite still hardcodes permission-flag names: `grep -rn 'DownloadFile\|UploadFile\|ChangeUserName\|...' src/gui/ | grep -v access.h` returns only the wrapper methods, not other call sites.
+- [ ] 12.3 Smoke test: edit an account via GUI that currently has a "custom" permission set, verify class detection in the server logs matches expectation.
 
 ## 13. Documentation
 

@@ -52,7 +52,7 @@ The proposal's 4-tier cascade, codified as a single `resolve_nick_color()` helpe
 hl_nick_color_resolve(hl_client_conn *c, hl_config *cfg) -> uint32_t
 
   1. If c->account has YAML `Color` set and valid → use it.
-  2. Else if cfg->colored_nicknames.mode == user_choice
+  2. Else if cfg->colored_nicknames.honor_client_colors
      and c->nick_color is set (not 0) → use c->nick_color.
   3. Else if c->account class matches admin template
      and cfg->colored_nicknames.default_admin_color valid → use it.
@@ -61,22 +61,35 @@ hl_nick_color_resolve(hl_client_conn *c, hl_config *cfg) -> uint32_t
   5. Else → 0xFFFFFFFF (no color).
 ```
 
-### 4. Mode enforcement
+### 4. Delivery gating and client-color handling (two orthogonal axes)
 
-- `mode == off` short-circuits the whole feature. No `DATA_COLOR` is ever parsed (incoming values are discarded) or emitted. `color_aware` remains false for all sessions.
-- `mode == server_only` parses incoming `DATA_COLOR` only to set `color_aware`. The value is recorded on the connection but is never used (cascade step 2 is skipped).
-- `mode == user_choice` runs the full cascade. Per-account YAML colors still win.
+The feature is controlled by two orthogonal config values:
 
-### 5. Account class detection (Option A — exact match)
+**`delivery` — when to emit `DATA_COLOR` in outgoing transactions (fogWraith-aligned names):**
 
-`hl_account_class(account) -> enum { CLASS_ADMIN, CLASS_GUEST, CLASS_CUSTOM }` compares `account.access` bitfield against two hardcoded templates:
+- `delivery == off` short-circuits the whole feature. No `DATA_COLOR` is parsed (incoming values are discarded) or emitted. `color_aware` remains false for all sessions. `honor_client_colors` has no effect.
+- `delivery == auto` (default) emits `DATA_COLOR` only to clients that have opted in by sending `DATA_COLOR` in their own 304. This is fogWraith's recommended default and matches Hotline Navigator's implicit-opt-in expectation.
+- `delivery == always` emits `DATA_COLOR` to every recipient regardless of opt-in. Non-supporting clients ignore the trailing field (fogWraith guarantees this). Useful when an operator wants to force color rollout without relying on client opt-in.
+
+**`honor_client_colors` — whether client-sent `DATA_COLOR` values enter the cascade:**
+
+- `false` (default): client-sent value is used only to mark the session color-aware (for `auto` delivery purposes); the value itself is discarded and cascade step 2 is skipped.
+- `true`: client-sent value becomes tier 2 of the cascade. Per-account YAML still wins (tier 1).
+
+**Resolved — Q1 from the original design.** The `server_only`/`user_choice` naming (original proposal) conflated delivery gating with input sourcing. Splitting into two knobs aligns fogWraith's canonical names where they meet our semantics (`off`/`auto`/`always`) and makes the "honor client colors" decision explicit.
+
+**Resolved — Q2 from the original design.** In `delivery == off` mode, incoming `DATA_COLOR` on 304 is silently ignored — no side effects, no state change. Stripping from the session's cached field list was considered and rejected: there's no observable benefit since we never emit in off mode anyway.
+
+### 5. Account class detection (Option A — exact match, shared-header constants)
+
+`hl_account_class(account) -> enum { CLASS_ADMIN, CLASS_GUEST, CLASS_CUSTOM }` compares `account.access` bitfield against two templates defined as constants in `include/hotline/access.h`:
 
 - `ADMIN_ACCESS_TEMPLATE` — all access bits set (mirrors GUI's `adminAccessTemplate` which returns all flags).
-- `GUEST_ACCESS_TEMPLATE` — the specific subset listed in `src/gui/AppController+AccountsData.inc:124`. The server replicates this list in a single `hl_access_t` constant in `include/hotline/access.h`.
+- `GUEST_ACCESS_TEMPLATE` — the specific subset currently hand-coded in `src/gui/AppController+AccountsData.inc:124`. Task 12 of this change migrates the GUI to reference the shared header, making `include/hotline/access.h` the single source of truth for what "admin" and "guest" mean at the access-bitmask level.
 
 Exact bitfield equality wins. Any divergence → `CLASS_CUSTOM` → no class default color.
 
-Template constants live in `include/hotline/access.h`, are exported, and are the single source of truth shared by the GUI-matcher migration (future work — GUI currently has its own copy).
+**Resolved — Q3 from the original design.** The task that consolidates GUI and server class detection into a shared header is now a required part of this change (task section 12), not a "follow-up". This closes the drift window: by the time this change lands, there is no separate GUI copy to diverge. A useful side effect is that `include/hotline/access.h` becomes authoritative for class identity across the whole codebase, which any future class-based feature (moderator badges, role filters, an explicit `Class` YAML field) can reuse without duplicating the permission-set constants.
 
 ### 6. YAML parsing and round-trip
 
@@ -91,21 +104,26 @@ Template constants live in `include/hotline/access.h`, are exported, and are the
 
 ```yaml
 ColoredNicknames:
-  Mode: user_choice           # off | server_only | user_choice
+  Delivery: auto              # off | auto | always (fogWraith canonical)
+  HonorClientColors: false    # when true, client-sent DATA_COLOR enters the cascade
   DefaultAdminColor: "#FFD700"
   DefaultGuestColor: "#999999"
 ```
 
-- `Mode` defaults to `off` when the section is missing entirely — zero behavioral change for existing deployments.
-- `DefaultAdminColor` / `DefaultGuestColor` default to "no color" (0xFFFFFFFF). Empty string and absent key are treated identically.
-- Invalid hex → `log_warn` + treat as absent.
+- `Delivery` defaults to `off` when the section is missing entirely — zero behavioral change for existing deployments. When the section is present but `Delivery` is absent, default is `auto`.
+- `HonorClientColors` defaults to `false`.
+- `DefaultAdminColor` / `DefaultGuestColor` default to "no color" (`0xFFFFFFFF`). Empty string and absent key are treated identically.
+- Invalid hex → `log_warn` + treat as absent. Unknown `Delivery` value → `log_warn` + `off`. Invalid `HonorClientColors` (non-bool) → `log_warn` + `false`.
 
 ### 8. Transaction handlers
 
-- **`TRAN_SET_CLIENT_USER_INFO` (304)**: parse `DATA_COLOR` field when `mode != off`. Set `c->color_aware = true`. If `mode == user_choice`, store value on `c->nick_color` (including `0xFFFFFFFF` to explicitly clear).
-- **`TRAN_NOTIFY_CHANGE_USER` (301)** and **`TRAN_NOTIFY_CHAT_USER_CHANGE` (117)**: when the receiving client is color-aware and the resolved color isn't `0xFFFFFFFF`, append `DATA_COLOR` to the outgoing field list.
-- **User self-info response** (the one returned immediately after 304): same rules as 301/117.
-- **User list** (`TRAN_GET_USER_NAME_LIST` response): each entry includes `DATA_COLOR` when the receiver is color-aware and the subject's resolved color is set.
+- **`TRAN_SET_CLIENT_USER_INFO` (304)**: when `delivery != off`, parse `DATA_COLOR` field if present. Set `c->color_aware = true`. If `honor_client_colors`, store value on `c->nick_color` (including `0xFFFFFFFF` to mean "explicitly no color"). If `delivery == off`, silently ignore any incoming `DATA_COLOR`.
+- **`TRAN_NOTIFY_CHANGE_USER` (301)** and **`TRAN_NOTIFY_CHAT_USER_CHANGE` (117)**: compute "should emit" per receiver:
+  - `delivery == off`: never emit.
+  - `delivery == auto`: emit only if `receiver->color_aware` AND resolved color isn't `0xFFFFFFFF`.
+  - `delivery == always`: emit if resolved color isn't `0xFFFFFFFF` (regardless of `color_aware`).
+- **User self-info response** (the one returned immediately after 304): same rules as 301/117, with the receiver being the requesting client.
+- **User list** (`TRAN_GET_USER_NAME_LIST` response): for each listed user, apply the same "should emit" calculation per receiver.
 
 ### 9. GUI — Account Editor
 
@@ -121,21 +139,23 @@ Bound to the selected account's `nick_color` on load, written back on save. "Non
 
 A new "Colored Nicknames" disclosure section in the left settings panel, following the Mnemosyne / Encoding pattern:
 
-- Mode popup (Off / Server-assigned only / User choice).
+- Delivery popup (Off / Auto / Always).
+- "Honor client colors" checkbox.
 - Default Admin Color: `NSColorWell` + hex field + None checkbox.
 - Default Guest Color: same.
 
-When mode is `off`, the default-color controls are disabled (not hidden — visible-but-inert keeps the disclosure shape stable).
+When delivery is `off`, the "Honor client colors" checkbox and both default-color rows are disabled (not hidden — visible-but-inert keeps the disclosure shape stable). When delivery is not `off`, all four sub-controls are enabled.
 
 ### 11. Plist persistence
 
-The GUI writes and reads three plist keys (string types):
+The GUI writes and reads four plist keys:
 
-- `ColoredNicknamesMode` — `off` | `server_only` | `user_choice`.
-- `DefaultAdminColor` — `"#RRGGBB"` or `""` (empty means "no color").
+- `ColoredNicknamesDelivery` — string: `off` | `auto` | `always`.
+- `ColoredNicknamesHonorClientColors` — bool.
+- `DefaultAdminColor` — string: `"#RRGGBB"` or `""` (empty means "no color").
 - `DefaultGuestColor` — same.
 
-Missing keys default to `off` / `""` / `""`.
+Missing keys default to `off` / `false` / `""` / `""` respectively.
 
 `loadConfigFromDisk` reads these; `writeConfigToDisk` writes them; the YAML generator translates them into the `ColoredNicknames:` section.
 
@@ -154,15 +174,14 @@ The GUI files under `src/gui/` will diverge in minor ways (deprecated-API shims 
 
 ## Open Questions
 
-- **Q1: Should a per-account Color override the cascade even in `server_only` mode?** Current cascade says yes (per-account YAML always wins). Alternative: `server_only` means "operator is fully in charge" and ignores even per-account YAML. Current design sticks with "per-account always wins" — the operator hand-edits YAML, so it's still operator control, just finer-grained. Revisit if operator feedback suggests otherwise.
+All previously-listed open questions have been resolved and folded into the Decisions section:
 
-- **Q2: Should `mode == off` strip `DATA_COLOR` from incoming 304 fields, or just ignore it?** Current design: silently ignore. Stripping would require rewriting the session's cached user info, which is extra work for no behavioral gain (since we never emit the field in off mode anyway).
-
-- **Q3: Class detection — what happens when GUI template constants drift from server constants?** Single source in `include/hotline/access.h` mitigates this, but the GUI currently has its own copy in `AppController+AccountsData.inc:124`. Task 10 in the task list migrates the GUI to reference the header. Until that's done, the two must be kept in sync by convention.
+- **Q1** (per-account Color overrides in operator-only mode) → resolved by renaming: operator control is now explicit via `delivery` + `honor_client_colors`. See Decision 4.
+- **Q2** (strip vs ignore `DATA_COLOR` in off mode) → resolved as "silently ignore". See Decision 4.
+- **Q3** (GUI/server template drift) → resolved by promoting the shared-header migration (task section 12) to a required part of this change. See Decision 5.
 
 ## Risks
 
 - **Wire format fork.** If a third-party server adopts a different `DATA_COLOR` encoding (e.g., `RGBA` instead of `0x00RRGGBB`), our implementation would be incompatible. Mitigation: we follow fogWraith's published spec exactly; other vendors will either align or fork visibly.
-- **Class-detection surprise.** An admin who loses one permission bit silently loses their class default color. Mitigation: this is documented in the proposal as accepted fragility. Operators who want stable class-based colors can set a per-account YAML `Color:` as a workaround.
-- **GUI/server template drift.** See Q3.
+- **Class-detection surprise.** An admin who loses one permission bit silently loses their class default color. Mitigation: this is documented in the proposal as accepted fragility. Operators who want stable class-based colors can set a per-account YAML `Color:` as a workaround. Shared-header constants (Decision 5) prevent *drift* between GUI and server but don't prevent operator-induced permission edits from changing the computed class.
 - **Plist/YAML desync during GUI save crash.** If the GUI writes plist successfully but crashes before writing YAML, the two diverge until the next GUI save. Mitigation: same risk as all existing plist-backed settings; accepted.

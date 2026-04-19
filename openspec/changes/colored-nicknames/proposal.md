@@ -24,17 +24,30 @@ Modern Hotline clients (notably Hotline Navigator) support colored nicknames via
 Resolve the effective nick color using this priority:
 
 1. **Per-account admin-assigned color** (from `Color` key in account YAML) — always wins
-2. **Client-sent color** (only in "User choice" mode, and only if no admin color is set)
+2. **Client-sent color** (only when `HonorClientColors: true`, and only if no admin color is set)
 3. **Account class default** (from `config.yaml` — admin template or guest template match)
 4. **No color** (`0xFFFFFFFF`)
 
-### Three server modes
+### Two config axes (aligned with fogWraith's mode vocabulary)
 
-| Mode | Config value | Behavior |
-|------|-------------|----------|
-| Off | `off` | Strip all color data; never send `DATA_COLOR` |
-| Server-assigned only | `server_only` | Admin/class colors are sent; client-sent colors are ignored |
-| User choice | `user_choice` | Users may pick colors; admin overrides still win |
+The feature is gated by two orthogonal config knobs. Names on the delivery axis match fogWraith's canonical spec (`off` / `auto` / `always`); the second knob captures the input-sourcing choice fogWraith leaves implementation-defined.
+
+**`Delivery` — when to send `DATA_COLOR` to clients** (per fogWraith):
+
+| Value | Behavior |
+|-------|----------|
+| `off` | Never send `DATA_COLOR` to any client. Incoming values on 304 are discarded. |
+| `auto` (default) | Send `DATA_COLOR` only to clients that have opted in by sending `DATA_COLOR` in their own 304. |
+| `always` | Send `DATA_COLOR` to every client regardless of opt-in. Non-supporting clients ignore the trailing field per the spec. |
+
+**`HonorClientColors` — whether client-sent `DATA_COLOR` values enter the cascade**:
+
+| Value | Behavior |
+|-------|----------|
+| `false` (default) | Client-sent value is used only to mark the session color-aware; the value itself is ignored in the cascade. |
+| `true` | Client-sent value becomes tier 2 of the cascade (used when no per-account YAML color overrides). |
+
+`Delivery: off` short-circuits `HonorClientColors` — no client-sent values are recorded and no outputs are emitted.
 
 ### Account YAML extension
 
@@ -58,7 +71,8 @@ Add a `ColoredNicknames` section to `config.yaml`:
 
 ```yaml
 ColoredNicknames:
-  Mode: user_choice
+  Delivery: auto            # off | auto | always (fogWraith canonical names)
+  HonorClientColors: false  # when true, client-sent DATA_COLOR enters the cascade
   DefaultAdminColor: "#FFD700"
   DefaultGuestColor: "#999999"
 ```
@@ -85,17 +99,19 @@ Add a color control row to the account editor (between Name/File Root and the Te
 
 Add a "Colored Nicknames" disclosure section to the left settings panel:
 
-- **Mode popup** — Off / Server-assigned only / User choice
+- **Delivery popup** — Off / Auto / Always
+- **"Honor client colors" checkbox** — enabled only when delivery is not Off
 - **Default admin color** — NSColorWell + hex field + None checkbox
 - **Default guest color** — NSColorWell + hex field + None checkbox
 
-Default color controls are only visible/enabled when mode is not "Off."
+All controls below the delivery popup are disabled when delivery is Off.
 
 ### GUI — Plist persistence
 
 Store the colored nickname settings in the GUI's plist config (`com.lemoniscate.server.plist`):
 
-- `ColoredNicknamesMode` (string: `off`, `server_only`, `user_choice`)
+- `ColoredNicknamesDelivery` (string: `off`, `auto`, `always`)
+- `ColoredNicknamesHonorClientColors` (bool)
 - `DefaultAdminColor` (string: hex or empty)
 - `DefaultGuestColor` (string: hex or empty)
 
