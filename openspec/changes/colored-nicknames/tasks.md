@@ -70,6 +70,7 @@
 - [ ] 10.4 Wire "None" checkbox: when checked, disable both widgets and clear the stored color. When unchecked, enable widgets and restore/default a color.
 - [ ] 10.5 Load color from selected account in `AppController+AccountsData.inc::populateAccountEditor`. Map `0` → None checked + disabled widgets.
 - [ ] 10.6 Save color to YAML on account save (existing save pipeline). Omit key when None checked.
+- [ ] 10.7 Gate the entire color row on the server's `Delivery` setting. When `Delivery == off`, disable color well, hex field, AND "None" checkbox. When `Delivery` changes at runtime (via Server Settings popup), update the Account Editor widgets reactively without requiring a save. Show a tooltip or inline help indicating colors are disabled at the server level when applicable.
 
 ## 11. GUI — Server Settings Section
 

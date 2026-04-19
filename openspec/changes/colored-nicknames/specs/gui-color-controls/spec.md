@@ -25,6 +25,17 @@ The controls SHALL consist of three widgets on a single row, placed between the 
 - **THEN** the "None" checkbox is pre-checked
 - **AND** the color well and hex field are disabled
 
+#### Scenario: Server delivery off disables the whole account color row
+- **WHEN** the server's `ColoredNicknames.Delivery` is `off`
+- **THEN** the Account Editor's color well, hex field, AND "None" checkbox are all disabled, regardless of the account's individual Color setting
+- **AND** a tooltip or help text indicates that colors are currently disabled at the server level
+
+#### Scenario: Account color row reacts to delivery mode change
+- **WHEN** the operator is viewing the Account Editor
+- **AND** the operator changes the Server Settings `Delivery` from `off` to `auto`
+- **THEN** the Account Editor's color widgets become enabled (or stay enabled per the account's "None" state)
+- **AND** no save action is required for the enable/disable state to update
+
 ### Requirement: Server Settings colored-nicknames section
 
 The GUI SHALL expose a "Colored Nicknames" disclosure section in the left settings panel with delivery selection, client-color input toggle, and class default colors.

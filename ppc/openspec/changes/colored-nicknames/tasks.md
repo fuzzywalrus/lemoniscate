@@ -69,6 +69,7 @@
 - [ ] 10.4 "None" checkbox disables widgets and clears stored color.
 - [ ] 10.5 Load/populate from account in `ppc/src/gui/AppController+AccountsData.inc::populateAccountEditor`.
 - [ ] 10.6 Save on the existing save pipeline. Omit `Color:` key when None.
+- [ ] 10.7 Gate the entire color row on the server's `Delivery` setting. When `Delivery == off`, disable color well, hex field, AND "None" checkbox. When `Delivery` changes at runtime (via Server Settings popup), update the Account Editor widgets reactively without requiring a save. Show a tooltip or inline help indicating colors are disabled at the server level. **Note: PPC implementation is deferred — modern side implements first, PPC follows via in-tree backport per the repo-layout workflow.**
 
 ## 11. GUI — Server Settings Section
 
