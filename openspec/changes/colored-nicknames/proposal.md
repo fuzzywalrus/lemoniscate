@@ -1,3 +1,5 @@
+Sibling: `/ppc/openspec/changes/colored-nicknames/` — PPC-side implementation of the same feature. Scope and wire format match; per the repo-layout spec, cross-codebase work uses coordinated sibling proposals.
+
 ## Why
 
 Modern Hotline clients (notably Hotline Navigator) support colored nicknames via fogWraith's `DATA_COLOR` protocol extension (field 0x0500). Lemoniscate has no support for this — all nicknames are uncolored. Adding server-side color support with admin controls lets server operators assign colors by account class or per-user, giving visual identity to roles (gold for admins, gray for guests, etc.) and enabling compatibility with color-aware clients.
