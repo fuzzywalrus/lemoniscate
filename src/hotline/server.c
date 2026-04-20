@@ -226,31 +226,82 @@ static void log_chat_history_event(hl_client_conn_t *cc, const char *verb)
                            HL_CHAT_FLAG_IS_SERVER_MSG, 0, "", body);
 }
 
-/* Notify all other clients that this user's visible profile changed.
- * Matches Mobius Go behavior for TranNotifyChangeUser payload fields. */
-static void broadcast_notify_change_user(hl_server_t *srv, hl_client_conn_t *cc)
+/* Colored Nicknames: per-receiver predicate for emitting DATA_COLOR.
+ * Returns 1 if the receiver should see the subject's color given the
+ * current delivery mode. Writes the resolved color to out_resolved
+ * when returning 1. */
+static int should_emit_data_color_to(hl_client_conn_t *subject,
+                                     hl_client_conn_t *receiver,
+                                     uint32_t *out_resolved)
 {
-    hl_field_t fields[4];
-    memset(fields, 0, sizeof(fields));
+    if (!subject || !receiver || !subject->server) return 0;
+    const hl_config_t *cfg = &subject->server->config;
+    int delivery = cfg->colored_nicknames.delivery;
+    if (delivery == HL_CN_DELIVERY_OFF) return 0;
 
-    hl_field_new(&fields[0], FIELD_USER_NAME,
-                 (const uint8_t *)cc->user_name, cc->user_name_len);
-    hl_field_new(&fields[1], FIELD_USER_ID, cc->id, 2);
-    hl_field_new(&fields[2], FIELD_USER_ICON_ID, cc->icon, 2);
-    hl_field_new(&fields[3], FIELD_USER_FLAGS, cc->flags, 2);
+    uint32_t resolved = hl_nick_color_resolve(subject, cfg);
+    if (resolved == 0xFFFFFFFFu) return 0;
 
-    hl_transaction_t notify;
-    memset(&notify, 0, sizeof(notify));
-    memcpy(notify.type, TRAN_NOTIFY_CHANGE_USER, 2);
-    notify.fields = fields;
-    notify.field_count = 4;
+    if (delivery == HL_CN_DELIVERY_ALWAYS) {
+        if (out_resolved) *out_resolved = resolved;
+        return 1;
+    }
+    /* HL_CN_DELIVERY_AUTO */
+    if (!receiver->color_aware) return 0;
+    if (out_resolved) *out_resolved = resolved;
+    return 1;
+}
 
-    hl_server_broadcast(srv, cc, &notify);
+/* Notify all other clients that this user's visible profile changed.
+ * Per fogWraith DATA_COLOR: builds a per-receiver transaction so each
+ * recipient sees the correct DATA_COLOR presence/absence for the
+ * configured Delivery mode. Matches Mobius Go behavior for the base
+ * 4-field payload. */
+void hl_server_broadcast_user_change(hl_server_t *srv, hl_client_conn_t *cc)
+{
+    int count = 0;
+    hl_client_conn_t **clients = srv->client_mgr->vt->list(srv->client_mgr, &count);
+    if (!clients) return;
 
     int i;
-    for (i = 0; i < 4; i++) {
-        hl_field_free(&fields[i]);
+    for (i = 0; i < count; i++) {
+        hl_client_conn_t *receiver = clients[i];
+        if (hl_type_eq(receiver->id, cc->id)) continue;
+
+        uint32_t resolved = 0xFFFFFFFFu;
+        int emit_color = should_emit_data_color_to(cc, receiver, &resolved);
+        uint16_t nfields = emit_color ? 5 : 4;
+
+        hl_field_t *fields = (hl_field_t *)calloc(nfields, sizeof(hl_field_t));
+        if (!fields) continue;
+        hl_field_new(&fields[0], FIELD_USER_NAME,
+                     (const uint8_t *)cc->user_name, cc->user_name_len);
+        hl_field_new(&fields[1], FIELD_USER_ID, cc->id, 2);
+        hl_field_new(&fields[2], FIELD_USER_ICON_ID, cc->icon, 2);
+        hl_field_new(&fields[3], FIELD_USER_FLAGS, cc->flags, 2);
+        if (emit_color) {
+            uint8_t color_be[4] = {
+                (uint8_t)((resolved >> 24) & 0xFF),
+                (uint8_t)((resolved >> 16) & 0xFF),
+                (uint8_t)((resolved >>  8) & 0xFF),
+                (uint8_t)((resolved >>  0) & 0xFF)
+            };
+            hl_field_new(&fields[4], HL_FIELD_USER_COLOR, color_be, 4);
+        }
+
+        hl_transaction_t notify;
+        memset(&notify, 0, sizeof(notify));
+        memcpy(notify.type, TRAN_NOTIFY_CHANGE_USER, 2);
+        notify.fields = fields;
+        notify.field_count = nfields;
+        memcpy(notify.client_id, receiver->id, 2);
+        hl_server_send_to_client(receiver, &notify);
+
+        uint16_t f;
+        for (f = 0; f < nfields; f++) hl_field_free(&fields[f]);
+        free(fields);
     }
+    free(clients);
 }
 
 /* --- Rate limiting (token bucket) --- */
@@ -556,7 +607,7 @@ static void process_client_data(hl_server_t *srv, hl_client_conn_t *cc, hl_event
                     cc->idle_time = 0;
                     if (hl_user_flags_is_set(cc->flags, HL_USER_FLAG_AWAY)) {
                         hl_user_flags_set(cc->flags, HL_USER_FLAG_AWAY, 0);
-                        broadcast_notify_change_user(srv, cc);
+                        hl_server_broadcast_user_change(srv, cc);
                     }
                     pthread_rwlock_unlock(&cc->mu);
                 }
@@ -647,7 +698,7 @@ static void process_client_data(hl_server_t *srv, hl_client_conn_t *cc, hl_event
                 if (hl_user_flags_is_set(cc->flags, HL_USER_FLAG_AWAY)) {
                     hl_user_flags_set(cc->flags, HL_USER_FLAG_AWAY, 0);
                     /* Notify others that user is no longer away. */
-                    broadcast_notify_change_user(srv, cc);
+                    hl_server_broadcast_user_change(srv, cc);
                 }
                 pthread_rwlock_unlock(&cc->mu);
             }
@@ -1337,7 +1388,7 @@ static void handle_new_connection(hl_server_t *srv, int client_fd,
      * nickname was already provided in TranLogin. Newer clients are
      * announced on TranAgreed after sending user info/options. */
     if (f_name && f_name->data_len > 0) {
-        broadcast_notify_change_user(srv, cc);
+        hl_server_broadcast_user_change(srv, cc);
     }
 
     /* Optional sign-on entry in chat history (gated on ChatHistoryLogJoins).
@@ -2206,7 +2257,7 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                             !hl_user_flags_is_set(cc->flags, HL_USER_FLAG_AWAY)) {
                             hl_user_flags_set(cc->flags, HL_USER_FLAG_AWAY, 1);
                             /* Notify others that user is now away. */
-                            broadcast_notify_change_user(srv, cc);
+                            hl_server_broadcast_user_change(srv, cc);
                         }
                         pthread_rwlock_unlock(&cc->mu);
                     }

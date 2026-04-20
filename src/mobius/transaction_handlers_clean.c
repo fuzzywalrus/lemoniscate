@@ -80,6 +80,11 @@ void hl_build_notify_change_user_free(hl_transaction_t *notify)
     }
 }
 
+/* Broadcast-user-change is provided by src/hotline/server.c as
+ * hl_server_broadcast_user_change (declared in hotline/server.h). That
+ * function applies the ColoredNicknames per-receiver DATA_COLOR policy
+ * for us. */
+
 /* ====================================================================
  * GROUP A: SIMPLE HANDLERS
  * ==================================================================== */
@@ -128,11 +133,10 @@ static int handle_agreed(hl_client_conn_t *cc, const hl_transaction_t *req,
         cc->auto_reply_len = len;
     }
 
-    /* Notify all other clients of this user's presence */
-    hl_transaction_t notify;
-    hl_build_notify_change_user(cc, &notify);
-    hl_server_broadcast(cc->server, cc, &notify);
-    hl_build_notify_change_user_free(&notify);
+    /* Notify all other clients of this user's presence (per-receiver
+     * to carry DATA_COLOR correctly under the ColoredNicknames delivery
+     * mode). */
+    hl_server_broadcast_user_change(cc->server, cc);
 
     /* Send server banner notification with banner type */
     if (cc->server->banner && cc->server->banner_len > 0) {
@@ -179,11 +183,27 @@ static int handle_set_client_user_info(hl_client_conn_t *cc, const hl_transactio
         memcpy(cc->icon, f_icon->data + (f_icon->data_len - 2), 2);
     }
 
-    /* Broadcast change to all clients */
-    hl_transaction_t notify;
-    hl_build_notify_change_user(cc, &notify);
-    hl_server_broadcast(cc->server, cc, &notify);
-    hl_build_notify_change_user_free(&notify);
+    /* Colored Nicknames (fogWraith DATA_COLOR): parse DATA_COLOR field
+     * when delivery != off. Field present marks the session color-aware
+     * (opt-in for fogWraith's "auto" delivery mode). When honor_client_colors
+     * is set, also store the value for cascade tier 2. */
+    if (cc->server->config.colored_nicknames.delivery != HL_CN_DELIVERY_OFF) {
+        const hl_field_t *f_color = hl_transaction_get_field(req, HL_FIELD_USER_COLOR);
+        if (f_color && f_color->data_len >= 4) {
+            cc->color_aware = 1;
+            if (cc->server->config.colored_nicknames.honor_client_colors) {
+                uint32_t v = ((uint32_t)f_color->data[0] << 24) |
+                             ((uint32_t)f_color->data[1] << 16) |
+                             ((uint32_t)f_color->data[2] << 8)  |
+                             ((uint32_t)f_color->data[3]);
+                cc->nick_color = v;
+            }
+        }
+    }
+
+    /* Broadcast change to all clients (per-receiver to carry DATA_COLOR
+     * correctly under the ColoredNicknames delivery mode). */
+    hl_server_broadcast_user_change(cc->server, cc);
 
     *out = NULL;
     *out_count = 0;
@@ -407,6 +427,7 @@ static int handle_get_user_name_list(hl_client_conn_t *cc, const hl_transaction_
         fields = (hl_field_t *)calloc((size_t)client_count, sizeof(hl_field_t));
         if (fields) {
             int i;
+            int cn_delivery = srv->config.colored_nicknames.delivery;
             for (i = 0; i < client_count; i++) {
                 hl_user_t u;
                 memcpy(u.id, clients[i]->id, 2);
@@ -419,6 +440,30 @@ static int handle_get_user_name_list(hl_client_conn_t *cc, const hl_transaction_
                 uint8_t buf[512];
                 int written = hl_user_serialize(&u, buf, sizeof(buf));
                 if (written > 0) {
+                    /* Colored Nicknames: append the resolved color as a
+                     * trailing 4 bytes to the user payload per fogWraith
+                     * spec. Inclusion decision mirrors 301/117 delivery:
+                     *   off    — never
+                     *   auto   — only when the requester is color-aware
+                     *   always — whenever the subject has a resolved color
+                     * Legacy receivers read the fixed 8+N bytes and ignore
+                     * the tail.
+                     */
+                    if (cn_delivery != HL_CN_DELIVERY_OFF &&
+                        (written + 4) <= (int)sizeof(buf)) {
+                        int emit = (cn_delivery == HL_CN_DELIVERY_ALWAYS) ||
+                                   (cn_delivery == HL_CN_DELIVERY_AUTO && cc->color_aware);
+                        if (emit) {
+                            uint32_t resolved = hl_nick_color_resolve(clients[i], &srv->config);
+                            if (resolved != 0xFFFFFFFFu) {
+                                buf[written + 0] = (uint8_t)((resolved >> 24) & 0xFF);
+                                buf[written + 1] = (uint8_t)((resolved >> 16) & 0xFF);
+                                buf[written + 2] = (uint8_t)((resolved >>  8) & 0xFF);
+                                buf[written + 3] = (uint8_t)((resolved >>  0) & 0xFF);
+                                written += 4;
+                            }
+                        }
+                    }
                     hl_field_new(&fields[field_count], FIELD_USERNAME_WITH_INFO,
                                  buf, (uint16_t)written);
                     field_count++;
@@ -668,28 +713,56 @@ static int handle_join_chat(hl_client_conn_t *cc, const hl_transaction_t *req,
     hl_client_conn_t **members = cc->server->chat_mgr->vt->members(
         cc->server->chat_mgr, chat_id, &member_count);
     if (members) {
-        hl_field_t nf[3];
-        int nfc = 0;
-        memset(nf, 0, sizeof(nf));
-        hl_field_new(&nf[nfc++], FIELD_CHAT_ID, chat_id, 4);
-        hl_field_new(&nf[nfc++], FIELD_USER_ID, cc->id, 2);
-        hl_field_new(&nf[nfc++], FIELD_USER_ICON_ID, cc->icon, 2);
-
-        hl_transaction_t notify;
-        memset(&notify, 0, sizeof(notify));
-        memcpy(notify.type, TRAN_NOTIFY_CHAT_CHANGE_USER, 2);
-        notify.fields = nf;
-        notify.field_count = (uint16_t)nfc;
+        /* Colored Nicknames: 117 is per-receiver because DATA_COLOR
+         * inclusion depends on the recipient's opt-in state. Rebuild
+         * the field list for each receiver; legacy receivers get the
+         * original 3-field payload, color-aware get an additional
+         * DATA_COLOR field. */
+        int cn_delivery = cc->server->config.colored_nicknames.delivery;
+        uint32_t resolved_color = 0xFFFFFFFFu;
+        int subject_has_color = 0;
+        if (cn_delivery != HL_CN_DELIVERY_OFF) {
+            resolved_color = hl_nick_color_resolve(cc, &cc->server->config);
+            subject_has_color = (resolved_color != 0xFFFFFFFFu);
+        }
 
         int j;
         for (j = 0; j < member_count; j++) {
-            if (!hl_type_eq(members[j]->id, cc->id)) {
-                hl_server_send_to_client(members[j], &notify);
+            if (hl_type_eq(members[j]->id, cc->id)) continue;
+
+            int emit_color = 0;
+            if (subject_has_color) {
+                if (cn_delivery == HL_CN_DELIVERY_ALWAYS) emit_color = 1;
+                else if (cn_delivery == HL_CN_DELIVERY_AUTO && members[j]->color_aware) emit_color = 1;
             }
+
+            uint16_t nfc = emit_color ? 4 : 3;
+            hl_field_t *nf = (hl_field_t *)calloc(nfc, sizeof(hl_field_t));
+            if (!nf) continue;
+            hl_field_new(&nf[0], FIELD_CHAT_ID, chat_id, 4);
+            hl_field_new(&nf[1], FIELD_USER_ID, cc->id, 2);
+            hl_field_new(&nf[2], FIELD_USER_ICON_ID, cc->icon, 2);
+            if (emit_color) {
+                uint8_t color_be[4] = {
+                    (uint8_t)((resolved_color >> 24) & 0xFF),
+                    (uint8_t)((resolved_color >> 16) & 0xFF),
+                    (uint8_t)((resolved_color >>  8) & 0xFF),
+                    (uint8_t)((resolved_color >>  0) & 0xFF)
+                };
+                hl_field_new(&nf[3], HL_FIELD_USER_COLOR, color_be, 4);
+            }
+
+            hl_transaction_t notify;
+            memset(&notify, 0, sizeof(notify));
+            memcpy(notify.type, TRAN_NOTIFY_CHAT_CHANGE_USER, 2);
+            notify.fields = nf;
+            notify.field_count = nfc;
+            hl_server_send_to_client(members[j], &notify);
+
+            uint16_t k;
+            for (k = 0; k < nfc; k++) hl_field_free(&nf[k]);
+            free(nf);
         }
-        notify.fields = NULL;
-        int k;
-        for (k = 0; k < nfc; k++) hl_field_free(&nf[k]);
         free(members);
     }
 

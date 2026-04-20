@@ -125,6 +125,11 @@ void hl_server_broadcast(hl_server_t *srv, hl_client_conn_t *sender,
 /* Send a transaction to a specific client. */
 void hl_server_send_to_client(hl_client_conn_t *cc, hl_transaction_t *t);
 
+/* Broadcast a TranNotifyChangeUser (301) for the given client to all
+ * other clients, with per-receiver DATA_COLOR inclusion under the
+ * ColoredNicknames Delivery mode. See src/hotline/server.c. */
+void hl_server_broadcast_user_change(hl_server_t *srv, hl_client_conn_t *cc);
+
 /* --- Rate limiting --- */
 
 /* Check if a connection from this IP is allowed.
