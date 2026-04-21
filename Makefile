@@ -274,8 +274,11 @@ endif
 %.o: %.m
 	$(CC) $(OBJCFLAGS) -c -o $@ $<
 
-# GUI binary (links against AppKit — macOS only)
-gui: $(GUI_OBJC_OBJS)
+# GUI binary (links against AppKit — macOS only). Also links a small
+# slice of the server's C library (src/hotline/access.o) so the GUI can
+# reuse the canonical access-bit name/template helpers rather than
+# duplicating them in Objective-C.
+gui: $(GUI_OBJC_OBJS) src/hotline/access.o
 	$(CC) $(OBJCFLAGS) -o lemoniscate-gui $^ $(GUI_LDFLAGS)
 	@echo "Built lemoniscate-gui"
 

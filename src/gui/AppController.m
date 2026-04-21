@@ -8,6 +8,7 @@
  */
 
 #import "AppController.h"
+#include "hotline/access.h"
 
 /* ===== FlippedView =====
  * NSView subclass with flipped coords so (0,0) is top-left. */

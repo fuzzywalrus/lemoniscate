@@ -127,4 +127,20 @@ typedef enum {
  */
 hl_account_class_t hl_access_classify(const hl_access_bitmap_t access);
 
+/*
+ * hl_access_bit_name - Return the canonical YAML permission name for a
+ * given bit index, e.g. hl_access_bit_name(2) → "DownloadFile". Returns
+ * NULL if the bit is not in the canonical map (e.g. unassigned bits).
+ *
+ * Shared source of truth between the server's YAML account manager and
+ * the GUI's permission editor (task 12 of colored-nicknames).
+ */
+const char *hl_access_bit_name(int bit);
+
+/*
+ * hl_access_name_to_bit - Inverse of hl_access_bit_name. Returns the
+ * bit index for a given YAML permission name, or -1 if unknown.
+ */
+int hl_access_name_to_bit(const char *name);
+
 #endif /* HOTLINE_ACCESS_H */

@@ -19,55 +19,9 @@
 
 #define MAX_ACCOUNTS 256
 
-/* Access flag name -> bit index mapping (must match Go accessMap) */
-typedef struct {
-    const char *name;
-    int         bit;
-} access_flag_map_t;
-
-static const access_flag_map_t access_flags[] = {
-    {"DeleteFile",           ACCESS_DELETE_FILE},
-    {"UploadFile",           ACCESS_UPLOAD_FILE},
-    {"DownloadFile",         ACCESS_DOWNLOAD_FILE},
-    {"RenameFile",           ACCESS_RENAME_FILE},
-    {"MoveFile",             ACCESS_MOVE_FILE},
-    {"CreateFolder",         ACCESS_CREATE_FOLDER},
-    {"DeleteFolder",         ACCESS_DELETE_FOLDER},
-    {"RenameFolder",         ACCESS_RENAME_FOLDER},
-    {"MoveFolder",           ACCESS_MOVE_FOLDER},
-    {"ReadChat",             ACCESS_READ_CHAT},
-    {"SendChat",             ACCESS_SEND_CHAT},
-    {"OpenChat",             ACCESS_OPEN_CHAT},
-    {"CloseChat",            ACCESS_CLOSE_CHAT},
-    {"ShowInList",           ACCESS_SHOW_IN_LIST},
-    {"CreateUser",           ACCESS_CREATE_USER},
-    {"DeleteUser",           ACCESS_DELETE_USER},
-    {"OpenUser",             ACCESS_OPEN_USER},
-    {"ModifyUser",           ACCESS_MODIFY_USER},
-    {"ChangeOwnPass",        ACCESS_CHANGE_OWN_PASS},
-    {"NewsReadArt",          ACCESS_NEWS_READ_ART},
-    {"NewsPostArt",          ACCESS_NEWS_POST_ART},
-    {"DisconnectUser",       ACCESS_DISCON_USER},
-    {"CannotBeDisconnected", ACCESS_CANNOT_BE_DISCON},
-    {"GetClientInfo",        ACCESS_GET_CLIENT_INFO},
-    {"UploadAnywhere",       ACCESS_UPLOAD_ANYWHERE},
-    {"AnyName",              ACCESS_ANY_NAME},
-    {"NoAgreement",          ACCESS_NO_AGREEMENT},
-    {"SetFileComment",       ACCESS_SET_FILE_COMMENT},
-    {"SetFolderComment",     ACCESS_SET_FOLDER_COMMENT},
-    {"ViewDropBoxes",        ACCESS_VIEW_DROP_BOXES},
-    {"MakeAlias",            ACCESS_MAKE_ALIAS},
-    {"Broadcast",            ACCESS_BROADCAST},
-    {"NewsDeleteArt",        ACCESS_NEWS_DELETE_ART},
-    {"NewsCreateCat",        ACCESS_NEWS_CREATE_CAT},
-    {"NewsDeleteCat",        ACCESS_NEWS_DELETE_CAT},
-    {"NewsCreateFldr",       ACCESS_NEWS_CREATE_FLDR},
-    {"NewsDeleteFldr",       ACCESS_NEWS_DELETE_FLDR},
-    {"UploadFolder",         ACCESS_UPLOAD_FOLDER},
-    {"DownloadFolder",       ACCESS_DOWNLOAD_FOLDER},
-    {"SendPrivMsg",          ACCESS_SEND_PRIV_MSG},
-    {NULL, 0}
-};
+/* The access flag name → bit mapping now lives in src/hotline/access.c.
+ * This file uses hl_access_bit_name() and hl_access_name_to_bit() for
+ * lookups in both directions. */
 
 /* Concrete YAML account manager */
 typedef struct {
@@ -128,13 +82,8 @@ static int parse_account_file(hl_account_t *acct, const char *filepath)
                 } else {
                     /* Set access bit if value is "true" */
                     if (strcmp(val, "true") == 0) {
-                        const access_flag_map_t *af;
-                        for (af = access_flags; af->name; af++) {
-                            if (strcmp(af->name, current_key) == 0) {
-                                hl_access_set(acct->access, af->bit);
-                                break;
-                            }
-                        }
+                        int bit = hl_access_name_to_bit(current_key);
+                        if (bit >= 0) hl_access_set(acct->access, bit);
                     }
                     current_key[0] = '\0';
                 }
@@ -213,10 +162,13 @@ static int write_account_yaml(const char *dir, const hl_account_t *acct)
     fprintf(f, "Password: \"%s\"\n", acct->password);
     fprintf(f, "Access:\n");
 
-    const access_flag_map_t *af;
-    for (af = access_flags; af->name; af++) {
-        if (hl_access_is_set(acct->access, af->bit)) {
-            fprintf(f, "  %s: true\n", af->name);
+    /* Iterate every possible bit (0..63) and emit any name-mapped bit
+     * that's currently set. Uses the shared access.c map. */
+    int bit;
+    for (bit = 0; bit < 64; bit++) {
+        if (hl_access_is_set(acct->access, bit)) {
+            const char *name = hl_access_bit_name(bit);
+            if (name) fprintf(f, "  %s: true\n", name);
         }
     }
 

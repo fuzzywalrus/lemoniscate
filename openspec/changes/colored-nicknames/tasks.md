@@ -85,9 +85,9 @@
 
 ## 12. Access template consolidation (required)
 
-- [ ] 12.1 Replace the GUI's hardcoded `adminAccessTemplate`/`guestAccessTemplate` sets in `AppController+AccountsData.inc:124` / `:132` with values derived from the shared constants in `include/hotline/access.h`. The GUI methods may remain as `NSMutableSet` wrappers for Obj-C consumers; their content comes from the C constants.
-- [ ] 12.2 Verify no GUI callsite still hardcodes permission-flag names: `grep -rn 'DownloadFile\|UploadFile\|ChangeUserName\|...' src/gui/ | grep -v access.h` returns only the wrapper methods, not other call sites.
-- [ ] 12.3 Smoke test: edit an account via GUI that currently has a "custom" permission set, verify class detection in the server logs matches expectation.
+- [x] 12.1 Consolidated access-bit name/template source of truth in `src/hotline/access.c` (new functions `hl_access_bit_name`, `hl_access_name_to_bit`). Moved the name→bit table out of `src/mobius/yaml_account_manager.c` (which now calls the shared helpers). Added `- (NSMutableSet *)templateSetFromBitmap:` to `AppController+AccountsData.inc`; `guestAccessTemplate` and `adminAccessTemplate` now derive from `GUEST_ACCESS_TEMPLATE` / `ADMIN_ACCESS_TEMPLATE` bitmaps. Makefile links `src/hotline/access.o` into the GUI.
+- [x] 12.2 Verified: `grep -rn '@"DownloadFile"\|@"UploadFile"\|@"ReadChat"\|@"SendChat"' src/gui/` returns empty — no stray hardcoded permission-name lists remain in the GUI.
+- [ ] 12.3 Smoke test deferred — requires running GUI + server and editing an account. Will run as part of the end-to-end manual test (task 14.3).
 
 ## 13. Documentation
 

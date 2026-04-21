@@ -121,23 +121,33 @@
         nil];
 }
 
+/* Both templates now derive from the canonical bitmaps in
+ * include/hotline/access.h (GUEST_ACCESS_TEMPLATE, ADMIN_ACCESS_TEMPLATE).
+ * The bit → YAML name lookup comes from src/hotline/access.c via
+ * hl_access_bit_name. This ensures the GUI's template popup stays in
+ * perfect sync with the server's hl_access_classify() — edits to one
+ * side automatically propagate to the other. */
+- (NSMutableSet *)templateSetFromBitmap:(const hl_access_bitmap_t)bitmap
+{
+    NSMutableSet *result = [NSMutableSet set];
+    int bit;
+    for (bit = 0; bit < 64; bit++) {
+        if (hl_access_is_set(bitmap, bit)) {
+            const char *name = hl_access_bit_name(bit);
+            if (name) [result addObject:[NSString stringWithUTF8String:name]];
+        }
+    }
+    return result;
+}
+
 - (NSMutableSet *)guestAccessTemplate
 {
-    return [NSMutableSet setWithArray:[NSArray arrayWithObjects:
-        @"DownloadFile", @"DownloadFolder", @"ReadChat", @"SendChat",
-        @"OpenChat", @"ShowInList", @"NewsReadArt", @"NewsPostArt",
-        @"GetClientInfo", @"SendPrivMsg", nil]];
+    return [self templateSetFromBitmap:GUEST_ACCESS_TEMPLATE];
 }
 
 - (NSMutableSet *)adminAccessTemplate
 {
-    NSMutableSet *all = [NSMutableSet set];
-    unsigned i;
-    for (i = 0; i < kAccountPermissionDefCount; i++) {
-        NSString *key = [NSString stringWithUTF8String:kAccountPermissionDefs[i].key];
-        [all addObject:key];
-    }
-    return all;
+    return [self templateSetFromBitmap:ADMIN_ACCESS_TEMPLATE];
 }
 
 - (void)rebuildAccountPermissionUI
