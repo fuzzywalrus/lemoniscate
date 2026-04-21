@@ -983,6 +983,129 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [hdr release]; [c release];
     }
 
+    /* ===== Colored Nicknames (fogWraith DATA_COLOR extension) ===== */
+    {
+        NSButton *hdr = makeDisclosureHeader(@"Colored Nicknames", self, sectionIdx++);
+        [hdr setFrame:NSMakeRect(SECTION_MARGIN, 0, secWidth, DISC_HEADER_H)];
+        [doc addSubview:hdr];
+
+        FlippedView *c = [[FlippedView alloc]
+            initWithFrame:NSMakeRect(0, 0, contentWidth, 200)];
+        float iy = 0;
+
+        /* Delivery popup (Off / Auto / Always — fogWraith canonical names) */
+        {
+            NSTextField *lbl = makeLabel(@"Delivery:", 11.0, NO);
+            [lbl setAlignment:NSTextAlignmentRight];
+            [lbl setFrame:NSMakeRect(6, iy + 2, LABEL_WIDTH - 12, 17)];
+            [c addSubview:lbl];
+            [lbl release];
+
+            _coloredNicknamesDeliveryPopup = [[NSPopUpButton alloc]
+                initWithFrame:NSMakeRect(LABEL_WIDTH - 4, iy - 2, 140, 24)
+                pullsDown:NO];
+            [_coloredNicknamesDeliveryPopup addItemWithTitle:@"Off"];
+            [_coloredNicknamesDeliveryPopup addItemWithTitle:@"Auto"];
+            [_coloredNicknamesDeliveryPopup addItemWithTitle:@"Always"];
+            [_coloredNicknamesDeliveryPopup setTarget:self];
+            [_coloredNicknamesDeliveryPopup setAction:@selector(coloredNicknamesDeliveryChanged:)];
+            [_coloredNicknamesDeliveryPopup setToolTip:
+                @"Off: never send DATA_COLOR. Auto: only to clients that opt in by sending DATA_COLOR in their own 304. Always: to every client (legacy clients ignore the extra field per fogWraith spec)."];
+            [c addSubview:_coloredNicknamesDeliveryPopup];
+            iy += 28;
+        }
+
+        /* Honor client colors checkbox */
+        _coloredNicknamesHonorCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_coloredNicknamesHonorCheckbox setButtonType:NSButtonTypeSwitch];
+        [_coloredNicknamesHonorCheckbox setTitle:@"Honor Client-Set Colors"];
+        [_coloredNicknamesHonorCheckbox setState:NSControlStateValueOff];
+        [_coloredNicknamesHonorCheckbox setTarget:self];
+        [_coloredNicknamesHonorCheckbox setAction:@selector(coloredNicknamesHonorToggled:)];
+        iy = addCheckboxWithHelp(c, _coloredNicknamesHonorCheckbox, iy,
+            @"When on, a client's own DATA_COLOR (sent in TranSetClientUserInfo) enters the cascade as tier 2. When off, client values are used only to mark the session color-aware; per-account YAML and class defaults still apply.", self);
+
+        /* Default Admin Color row: well + hex + None checkbox */
+        {
+            NSTextField *lbl = makeLabel(@"Default Admin:", 11.0, NO);
+            [lbl setAlignment:NSTextAlignmentRight];
+            [lbl setFrame:NSMakeRect(6, iy + 2, LABEL_WIDTH - 12, 17)];
+            [c addSubview:lbl];
+            [lbl release];
+
+            float cx = LABEL_WIDTH - 4;
+            _defaultAdminColorWell = [[NSColorWell alloc]
+                initWithFrame:NSMakeRect(cx, iy, 44, 22)];
+            [_defaultAdminColorWell setTarget:self];
+            [_defaultAdminColorWell setAction:@selector(defaultAdminColorWellChanged:)];
+            [c addSubview:_defaultAdminColorWell];
+            cx += 48;
+
+            _defaultAdminColorHexField = makeEditField(80);
+            [_defaultAdminColorHexField setFrame:NSMakeRect(cx, iy, 80, 22)];
+            [_defaultAdminColorHexField setTarget:self];
+            [_defaultAdminColorHexField setAction:@selector(defaultAdminColorHexChanged:)];
+            [c addSubview:_defaultAdminColorHexField];
+            cx += 84;
+
+            _defaultAdminColorNoneCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+            [_defaultAdminColorNoneCheckbox setButtonType:NSButtonTypeSwitch];
+            [_defaultAdminColorNoneCheckbox setTitle:@"None"];
+            [_defaultAdminColorNoneCheckbox setFont:[NSFont systemFontOfSize:11]];
+            [_defaultAdminColorNoneCheckbox setState:NSControlStateValueOn];
+            [_defaultAdminColorNoneCheckbox setTarget:self];
+            [_defaultAdminColorNoneCheckbox setAction:@selector(defaultAdminColorNoneToggled:)];
+            [_defaultAdminColorNoneCheckbox sizeToFit];
+            [_defaultAdminColorNoneCheckbox setFrame:NSMakeRect(cx, iy + 3, 60, 18)];
+            [c addSubview:_defaultAdminColorNoneCheckbox];
+
+            iy += 26;
+        }
+
+        /* Default Guest Color row */
+        {
+            NSTextField *lbl = makeLabel(@"Default Guest:", 11.0, NO);
+            [lbl setAlignment:NSTextAlignmentRight];
+            [lbl setFrame:NSMakeRect(6, iy + 2, LABEL_WIDTH - 12, 17)];
+            [c addSubview:lbl];
+            [lbl release];
+
+            float cx = LABEL_WIDTH - 4;
+            _defaultGuestColorWell = [[NSColorWell alloc]
+                initWithFrame:NSMakeRect(cx, iy, 44, 22)];
+            [_defaultGuestColorWell setTarget:self];
+            [_defaultGuestColorWell setAction:@selector(defaultGuestColorWellChanged:)];
+            [c addSubview:_defaultGuestColorWell];
+            cx += 48;
+
+            _defaultGuestColorHexField = makeEditField(80);
+            [_defaultGuestColorHexField setFrame:NSMakeRect(cx, iy, 80, 22)];
+            [_defaultGuestColorHexField setTarget:self];
+            [_defaultGuestColorHexField setAction:@selector(defaultGuestColorHexChanged:)];
+            [c addSubview:_defaultGuestColorHexField];
+            cx += 84;
+
+            _defaultGuestColorNoneCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+            [_defaultGuestColorNoneCheckbox setButtonType:NSButtonTypeSwitch];
+            [_defaultGuestColorNoneCheckbox setTitle:@"None"];
+            [_defaultGuestColorNoneCheckbox setFont:[NSFont systemFontOfSize:11]];
+            [_defaultGuestColorNoneCheckbox setState:NSControlStateValueOn];
+            [_defaultGuestColorNoneCheckbox setTarget:self];
+            [_defaultGuestColorNoneCheckbox setAction:@selector(defaultGuestColorNoneToggled:)];
+            [_defaultGuestColorNoneCheckbox sizeToFit];
+            [_defaultGuestColorNoneCheckbox setFrame:NSMakeRect(cx, iy + 3, 60, 18)];
+            [c addSubview:_defaultGuestColorNoneCheckbox];
+
+            iy += 30;
+        }
+
+        float contentH = iy;
+        [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
+        [doc addSubview:c];
+        [self registerDisclosureSection:hdr content:c contentHeight:contentH];
+        [hdr release]; [c release];
+    }
+
     /* ===== Limits ===== */
     {
         NSButton *hdr = makeDisclosureHeader(@"Limits", self, sectionIdx++);

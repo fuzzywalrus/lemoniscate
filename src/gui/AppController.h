@@ -177,6 +177,19 @@
     NSTextField *_accountColorLabel;
     uint32_t     _accountColorValue;     /* 0 = None/absent, else 0x00RRGGBB */
     BOOL         _accountColorSyncGuard; /* prevents well↔hex feedback loops */
+    /* Colored Nicknames — Server Settings disclosure (task 11). */
+    NSPopUpButton *_coloredNicknamesDeliveryPopup;
+    NSButton      *_coloredNicknamesHonorCheckbox;
+    NSColorWell   *_defaultAdminColorWell;
+    NSTextField   *_defaultAdminColorHexField;
+    NSButton      *_defaultAdminColorNoneCheckbox;
+    NSColorWell   *_defaultGuestColorWell;
+    NSTextField   *_defaultGuestColorHexField;
+    NSButton      *_defaultGuestColorNoneCheckbox;
+    uint32_t       _defaultAdminColorValue;
+    uint32_t       _defaultGuestColorValue;
+    BOOL           _defaultAdminColorSyncGuard;
+    BOOL           _defaultGuestColorSyncGuard;
     NSString *_selectedAccountLogin;
     NSString *_selectedAccountPassword;
 

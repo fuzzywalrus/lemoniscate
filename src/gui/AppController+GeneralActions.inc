@@ -1164,3 +1164,157 @@ static int pollingIntervalCount = 8;
     [_mnemosyneIndexNewsCheckbox setEnabled:enabled];
     [_mnemosyneIndexMsgboardCheckbox setEnabled:enabled];
 }
+
+/* ==================================================================
+ * Colored Nicknames — Server Settings actions (task 11)
+ * ================================================================== */
+
+/* Small helper: parse a hex color string into a uint32_t. Empty/invalid
+ * returns 0 (absent). */
+static uint32_t parseHex6(NSString *hex)
+{
+    NSString *h = [hex stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceCharacterSet]];
+    if ([h hasPrefix:@"#"]) h = [h substringFromIndex:1];
+    if ([h length] != 6) return 0;
+    unsigned int v = 0;
+    NSScanner *sc = [NSScanner scannerWithString:h];
+    if (![sc scanHexInt:&v]) return 0;
+    return v & 0x00FFFFFFu;
+}
+
+- (void)applyColoredNicknamesEnableState
+{
+    /* Called on delivery popup change and at load time. Updates sub-control
+     * enabled/disabled state and also reaches into the Account Editor color
+     * row (task 10.7 — reactive gating). */
+    NSInteger idx = [_coloredNicknamesDeliveryPopup indexOfSelectedItem];
+    BOOL deliveryOn = (idx > 0); /* 0 = Off, 1 = Auto, 2 = Always */
+
+    [_coloredNicknamesHonorCheckbox setEnabled:deliveryOn];
+
+    BOOL adminEditable = deliveryOn &&
+        ([_defaultAdminColorNoneCheckbox state] == NSControlStateValueOff);
+    [_defaultAdminColorNoneCheckbox setEnabled:deliveryOn];
+    [_defaultAdminColorWell setEnabled:adminEditable];
+    [_defaultAdminColorHexField setEnabled:adminEditable];
+
+    BOOL guestEditable = deliveryOn &&
+        ([_defaultGuestColorNoneCheckbox state] == NSControlStateValueOff);
+    [_defaultGuestColorNoneCheckbox setEnabled:deliveryOn];
+    [_defaultGuestColorWell setEnabled:guestEditable];
+    [_defaultGuestColorHexField setEnabled:guestEditable];
+
+    /* Task 10.7: Account Editor color row is gated on server Delivery. */
+    BOOL acctNone = ([_accountColorNoneCheckbox state] == NSControlStateValueOn);
+    [_accountColorNoneCheckbox setEnabled:deliveryOn];
+    [_accountColorWell setEnabled:(deliveryOn && !acctNone)];
+    [_accountColorHexField setEnabled:(deliveryOn && !acctNone)];
+    [_accountColorLabel setTextColor:
+        (deliveryOn ? [NSColor labelColor] : [NSColor disabledControlTextColor])];
+}
+
+- (void)coloredNicknamesDeliveryChanged:(id)sender
+{
+    (void)sender;
+    [self applyColoredNicknamesEnableState];
+}
+
+- (void)coloredNicknamesHonorToggled:(id)sender
+{
+    (void)sender;
+    /* No enable-state cascade — this checkbox only affects input-sourcing. */
+}
+
+- (void)defaultAdminColorWellChanged:(id)sender
+{
+    (void)sender;
+    if (_defaultAdminColorSyncGuard) return;
+    _defaultAdminColorSyncGuard = YES;
+    NSColor *c = [[_defaultAdminColorWell color] colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+    CGFloat r, g, b, a;
+    [c getRed:&r green:&g blue:&b alpha:&a];
+    uint32_t rv = (uint32_t)(r * 255.0 + 0.5) & 0xFF;
+    uint32_t gv = (uint32_t)(g * 255.0 + 0.5) & 0xFF;
+    uint32_t bv = (uint32_t)(b * 255.0 + 0.5) & 0xFF;
+    _defaultAdminColorValue = (rv << 16) | (gv << 8) | bv;
+    [_defaultAdminColorHexField setStringValue:
+        [NSString stringWithFormat:@"#%02X%02X%02X", rv, gv, bv]];
+    _defaultAdminColorSyncGuard = NO;
+}
+
+- (void)defaultAdminColorHexChanged:(id)sender
+{
+    (void)sender;
+    if (_defaultAdminColorSyncGuard) return;
+    uint32_t v = parseHex6([_defaultAdminColorHexField stringValue]);
+    if (v == 0 && [[[_defaultAdminColorHexField stringValue] stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceCharacterSet]] length] > 0) return; /* invalid, don't update */
+    _defaultAdminColorSyncGuard = YES;
+    _defaultAdminColorValue = v;
+    CGFloat r = (CGFloat)((v >> 16) & 0xFF) / 255.0;
+    CGFloat g = (CGFloat)((v >>  8) & 0xFF) / 255.0;
+    CGFloat b = (CGFloat)((v >>  0) & 0xFF) / 255.0;
+    [_defaultAdminColorWell setColor:
+        [NSColor colorWithCalibratedRed:r green:g blue:b alpha:1.0]];
+    _defaultAdminColorSyncGuard = NO;
+}
+
+- (void)defaultAdminColorNoneToggled:(id)sender
+{
+    (void)sender;
+    BOOL isNone = ([_defaultAdminColorNoneCheckbox state] == NSControlStateValueOn);
+    [_defaultAdminColorWell setEnabled:!isNone];
+    [_defaultAdminColorHexField setEnabled:!isNone];
+    if (isNone) {
+        _defaultAdminColorValue = 0;
+        [_defaultAdminColorHexField setStringValue:@""];
+    }
+}
+
+- (void)defaultGuestColorWellChanged:(id)sender
+{
+    (void)sender;
+    if (_defaultGuestColorSyncGuard) return;
+    _defaultGuestColorSyncGuard = YES;
+    NSColor *c = [[_defaultGuestColorWell color] colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+    CGFloat r, g, b, a;
+    [c getRed:&r green:&g blue:&b alpha:&a];
+    uint32_t rv = (uint32_t)(r * 255.0 + 0.5) & 0xFF;
+    uint32_t gv = (uint32_t)(g * 255.0 + 0.5) & 0xFF;
+    uint32_t bv = (uint32_t)(b * 255.0 + 0.5) & 0xFF;
+    _defaultGuestColorValue = (rv << 16) | (gv << 8) | bv;
+    [_defaultGuestColorHexField setStringValue:
+        [NSString stringWithFormat:@"#%02X%02X%02X", rv, gv, bv]];
+    _defaultGuestColorSyncGuard = NO;
+}
+
+- (void)defaultGuestColorHexChanged:(id)sender
+{
+    (void)sender;
+    if (_defaultGuestColorSyncGuard) return;
+    uint32_t v = parseHex6([_defaultGuestColorHexField stringValue]);
+    if (v == 0 && [[[_defaultGuestColorHexField stringValue] stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceCharacterSet]] length] > 0) return;
+    _defaultGuestColorSyncGuard = YES;
+    _defaultGuestColorValue = v;
+    CGFloat r = (CGFloat)((v >> 16) & 0xFF) / 255.0;
+    CGFloat g = (CGFloat)((v >>  8) & 0xFF) / 255.0;
+    CGFloat b = (CGFloat)((v >>  0) & 0xFF) / 255.0;
+    [_defaultGuestColorWell setColor:
+        [NSColor colorWithCalibratedRed:r green:g blue:b alpha:1.0]];
+    _defaultGuestColorSyncGuard = NO;
+}
+
+- (void)defaultGuestColorNoneToggled:(id)sender
+{
+    (void)sender;
+    BOOL isNone = ([_defaultGuestColorNoneCheckbox state] == NSControlStateValueOn);
+    [_defaultGuestColorWell setEnabled:!isNone];
+    [_defaultGuestColorHexField setEnabled:!isNone];
+    if (isNone) {
+        _defaultGuestColorValue = 0;
+        [_defaultGuestColorHexField setStringValue:@""];
+    }
+}
+

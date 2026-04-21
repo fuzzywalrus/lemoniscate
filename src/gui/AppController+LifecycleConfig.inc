@@ -414,6 +414,45 @@
         [_chatHistoryLogJoinsCheckbox setState:
             (boolVal && [boolVal boolValue]) ? NSControlStateValueOn : NSControlStateValueOff];
 
+    /* Colored Nicknames (task 11.7): load delivery mode, honor flag,
+     * and both class default color strings. */
+    if (_coloredNicknamesDeliveryPopup) {
+        NSString *deliveryStr = [dict objectForKey:@"ColoredNicknamesDelivery"];
+        NSInteger idx = 0; /* default Off */
+        if ([deliveryStr caseInsensitiveCompare:@"auto"] == NSOrderedSame) idx = 1;
+        else if ([deliveryStr caseInsensitiveCompare:@"always"] == NSOrderedSame) idx = 2;
+        [_coloredNicknamesDeliveryPopup selectItemAtIndex:idx];
+    }
+    boolVal = [dict objectForKey:@"ColoredNicknamesHonorClientColors"];
+    if (_coloredNicknamesHonorCheckbox)
+        [_coloredNicknamesHonorCheckbox setState:
+            (boolVal && [boolVal boolValue]) ? NSControlStateValueOn : NSControlStateValueOff];
+    NSString *adminColorStr = [dict objectForKey:@"DefaultAdminColor"];
+    if (_defaultAdminColorNoneCheckbox) {
+        if ([adminColorStr length] > 0) {
+            [_defaultAdminColorHexField setStringValue:adminColorStr];
+            [_defaultAdminColorNoneCheckbox setState:NSControlStateValueOff];
+            [self defaultAdminColorHexChanged:nil];
+        } else {
+            [_defaultAdminColorNoneCheckbox setState:NSControlStateValueOn];
+        }
+    }
+    NSString *guestColorStr = [dict objectForKey:@"DefaultGuestColor"];
+    if (_defaultGuestColorNoneCheckbox) {
+        if ([guestColorStr length] > 0) {
+            [_defaultGuestColorHexField setStringValue:guestColorStr];
+            [_defaultGuestColorNoneCheckbox setState:NSControlStateValueOff];
+            [self defaultGuestColorHexChanged:nil];
+        } else {
+            [_defaultGuestColorNoneCheckbox setState:NSControlStateValueOn];
+        }
+    }
+    /* Apply enable/disable state after all values are in place. This
+     * also updates the Account Editor color row (task 10.7). */
+    if (_coloredNicknamesDeliveryPopup) {
+        [self applyColoredNicknamesEnableState];
+    }
+
     if (_filesTableView) [self refreshFilesList:nil];
     if (_accountsTableView) [self refreshAccountsList:nil];
     if (_bannedIPsTableView || _bannedUsersTableView || _bannedNicksTableView)
@@ -559,6 +598,39 @@
         [dict setObject:[NSNumber numberWithBool:chLegacy]     forKey:@"ChatHistoryLegacyBroadcast"];
         [dict setObject:[NSNumber numberWithInt:chLegacyCnt]   forKey:@"ChatHistoryLegacyCount"];
         [dict setObject:[NSNumber numberWithBool:chLogJoins]   forKey:@"ChatHistoryLogJoins"];
+    }
+
+    /* Colored Nicknames (task 11.8) */
+    {
+        NSString *deliveryStr = @"off";
+        if (_coloredNicknamesDeliveryPopup) {
+            NSInteger idx = [_coloredNicknamesDeliveryPopup indexOfSelectedItem];
+            if (idx == 1) deliveryStr = @"auto";
+            else if (idx == 2) deliveryStr = @"always";
+        }
+        BOOL honor = _coloredNicknamesHonorCheckbox &&
+            [_coloredNicknamesHonorCheckbox state] == NSControlStateValueOn;
+
+        NSString *adminColor = @"";
+        if (_defaultAdminColorNoneCheckbox &&
+            [_defaultAdminColorNoneCheckbox state] == NSControlStateValueOff &&
+            _defaultAdminColorValue != 0) {
+            adminColor = [NSString stringWithFormat:@"#%06X",
+                          _defaultAdminColorValue & 0x00FFFFFFu];
+        }
+        NSString *guestColor = @"";
+        if (_defaultGuestColorNoneCheckbox &&
+            [_defaultGuestColorNoneCheckbox state] == NSControlStateValueOff &&
+            _defaultGuestColorValue != 0) {
+            guestColor = [NSString stringWithFormat:@"#%06X",
+                          _defaultGuestColorValue & 0x00FFFFFFu];
+        }
+
+        [dict setObject:deliveryStr forKey:@"ColoredNicknamesDelivery"];
+        [dict setObject:[NSNumber numberWithBool:honor]
+                 forKey:@"ColoredNicknamesHonorClientColors"];
+        [dict setObject:adminColor forKey:@"DefaultAdminColor"];
+        [dict setObject:guestColor forKey:@"DefaultGuestColor"];
     }
 
     /* Write to ~/Library/Preferences/com.lemoniscate.server.plist */

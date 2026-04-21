@@ -70,18 +70,18 @@
 - [x] 10.4 `accountColorNoneToggled:` enables/disables well + hex field and clears `_accountColorValue` when checked.
 - [x] 10.5 Extended YAML parser in `AppController+AccountsData.inc` to capture `Color` key. `populateAccountEditorFromData:` calls new `applyAccountColorHex:` helper; `populateAccountEditorForNewAccount` applies empty hex → None.
 - [x] 10.6 Save pipeline in `AppController+AccountsActions.inc::saveAccount:` emits `Color: "#RRGGBB"` when None is off and value is nonzero; omits entirely when None.
-- [ ] 10.7 Reactive gating on server Delivery mode — deferred to Checkpoint 4c (lands alongside the Server Settings section's Delivery popup since the GUI signal travels from that popup into the Account Editor).
+- [x] 10.7 `applyColoredNicknamesEnableState` (in `AppController+GeneralActions.inc`) is called when the server Settings Delivery popup changes and on load. It disables the Account Editor's color well, hex field, AND None checkbox when Delivery is Off, and dims the Color label color. No save is required for state to update.
 
 ## 11. GUI — Server Settings Section
 
-- [ ] 11.1 Add disclosure section "Colored Nicknames" in the left settings panel, following Mnemosyne/Encoding disclosure pattern in `AppController+LayoutAndTabs.inc`.
-- [ ] 11.2 Delivery popup with three items (Off / Auto / Always); `NSPopUpButton` IBOutlet `coloredNicknamesDeliveryPopup`.
-- [ ] 11.3 "Honor client colors" checkbox; `NSButton` IBOutlet `coloredNicknamesHonorClientColorsCheckbox`.
-- [ ] 11.4 Default Admin Color: `NSColorWell` + hex field + None checkbox. IBOutlets `defaultAdminColorWell`, `defaultAdminColorHexField`, `defaultAdminColorNoneCheckbox`.
-- [ ] 11.5 Default Guest Color: same set of widgets, IBOutlets with `defaultGuest...` names.
-- [ ] 11.6 When delivery is `off`, disable (do not hide) the checkbox and both default-color row widgets. When delivery is `auto` or `always`, enable them.
-- [ ] 11.7 Load from plist in `AppController+LifecycleConfig.inc::loadConfigFromDisk` (reads delivery string, honor-client-colors bool, both default color strings).
-- [ ] 11.8 Save to plist in `AppController+LifecycleConfig.inc::writeConfigToDisk`.
+- [x] 11.1 Added disclosure section "Colored Nicknames" in `AppController+LayoutAndTabs.inc`, inserted after Chat History per the existing Mnemosyne/Encoding disclosure pattern.
+- [x] 11.2 Delivery popup (Off/Auto/Always) wired via `_coloredNicknamesDeliveryPopup`; action `coloredNicknamesDeliveryChanged:`.
+- [x] 11.3 Honor-client-colors checkbox `_coloredNicknamesHonorCheckbox`; action `coloredNicknamesHonorToggled:`.
+- [x] 11.4 Default Admin Color row: NSColorWell + hex field + None checkbox IBOutlets (`_defaultAdminColorWell`, `_defaultAdminColorHexField`, `_defaultAdminColorNoneCheckbox`) and corresponding actions.
+- [x] 11.5 Default Guest Color row: same shape with `_defaultGuest*` ivars.
+- [x] 11.6 `applyColoredNicknamesEnableState` gates the Honor checkbox and both default-color rows on the Delivery popup. Also updates the Account Editor color row per task 10.7.
+- [x] 11.7 Plist load in `loadConfigFromDisk`: reads `ColoredNicknamesDelivery`, `ColoredNicknamesHonorClientColors`, `DefaultAdminColor`, `DefaultGuestColor`. Empty/missing color string → None checked.
+- [x] 11.8 Plist write in `writeConfigToDisk`: emits delivery as string (off/auto/always), honor as bool, both colors as `"#RRGGBB"` or empty.
 
 ## 12. Access template consolidation (required)
 
