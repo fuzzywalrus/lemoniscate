@@ -64,13 +64,13 @@
 
 ## 10. GUI — Account Editor
 
-- [ ] 10.1 Add `accountColorWell`, `accountColorHexField`, `accountColorNoneCheckbox` IBOutlets to `AppController.h`.
-- [ ] 10.2 Lay out the three widgets in `AppController+LayoutAndTabs.inc` between the Name/File Root row and the Template popup. Match spacing/style of surrounding rows.
-- [ ] 10.3 Wire color well ↔ hex field sync in `AppController+AccountsActions.inc` (both directions; avoid feedback loops with a guard flag).
-- [ ] 10.4 Wire "None" checkbox: when checked, disable both widgets and clear the stored color. When unchecked, enable widgets and restore/default a color.
-- [ ] 10.5 Load color from selected account in `AppController+AccountsData.inc::populateAccountEditor`. Map `0` → None checked + disabled widgets.
-- [ ] 10.6 Save color to YAML on account save (existing save pipeline). Omit key when None checked.
-- [ ] 10.7 Gate the entire color row on the server's `Delivery` setting. When `Delivery == off`, disable color well, hex field, AND "None" checkbox. When `Delivery` changes at runtime (via Server Settings popup), update the Account Editor widgets reactively without requiring a save. Show a tooltip or inline help indicating colors are disabled at the server level when applicable.
+- [x] 10.1 Added `_accountColorWell` (NSColorWell), `_accountColorHexField`, `_accountColorNoneCheckbox`, `_accountColorLabel` ivars to `AppController.h`, plus `_accountColorValue` (uint32) and `_accountColorSyncGuard` (BOOL).
+- [x] 10.2 Laid out the color row in `AppController+LayoutAndTabs.inc` between File Root and Template. Pushed Template and all widgets below down by 26 px; shrunk the permissions scroll view height from 286 to 260 to preserve overall editor extent.
+- [x] 10.3 Wired `accountColorWellChanged:` and `accountColorHexChanged:` actions in `AppController+AccountsActions.inc` with `_accountColorSyncGuard` flag preventing feedback loops.
+- [x] 10.4 `accountColorNoneToggled:` enables/disables well + hex field and clears `_accountColorValue` when checked.
+- [x] 10.5 Extended YAML parser in `AppController+AccountsData.inc` to capture `Color` key. `populateAccountEditorFromData:` calls new `applyAccountColorHex:` helper; `populateAccountEditorForNewAccount` applies empty hex → None.
+- [x] 10.6 Save pipeline in `AppController+AccountsActions.inc::saveAccount:` emits `Color: "#RRGGBB"` when None is off and value is nonzero; omits entirely when None.
+- [ ] 10.7 Reactive gating on server Delivery mode — deferred to Checkpoint 4c (lands alongside the Server Settings section's Delivery popup since the GUI signal travels from that popup into the Account Editor).
 
 ## 11. GUI — Server Settings Section
 

@@ -129,6 +129,67 @@
     [self cancelNewAccount:nil];
 }
 
+/* Colored Nicknames — Account Editor color row actions (task 10.3, 10.4). */
+
+- (void)accountSyncColorHexFromWell
+{
+    if (_accountColorSyncGuard) return;
+    _accountColorSyncGuard = YES;
+    NSColor *c = [[_accountColorWell color] colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+    CGFloat r, g, b, a;
+    [c getRed:&r green:&g blue:&b alpha:&a];
+    uint32_t rv = (uint32_t)(r * 255.0 + 0.5) & 0xFF;
+    uint32_t gv = (uint32_t)(g * 255.0 + 0.5) & 0xFF;
+    uint32_t bv = (uint32_t)(b * 255.0 + 0.5) & 0xFF;
+    _accountColorValue = (rv << 16) | (gv << 8) | bv;
+    [_accountColorHexField setStringValue:
+        [NSString stringWithFormat:@"#%02X%02X%02X", rv, gv, bv]];
+    _accountColorSyncGuard = NO;
+}
+
+- (void)accountSyncColorWellFromHex
+{
+    if (_accountColorSyncGuard) return;
+    NSString *hex = [[_accountColorHexField stringValue]
+        stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if ([hex hasPrefix:@"#"]) hex = [hex substringFromIndex:1];
+    if ([hex length] != 6) return;
+    unsigned int v = 0;
+    NSScanner *sc = [NSScanner scannerWithString:hex];
+    if (![sc scanHexInt:&v]) return;
+    _accountColorSyncGuard = YES;
+    _accountColorValue = v & 0x00FFFFFFu;
+    CGFloat r = (CGFloat)((v >> 16) & 0xFF) / 255.0;
+    CGFloat g = (CGFloat)((v >>  8) & 0xFF) / 255.0;
+    CGFloat b = (CGFloat)((v >>  0) & 0xFF) / 255.0;
+    [_accountColorWell setColor:
+        [NSColor colorWithCalibratedRed:r green:g blue:b alpha:1.0]];
+    _accountColorSyncGuard = NO;
+}
+
+- (void)accountColorWellChanged:(id)sender
+{
+    (void)sender;
+    [self accountSyncColorHexFromWell];
+}
+
+- (void)accountColorHexChanged:(id)sender
+{
+    (void)sender;
+    [self accountSyncColorWellFromHex];
+}
+
+- (void)accountColorNoneToggled:(id)sender
+{
+    (void)sender;
+    BOOL isNone = ([_accountColorNoneCheckbox state] == NSControlStateValueOn);
+    [_accountColorWell setEnabled:!isNone];
+    [_accountColorHexField setEnabled:!isNone];
+    if (isNone) {
+        _accountColorValue = 0;
+    }
+}
+
 - (void)accountTemplateChanged:(id)sender
 {
     (void)sender;
@@ -225,6 +286,14 @@
     if (_acctRequireEncryptionCheckbox &&
         [_acctRequireEncryptionCheckbox state] == NSControlStateValueOn) {
         [yaml appendString:@"RequireEncryption: true\n"];
+    }
+
+    /* Colored Nicknames: emit Color: "#RRGGBB" when a color is assigned
+     * and the "None" checkbox is off. Omit the key entirely when None. */
+    if (_accountColorNoneCheckbox &&
+        [_accountColorNoneCheckbox state] == NSControlStateValueOff &&
+        _accountColorValue != 0) {
+        [yaml appendFormat:@"Color: \"#%06X\"\n", _accountColorValue & 0x00FFFFFFu];
     }
 
     if (![yaml writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]) {

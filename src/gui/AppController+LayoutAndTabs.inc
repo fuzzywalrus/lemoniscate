@@ -1475,13 +1475,46 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_accountFileRootField setFrame:NSMakeRect(84, 428, 290, 22)];
     [ec addSubview:_accountFileRootField];
 
+    /* Colored Nicknames — Account Editor color row (task 10.2).
+     * Inserted between File Root and Template. Widgets:
+     *   "Color:" label, NSColorWell (opens OS color picker), hex field,
+     *   None checkbox.
+     * Disabled as a whole when None is checked OR when the server's
+     * ColoredNicknames.Delivery is Off (task 10.7 — reactive gating). */
+    _accountColorLabel = makeLabel(@"Color:", 11.0, NO);
+    [_accountColorLabel setAlignment:NSTextAlignmentRight];
+    [_accountColorLabel setFrame:NSMakeRect(6, 400, 70, 17)];
+    [ec addSubview:_accountColorLabel];
+
+    _accountColorWell = [[NSColorWell alloc] initWithFrame:NSMakeRect(84, 396, 44, 22)];
+    [_accountColorWell setTarget:self];
+    [_accountColorWell setAction:@selector(accountColorWellChanged:)];
+    [ec addSubview:_accountColorWell];
+
+    _accountColorHexField = makeEditField(90);
+    [_accountColorHexField setFrame:NSMakeRect(132, 396, 90, 22)];
+    [_accountColorHexField setTarget:self];
+    [_accountColorHexField setAction:@selector(accountColorHexChanged:)];
+    [ec addSubview:_accountColorHexField];
+
+    _accountColorNoneCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+    [_accountColorNoneCheckbox setButtonType:NSButtonTypeSwitch];
+    [_accountColorNoneCheckbox setTitle:@"None"];
+    [_accountColorNoneCheckbox setFont:[NSFont systemFontOfSize:11]];
+    [_accountColorNoneCheckbox setState:NSControlStateValueOn];
+    [_accountColorNoneCheckbox setTarget:self];
+    [_accountColorNoneCheckbox setAction:@selector(accountColorNoneToggled:)];
+    [_accountColorNoneCheckbox sizeToFit];
+    [_accountColorNoneCheckbox setFrame:NSMakeRect(228, 399, 72, 18)];
+    [ec addSubview:_accountColorNoneCheckbox];
+
     l = makeLabel(@"Template:", 11.0, NO);
     [l setAlignment:NSTextAlignmentRight];
-    [l setFrame:NSMakeRect(6, 400, 70, 17)];
+    [l setFrame:NSMakeRect(6, 374, 70, 17)];
     [ec addSubview:l];
     [l release];
     _accountTemplatePopup = [[NSPopUpButton alloc]
-        initWithFrame:NSMakeRect(84, 396, 140, 24) pullsDown:NO];
+        initWithFrame:NSMakeRect(84, 370, 140, 24) pullsDown:NO];
     [_accountTemplatePopup addItemWithTitle:@"Custom"];
     [_accountTemplatePopup addItemWithTitle:@"Guest"];
     [_accountTemplatePopup addItemWithTitle:@"Admin"];
@@ -1490,24 +1523,24 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [ec addSubview:_accountTemplatePopup];
 
     _accountNewButton = makeButton(@"New", self, @selector(newAccount:));
-    [_accountNewButton setFrame:NSMakeRect(84, 356, 64, 24)];
+    [_accountNewButton setFrame:NSMakeRect(84, 330, 64, 24)];
     [ec addSubview:_accountNewButton];
 
     _accountDeleteButton = makeButton(@"Delete", self, @selector(deleteAccount:));
-    [_accountDeleteButton setFrame:NSMakeRect(152, 356, 64, 24)];
+    [_accountDeleteButton setFrame:NSMakeRect(152, 330, 64, 24)];
     [ec addSubview:_accountDeleteButton];
 
     _accountSaveButton = makeButton(@"Save", self, @selector(saveAccount:));
-    [_accountSaveButton setFrame:NSMakeRect(220, 356, 64, 24)];
+    [_accountSaveButton setFrame:NSMakeRect(220, 330, 64, 24)];
     [ec addSubview:_accountSaveButton];
 
     _accountResetPasswordButton = makeButton(@"Reset Password", self,
                                              @selector(resetAccountPassword:));
-    [_accountResetPasswordButton setFrame:NSMakeRect(288, 356, 102, 24)];
+    [_accountResetPasswordButton setFrame:NSMakeRect(288, 330, 102, 24)];
     [ec addSubview:_accountResetPasswordButton];
 
     _accountPasswordStatusLabel = makeLabel(@"Password: none", 10.0, NO);
-    [_accountPasswordStatusLabel setFrame:NSMakeRect(84, 334, 306, 14)];
+    [_accountPasswordStatusLabel setFrame:NSMakeRect(84, 308, 306, 14)];
     [_accountPasswordStatusLabel setTextColor:[NSColor grayColor]];
     [ec addSubview:_accountPasswordStatusLabel];
 
@@ -1517,17 +1550,17 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
     [_acctRequireEncryptionCheckbox setFont:[NSFont systemFontOfSize:11]];
     [_acctRequireEncryptionCheckbox setState:NSControlStateValueOff];
     [_acctRequireEncryptionCheckbox sizeToFit];
-    [_acctRequireEncryptionCheckbox setFrame:NSMakeRect(84, 318, 306, 18)];
+    [_acctRequireEncryptionCheckbox setFrame:NSMakeRect(84, 292, 306, 18)];
     [ec addSubview:_acctRequireEncryptionCheckbox];
 
     l = makeLabel(@"Templates and permissions map directly to YAML Access keys.", 10.0, NO);
     [l setTextColor:[NSColor grayColor]];
-    [l setFrame:NSMakeRect(84, 300, 306, 14)];
+    [l setFrame:NSMakeRect(84, 274, 306, 14)];
     [ec addSubview:l];
     [l release];
 
     _accountPermissionsScrollView = [[NSScrollView alloc]
-        initWithFrame:NSMakeRect(10, 8, 386, 286)];
+        initWithFrame:NSMakeRect(10, 8, 386, 260)];
     [_accountPermissionsScrollView setHasVerticalScroller:YES];
     [_accountPermissionsScrollView setBorderType:NSBezelBorder];
     [_accountPermissionsScrollView setAutoresizingMask:

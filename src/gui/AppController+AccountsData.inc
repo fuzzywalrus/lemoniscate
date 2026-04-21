@@ -51,6 +51,7 @@
     NSString *password = @"";
     NSString *fileRoot = @"";
     BOOL requireEncryption = NO;
+    NSString *colorHex = @"";
     NSString *usersDir = [_configDir stringByAppendingPathComponent:@"Users"];
     NSString *path = [usersDir stringByAppendingPathComponent:
         [NSString stringWithFormat:@"%@.yaml", login ? login : @""]];
@@ -106,6 +107,8 @@
                 fileRoot = val;
             } else if ([key isEqualToString:@"RequireEncryption"]) {
                 requireEncryption = ([val isEqualToString:@"true"] || [val isEqualToString:@"1"]);
+            } else if ([key isEqualToString:@"Color"]) {
+                colorHex = val;
             }
         }
     }
@@ -118,6 +121,7 @@
         fileRoot, @"fileRoot",
         access, @"access",
         [NSNumber numberWithBool:requireEncryption], @"requireEncryption",
+        (colorHex ? colorHex : @""), @"color",
         nil];
 }
 
@@ -277,6 +281,10 @@
     NSNumber *reqEnc = [acct objectForKey:@"requireEncryption"];
     [_acctRequireEncryptionCheckbox setState:(reqEnc && [reqEnc boolValue]) ? NSControlStateValueOn : NSControlStateValueOff];
 
+    /* Colored Nicknames: load Color key. Empty or missing -> None. */
+    NSString *color = [acct objectForKey:@"color"];
+    [self applyAccountColorHex:(color ? color : @"")];
+
     [_accountAccessKeys removeAllObjects];
     if (access) [_accountAccessKeys unionSet:access];
     [self updateAccountTemplateFromAccessKeys];
@@ -303,6 +311,43 @@
     [_accountTemplatePopup selectItemAtIndex:1];
     [self syncPermissionCheckboxesFromAccess];
     [self updateAccountPasswordStatus];
+
+    /* Colored Nicknames: new account starts with no color set. */
+    [self applyAccountColorHex:@""];
+}
+
+/* Colored Nicknames helper: set the color row state from a hex string.
+ * Empty string -> None checkbox checked, well/hex disabled. Valid hex ->
+ * None unchecked, well/hex enabled and populated. */
+- (void)applyAccountColorHex:(NSString *)hex
+{
+    NSString *h = [hex stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceCharacterSet]];
+    if ([h hasPrefix:@"#"]) h = [h substringFromIndex:1];
+    unsigned int v = 0;
+    BOOL valid = ([h length] == 6 &&
+                  [[NSScanner scannerWithString:h] scanHexInt:&v]);
+    if (valid) {
+        _accountColorValue = v & 0x00FFFFFFu;
+        _accountColorSyncGuard = YES;
+        [_accountColorNoneCheckbox setState:NSControlStateValueOff];
+        [_accountColorWell setEnabled:YES];
+        [_accountColorHexField setEnabled:YES];
+        CGFloat r = (CGFloat)((_accountColorValue >> 16) & 0xFF) / 255.0;
+        CGFloat g = (CGFloat)((_accountColorValue >>  8) & 0xFF) / 255.0;
+        CGFloat b = (CGFloat)((_accountColorValue >>  0) & 0xFF) / 255.0;
+        [_accountColorWell setColor:
+            [NSColor colorWithCalibratedRed:r green:g blue:b alpha:1.0]];
+        [_accountColorHexField setStringValue:
+            [NSString stringWithFormat:@"#%06X", _accountColorValue]];
+        _accountColorSyncGuard = NO;
+    } else {
+        _accountColorValue = 0;
+        [_accountColorNoneCheckbox setState:NSControlStateValueOn];
+        [_accountColorWell setEnabled:NO];
+        [_accountColorHexField setEnabled:NO];
+        [_accountColorHexField setStringValue:@""];
+    }
 }
 
 - (void)loadBanListData

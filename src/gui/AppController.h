@@ -170,6 +170,13 @@
     NSButton *_accountSaveButton;
     NSMutableSet *_accountAccessKeys;
     NSButton *_acctRequireEncryptionCheckbox;
+    /* Colored Nicknames — Account Editor color row (task 10). */
+    NSColorWell *_accountColorWell;
+    NSTextField *_accountColorHexField;
+    NSButton    *_accountColorNoneCheckbox;
+    NSTextField *_accountColorLabel;
+    uint32_t     _accountColorValue;     /* 0 = None/absent, else 0x00RRGGBB */
+    BOOL         _accountColorSyncGuard; /* prevents well↔hex feedback loops */
     NSString *_selectedAccountLogin;
     NSString *_selectedAccountPassword;
 
