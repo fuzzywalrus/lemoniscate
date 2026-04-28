@@ -44,6 +44,11 @@ typedef struct {
     char tls_key_path[HL_CONFIG_PATH_MAX];       /* TLSKeyFile: path to PEM private key   */
     int  tls_port;                                /* TLSPort: TLS base port (0 = disabled) */
 
+    /* Bot protection: when enabled, IPs that hit the rate limiter
+     * HL_AUTOBAN_VIOLATION_THRESHOLD times within HL_AUTOBAN_WINDOW_SECONDS
+     * are added to the persistent banlist. Default: enabled. */
+    int  auto_ban_enabled;                       /* AutoBanEnabled bool */
+
     /* Mnemosyne sync */
     char mnemosyne_url[HL_CONFIG_MNEMOSYNE_URL_MAX];   /* Mnemosyne instance URL */
     char mnemosyne_api_key[HL_CONFIG_MNEMOSYNE_KEY_MAX]; /* msv_-prefixed server API key */

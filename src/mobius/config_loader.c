@@ -259,6 +259,8 @@ static int parse_config_yaml(hl_config_t *cfg, const char *filepath)
                     strncpy(cfg->encoding, val, sizeof(cfg->encoding) - 1);
                 else if (strcmp(current_key, "EnableHOPE") == 0)
                     cfg->enable_hope = yaml_parse_bool(val);
+                else if (strcmp(current_key, "AutoBanEnabled") == 0)
+                    cfg->auto_ban_enabled = yaml_parse_bool(val);
                 else if (strcmp(current_key, "HOPELegacyMode") == 0)
                     cfg->hope_legacy_mode = yaml_parse_bool(val);
                 else if (strcmp(current_key, "HOPERequiredPrefix") == 0)

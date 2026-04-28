@@ -32,8 +32,19 @@ typedef struct hl_rate_limiter {
     char                     ip[64];
     double                   tokens;
     time_t                   last_check;
+    /* Auto-ban tracking: count rate-limit violations within a window;
+     * crossing the threshold escalates the IP into the persistent banlist. */
+    int                      violations;
+    time_t                   first_violation;
+    int                      auto_banned;        /* 1 = already promoted to banlist */
     struct hl_rate_limiter  *next;
 } hl_rate_limiter_t;
+
+/* Auto-ban tunables. An IP that hits the rate limiter
+ * HL_AUTOBAN_VIOLATION_THRESHOLD times within HL_AUTOBAN_WINDOW_SECONDS
+ * is added to the persistent banlist. */
+#define HL_AUTOBAN_VIOLATION_THRESHOLD  10
+#define HL_AUTOBAN_WINDOW_SECONDS       300
 
 /* The Hotline server */
 typedef struct hl_server {

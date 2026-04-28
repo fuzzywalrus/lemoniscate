@@ -309,6 +309,8 @@ void hl_server_broadcast_user_change(hl_server_t *srv, hl_client_conn_t *cc)
 int hl_server_rate_limit_check(hl_server_t *srv, const char *ip)
 {
     time_t now = time(NULL);
+    int trigger_autoban = 0;
+    int violations_for_log = 0;
 
     pthread_mutex_lock(&srv->rate_limiters_mu);
 
@@ -341,9 +343,35 @@ int hl_server_rate_limit_check(hl_server_t *srv, const char *ip)
         allowed = 1;
     } else {
         allowed = 0;
+        /* Sliding-window violation count: reset if the last violation
+         * was outside the window; otherwise increment. */
+        if (rl->violations == 0 ||
+            difftime(now, rl->first_violation) > HL_AUTOBAN_WINDOW_SECONDS) {
+            rl->first_violation = now;
+            rl->violations = 1;
+        } else {
+            rl->violations++;
+        }
+        if (srv->config.auto_ban_enabled &&
+            !rl->auto_banned &&
+            rl->violations >= HL_AUTOBAN_VIOLATION_THRESHOLD) {
+            rl->auto_banned = 1;
+            trigger_autoban = 1;
+            violations_for_log = rl->violations;
+        }
     }
 
     pthread_mutex_unlock(&srv->rate_limiters_mu);
+
+    /* Promote to persistent banlist outside the rate-limit lock to avoid
+     * holding it across disk I/O (ban_add writes the YAML file). */
+    if (trigger_autoban && srv->ban_list) {
+        srv->ban_list->vt->add(srv->ban_list, ip);
+        hl_log_info(srv->logger,
+            "Auto-banned %s after %d rate-limit violations within %ds",
+            ip, violations_for_log, HL_AUTOBAN_WINDOW_SECONDS);
+    }
+
     return allowed;
 }
 
@@ -1631,6 +1659,16 @@ static void handle_file_transfer_connection(hl_server_t *srv, int client_fd,
     hl_tls_conn_t *conn = xfer_conn ? xfer_conn : hl_conn_wrap_plain(client_fd);
     if (!conn) { close(client_fd); return; }
 
+    /* Set socket timeouts: this function runs on the main accept-loop thread,
+     * so a stalled client would otherwise pin the entire server. A slow-loris
+     * attack on 2026-04-19 sent 2 of 16 header bytes and wedged the server
+     * for 8+ days. SO_RCVTIMEO/SO_SNDTIMEO bound every read/write here. */
+    struct timeval tv;
+    tv.tv_sec = 30;
+    tv.tv_usec = 0;
+    setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
     /* Read 16-byte HTXF header to get reference number */
     uint8_t hdr_buf[HL_TRANSFER_HEADER_SIZE];
     if (hl_conn_read_full(conn, hdr_buf, HL_TRANSFER_HEADER_SIZE) < 0) {
@@ -2136,6 +2174,22 @@ folder_upload_done:
 
 /* --- Main event loop --- */
 
+/* Drop connections from auto-banned (or manually banned) IPs at accept time,
+ * before any read or TLS handshake. Returns 1 if dropped, 0 if allowed. */
+static int drop_if_banned(hl_server_t *srv,
+                          const struct sockaddr_in *client_addr,
+                          int client_fd)
+{
+    if (!srv->ban_list) return 0;
+    char ip_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &client_addr->sin_addr, ip_str, sizeof(ip_str));
+    if (srv->ban_list->vt->is_banned(srv->ban_list, ip_str)) {
+        close(client_fd);
+        return 1;
+    }
+    return 0;
+}
+
 int hl_server_listen_and_serve(hl_server_t *srv)
 {
     srv->listen_fd = create_listener(srv->net_interface, srv->port);
@@ -2411,6 +2465,7 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                                        (struct sockaddr *)&client_addr,
                                        &addr_len);
                 if (client_fd >= 0) {
+                    if (drop_if_banned(srv, &client_addr, client_fd)) continue;
                     handle_new_connection(srv, client_fd, &client_addr,
                                          evloop, NULL);
                 }
@@ -2423,6 +2478,7 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                                        (struct sockaddr *)&client_addr,
                                        &addr_len);
                 if (client_fd >= 0) {
+                    if (drop_if_banned(srv, &client_addr, client_fd)) continue;
                     handle_file_transfer_connection(srv, client_fd, NULL);
                 }
             }
@@ -2435,6 +2491,7 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                                        (struct sockaddr *)&client_addr,
                                        &addr_len);
                 if (client_fd >= 0) {
+                    if (drop_if_banned(srv, &client_addr, client_fd)) continue;
                     hl_tls_conn_t *tconn = hl_tls_accept(&srv->tls_ctx,
                                                           client_fd);
                     if (tconn) {
@@ -2452,6 +2509,7 @@ int hl_server_listen_and_serve(hl_server_t *srv)
                                        (struct sockaddr *)&client_addr,
                                        &addr_len);
                 if (client_fd >= 0) {
+                    if (drop_if_banned(srv, &client_addr, client_fd)) continue;
                     hl_tls_conn_t *tconn = hl_tls_accept(&srv->tls_ctx,
                                                           client_fd);
                     if (tconn) {

@@ -20,6 +20,9 @@ void hl_config_init(hl_config_t *cfg)
     strncpy(cfg->hope_cipher_policy, "prefer-aead", sizeof(cfg->hope_cipher_policy) - 1);
     cfg->e2e_require_aead = 0;
 
+    /* Bot protection: auto-ban repeat rate-limit offenders by default */
+    cfg->auto_ban_enabled = 1;
+
     /* Mnemosyne defaults: enabled per-content-type when URL is set */
     cfg->mnemosyne_index_files = 1;
     cfg->mnemosyne_index_news = 1;

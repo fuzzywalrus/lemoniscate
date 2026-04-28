@@ -745,6 +745,13 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         iy = addCheckboxWithHelp(c, _hopeRequireAEADCheckbox, iy,
             @"When enabled, only clients using ChaCha20-Poly1305 AEAD encryption can access E2E-prefixed content. This guarantees file transfers are also encrypted (RC4 HOPE does not encrypt file transfers).", self);
 
+        _autoBanCheckbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [_autoBanCheckbox setButtonType:NSButtonTypeSwitch];
+        [_autoBanCheckbox setTitle:@"Auto-ban repeat rate-limit offenders"];
+        [_autoBanCheckbox setState:NSControlStateValueOn];
+        iy = addCheckboxWithHelp(c, _autoBanCheckbox, iy,
+            @"When enabled, an IP that exceeds the per-IP connection rate limit 10 times within 5 minutes is automatically added to the persistent banlist (Banlist.yaml) and rejected at accept time on all subsequent connection attempts. Auto-banned IPs appear in the Bans tab and can be removed manually.", self);
+
         float contentH = iy;
         [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
         [doc addSubview:c];
@@ -1733,12 +1740,20 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
 
         _newBanIPField = makeEditField(120);
         [[_newBanIPField cell] setPlaceholderString:@"192.168.1.1"];
-        [_newBanIPField setFrame:NSMakeRect(6, 4, 120, 22)];
+        [_newBanIPField setFrame:NSMakeRect(6, 4, 88, 22)];
         [c addSubview:_newBanIPField];
         NSButton *add = makeButton(@"Add", self, @selector(addIPBan:));
-        [add setFrame:NSMakeRect(130, 4, 60, 22)];
+        [add setFrame:NSMakeRect(98, 4, 46, 22)];
         [c addSubview:add];
         [add release];
+        /* Refresh re-reads Banlist.yaml so auto-bans written by the running
+         * server become visible without restarting the GUI. */
+        NSButton *refresh = makeButton(@"Refresh", self,
+                                        @selector(refreshBanList:));
+        [refresh setFrame:NSMakeRect(146, 4, 60, 22)];
+        [refresh setToolTip:@"Reload Banlist.yaml to pick up auto-banned IPs."];
+        [c addSubview:refresh];
+        [refresh release];
 
         [_accountsBansView addSubview:box];
         [box release];

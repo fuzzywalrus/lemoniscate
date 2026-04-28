@@ -355,6 +355,12 @@
     [self loadBanListData];
 }
 
+- (void)refreshBanList:(id)sender
+{
+    (void)sender;
+    [self loadBanListData];
+}
+
 - (void)addUserBan:(id)sender
 {
     (void)sender;

@@ -84,6 +84,7 @@
     NSButton *_hopeRequireTLSCheckbox;
     NSPopUpButton *_hopeCipherPolicyPopup;
     NSButton *_hopeRequireAEADCheckbox;
+    NSButton *_autoBanCheckbox;
 
     /* TLS Encryption section */
     NSTextField *_tlsCertField;
@@ -350,6 +351,7 @@
 - (void)resetAccountPassword:(id)sender;
 - (void)addIPBan:(id)sender;
 - (void)removeIPBan:(id)sender;
+- (void)refreshBanList:(id)sender;
 - (void)addUserBan:(id)sender;
 - (void)removeUserBan:(id)sender;
 - (void)addNickBan:(id)sender;

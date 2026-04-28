@@ -295,6 +295,11 @@
     boolVal = [dict objectForKey:@"EnableHOPE"];
     if (boolVal && _hopeCheckbox)
         [_hopeCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
+    /* AutoBanEnabled: default ON when key is absent. */
+    boolVal = [dict objectForKey:@"AutoBanEnabled"];
+    if (_autoBanCheckbox)
+        [_autoBanCheckbox setState:(boolVal ? [boolVal boolValue] : YES)
+                                   ? NSControlStateValueOn : NSControlStateValueOff];
     boolVal = [dict objectForKey:@"HOPELegacyMode"];
     if (boolVal && _hopeLegacyCheckbox)
         [_hopeLegacyCheckbox setState:[boolVal boolValue] ? NSControlStateValueOn : NSControlStateValueOff];
@@ -487,6 +492,7 @@
         newsDelimiter = @"__________________________________________________________";
     BOOL preserveForks = _preserveForkCheckbox ? ([_preserveForkCheckbox state] == NSControlStateValueOn) : NO;
     BOOL enableHOPE = _hopeCheckbox ? ([_hopeCheckbox state] == NSControlStateValueOn) : NO;
+    BOOL autoBanEnabled = _autoBanCheckbox ? ([_autoBanCheckbox state] == NSControlStateValueOn) : YES;
     BOOL hopeLegacy = _hopeLegacyCheckbox ? ([_hopeLegacyCheckbox state] == NSControlStateValueOn) : NO;
     NSString *hopePrefix = _hopePrefixField ? [_hopePrefixField stringValue] : @"[E2E]";
     BOOL e2eRequireTLS = _hopeRequireTLSCheckbox ? ([_hopeRequireTLSCheckbox state] == NSControlStateValueOn) : NO;
@@ -545,6 +551,7 @@
         [dict setObject:encValue forKey:@"Encoding"];
     }
     [dict setObject:[NSNumber numberWithBool:enableHOPE] forKey:@"EnableHOPE"];
+    [dict setObject:[NSNumber numberWithBool:autoBanEnabled] forKey:@"AutoBanEnabled"];
     [dict setObject:[NSNumber numberWithBool:hopeLegacy] forKey:@"HOPELegacyMode"];
     [dict setObject:(hopePrefix ? hopePrefix : @"[E2E]") forKey:@"HOPERequiredPrefix"];
     [dict setObject:[NSNumber numberWithBool:e2eRequireTLS] forKey:@"E2ERequireTLS"];
