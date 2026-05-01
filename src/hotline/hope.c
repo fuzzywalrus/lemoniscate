@@ -32,7 +32,7 @@ static const char *mac_alg_names[] = {
 
 /* Server app identification */
 #define HOPE_APP_ID     "LMSC"
-#define HOPE_APP_STRING "Lemoniscate 0.1.7"
+#define HOPE_APP_STRING "Lemoniscate 0.1.8"
 
 /* --- Random bytes (reuses pattern from password.c) --- */
 

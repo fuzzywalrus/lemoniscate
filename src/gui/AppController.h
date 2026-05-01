@@ -111,6 +111,16 @@
     NSButton *_chatHistoryLegacyBroadcastCheckbox;
     NSTextField *_chatHistoryLegacyCountField;
     NSButton *_chatHistoryLogJoinsCheckbox;
+    /* Encryption-at-rest (optional) */
+    NSTextField *_chatHistoryKeyPathField;
+    NSButton *_chooseChatHistoryKeyButton;
+    NSButton *_generateChatHistoryKeyButton;
+    NSTextField *_chatHistoryKeyWarningLabel;
+    /* Advanced: rate-limit knobs (folded by default) */
+    NSButton *_chatHistoryAdvancedDisclosure;
+    NSView *_chatHistoryAdvancedView;
+    NSTextField *_chatHistoryRateCapacityField;
+    NSTextField *_chatHistoryRateRefillField;
 
     /* Monitoring section */
     NSPopUpButton *_pollingRatePopup;
@@ -352,6 +362,12 @@
 - (void)addIPBan:(id)sender;
 - (void)removeIPBan:(id)sender;
 - (void)refreshBanList:(id)sender;
+/* Chat History section actions */
+- (void)chatHistoryToggled:(id)sender;
+- (void)chooseChatHistoryKey:(id)sender;
+- (void)generateChatHistoryKey:(id)sender;
+- (void)toggleChatHistoryAdvanced:(id)sender;
+- (void)updateChatHistoryWidgetEnablement;
 - (void)addUserBan:(id)sender;
 - (void)removeUserBan:(id)sender;
 - (void)addNickBan:(id)sender;

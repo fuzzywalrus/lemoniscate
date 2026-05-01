@@ -11,7 +11,7 @@
 - [x] 2.2 Wired YAML keys under nested `ChatHistory:` section in `src/mobius/config_loader.c` (matches Mnemosyne pattern)
 - [x] 2.3 Wired plist keys in `src/mobius/config_plist.c` (flat `ChatHistory*` keys since plist is flat)
 - [x] 2.4 Set defaults in `hl_config_init()`: enabled=0, max_msgs=10000, max_days=0, legacy_broadcast=0, legacy_count=30, rate_capacity=20, rate_refill=10
-- [ ] 2.5 **Deferred** — GUI config surface requires new Cocoa widgets + preferences panel resize. CLI/YAML/plist paths work; GUI users would see keys stripped on save until widgets land. Separate PR worth its own design pass.
+- [x] 2.5 GUI config surface delivered by `chat-history-gui` change, landed in 0.1.8. All 9 ChatHistory* keys round-trip through GUI saves; encryption-at-rest and rate-limit knobs surfaced.
 
 ## 3. Storage Module — JSONL Backend
 
@@ -111,7 +111,7 @@
     - No `pthread_*` calls (single-writer model) ✓
     - No C11 atomics ✓
     - **One latent caveat**: `lm_chat_idx_entry_t.offset` and `long start = ftello(...)` both use `long`, which is 32-bit on 32-bit PPC — silently truncates beyond 2 GiB per channel file. At ~200 bytes/entry that's ~10M messages per channel; well beyond any practical retention. Worth widening to `off_t` if 64-bit offsets ever matter, but not blocking.
-- [ ] 13.4 Deploy to `hotline.semihosted.xyz`, enable with `ChatHistoryEnabled: true`, verify log line — **awaiting deploy authorization**
+- [x] 13.4 Deployed to `hotline.semihosted.xyz` with `ChatHistoryEnabled: true`. Startup log shows "Chat history enabled: max_msgs=10000 max_days=30 legacy=1"; hourly "chat history prune: completed" timer firing. ChatHistory/ folder is created lazily on first message.
 - [ ] 13.5 Connect with Navigator 0.2.5, verify capability bit 4 is echoed, request history, verify entries render — **awaiting deploy**
 - [ ] 13.6 Connect with a legacy client (ClassicHL or similar), verify chat works unchanged; if legacy broadcast enabled, verify recent messages appear as TRAN_CHAT_MSG — **awaiting deploy**
 

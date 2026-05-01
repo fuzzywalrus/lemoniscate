@@ -418,6 +418,15 @@
     if (_chatHistoryLogJoinsCheckbox)
         [_chatHistoryLogJoinsCheckbox setState:
             (boolVal && [boolVal boolValue]) ? NSControlStateValueOn : NSControlStateValueOff];
+    val = [dict objectForKey:@"ChatHistoryEncryptionKey"];
+    if (val && _chatHistoryKeyPathField) [_chatHistoryKeyPathField setStringValue:val];
+    val = [dict objectForKey:@"ChatHistoryRateCapacity"];
+    if (val && _chatHistoryRateCapacityField)
+        [_chatHistoryRateCapacityField setIntValue:[val intValue]];
+    val = [dict objectForKey:@"ChatHistoryRateRefillPerSec"];
+    if (val && _chatHistoryRateRefillField)
+        [_chatHistoryRateRefillField setIntValue:[val intValue]];
+    [self updateChatHistoryWidgetEnablement];
 
     /* Colored Nicknames (task 11.7): load delivery mode, honor flag,
      * and both class default color strings. */
@@ -605,6 +614,18 @@
         [dict setObject:[NSNumber numberWithBool:chLegacy]     forKey:@"ChatHistoryLegacyBroadcast"];
         [dict setObject:[NSNumber numberWithInt:chLegacyCnt]   forKey:@"ChatHistoryLegacyCount"];
         [dict setObject:[NSNumber numberWithBool:chLogJoins]   forKey:@"ChatHistoryLogJoins"];
+
+        NSString *chKeyPath = _chatHistoryKeyPathField
+            ? [_chatHistoryKeyPathField stringValue] : @"";
+        int chRateCap    = _chatHistoryRateCapacityField
+            ? [_chatHistoryRateCapacityField intValue] : 20;
+        int chRateRefill = _chatHistoryRateRefillField
+            ? [_chatHistoryRateRefillField intValue] : 10;
+        if (chRateCap    < 0) chRateCap    = 0;
+        if (chRateRefill < 0) chRateRefill = 0;
+        [dict setObject:(chKeyPath ? chKeyPath : @"") forKey:@"ChatHistoryEncryptionKey"];
+        [dict setObject:[NSNumber numberWithInt:chRateCap]    forKey:@"ChatHistoryRateCapacity"];
+        [dict setObject:[NSNumber numberWithInt:chRateRefill] forKey:@"ChatHistoryRateRefillPerSec"];
     }
 
     /* Colored Nicknames (task 11.8) */

@@ -170,6 +170,28 @@ For TLS connections, clients connect to the TLS port instead. The handshake and 
 
 - Token bucket algorithm: 1 connection per 2 seconds per IP
 - Excess connections are rejected with "Rate limited" log entry
+- Repeat offenders (10 violations within 5 minutes) are auto-promoted to
+  the persistent banlist and dropped at `accept()` thereafter. Disable via
+  `AutoBanEnabled: false` in `config.yaml`.
+
+### Rate limits: per-IP connection vs. per-connection chat
+
+The server has two independent token-bucket rate limiters that look
+superficially similar but track fundamentally different abuse vectors.
+**They share no state.**
+
+| | Per-IP connection rate | Per-connection chat send rate |
+|---|---|---|
+| **Scope** | Each remote IP address | Each individual TCP session |
+| **Default** | 1 new conn / 2 s | 20 tokens, refill 10/s |
+| **Config** | (compile-time `HL_PER_IP_RATE_INTERVAL`) | `ChatHistoryRateCapacity`, `ChatHistoryRateRefillPerSec` |
+| **On hit** | "Rate limited" log; counts toward auto-ban escalation | Polite error returned on the connection |
+| **Escalates to ban?** | Yes (after `HL_AUTOBAN_VIOLATION_THRESHOLD` hits) | No |
+
+A user spamming chat from one TCP session burns chat tokens but never
+trips auto-ban. A scanner opening 50 connections trips auto-ban but
+never burns a chat token. Both behaviours are intentional. Tune one
+without assuming you understand the other.
 
 ### Idle Detection
 

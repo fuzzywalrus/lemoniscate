@@ -440,6 +440,8 @@ static const unsigned kAccountPermissionDefCount =
 
 #import "AppController+AccountsActions.inc"
 
+#import "AppController+ChatHistoryActions.inc"
+
 #import "AppController+OnlineFilesActions.inc"
 
 #import "AppController+NewsActions.inc"

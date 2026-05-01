@@ -951,6 +951,8 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_chatHistoryEnableCheckbox setButtonType:NSButtonTypeSwitch];
         [_chatHistoryEnableCheckbox setTitle:@"Persist public chat to disk"];
         [_chatHistoryEnableCheckbox setState:NSControlStateValueOff];
+        [_chatHistoryEnableCheckbox setTarget:self];
+        [_chatHistoryEnableCheckbox setAction:@selector(chatHistoryToggled:)];
         iy = addCheckboxWithHelp(c, _chatHistoryEnableCheckbox, iy,
             @"When on, public chat messages are appended to <FileRoot>/ChatHistory/channel-N.jsonl. Capability-aware clients can fetch backlog after disconnect via TranGetChatHistory (700). Private chats are NEVER persisted.", self);
 
@@ -982,6 +984,72 @@ resizeSubviewsWithOldSize:(NSSize)oldSize
         [_chatHistoryLogJoinsCheckbox setState:NSControlStateValueOff];
         iy = addCheckboxWithHelp(c, _chatHistoryLogJoinsCheckbox, iy,
             @"When on, every login and disconnect appends a system message to chat history (e.g. \"greg signed on\"). Off by default — some servers find these noisy.", self);
+
+        /* --- Encryption at rest (optional) --- */
+        _chatHistoryKeyPathField = makeEditField(fieldWidth - 80);
+        [_chatHistoryKeyPathField setToolTip:@"Path to a 32-byte raw key. When set, chat message bodies are encrypted at rest (ChaCha20-Poly1305). Other fields stay plaintext for indexing."];
+        _chooseChatHistoryKeyButton = makeButton(@"Choose\u2026", self,
+                                                  @selector(chooseChatHistoryKey:));
+        iy = addRowWithButton(c, @"Encryption Key:", _chatHistoryKeyPathField,
+                              _chooseChatHistoryKeyButton, iy, fieldWidth);
+
+        _generateChatHistoryKeyButton = makeButton(@"Generate Key\u2026", self,
+                                                    @selector(generateChatHistoryKey:));
+        [_generateChatHistoryKeyButton setToolTip:@"Generate a new 32-byte random key and write it to <configdir>/chat_history.key with restrictive permissions."];
+        {
+            NSRect bf = [_generateChatHistoryKeyButton frame];
+            [_generateChatHistoryKeyButton setFrame:NSMakeRect(LABEL_WIDTH - 4, iy, bf.size.width, 24)];
+        }
+        [c addSubview:_generateChatHistoryKeyButton];
+        iy += 28;
+
+        _chatHistoryKeyWarningLabel = [[NSTextField alloc]
+            initWithFrame:NSMakeRect(LABEL_WIDTH - 4, iy + 2,
+                                     contentWidth - LABEL_WIDTH - 8, 14)];
+        [_chatHistoryKeyWarningLabel setStringValue:
+            @"\u26A0 Without a key, message bodies are stored plaintext."];
+        [_chatHistoryKeyWarningLabel setBezeled:NO];
+        [_chatHistoryKeyWarningLabel setDrawsBackground:NO];
+        [_chatHistoryKeyWarningLabel setEditable:NO];
+        [_chatHistoryKeyWarningLabel setSelectable:NO];
+        [_chatHistoryKeyWarningLabel setFont:[NSFont systemFontOfSize:10]];
+        [_chatHistoryKeyWarningLabel setTextColor:[NSColor secondaryLabelColor]];
+        [c addSubview:_chatHistoryKeyWarningLabel];
+        iy += 18;
+
+        /* --- Advanced (folded by default) --- */
+        _chatHistoryAdvancedDisclosure = [[NSButton alloc]
+            initWithFrame:NSMakeRect(6, iy, 120, 20)];
+        [_chatHistoryAdvancedDisclosure setButtonType:NSButtonTypeMomentaryPushIn];
+        [_chatHistoryAdvancedDisclosure setBezelStyle:NSBezelStyleInline];
+        [_chatHistoryAdvancedDisclosure setTitle:@"Advanced \u25B6"];
+        [_chatHistoryAdvancedDisclosure setFont:[NSFont systemFontOfSize:10]];
+        [_chatHistoryAdvancedDisclosure setTarget:self];
+        [_chatHistoryAdvancedDisclosure setAction:@selector(toggleChatHistoryAdvanced:)];
+        [c addSubview:_chatHistoryAdvancedDisclosure];
+        iy += 24;
+
+        _chatHistoryAdvancedView = [[FlippedView alloc]
+            initWithFrame:NSMakeRect(0, iy, contentWidth, 60)];
+        [_chatHistoryAdvancedView setHidden:YES];
+        {
+            float ay = 0;
+            _chatHistoryRateCapacityField = makeEditField(80);
+            [_chatHistoryRateCapacityField setIntValue:20];
+            [_chatHistoryRateCapacityField setToolTip:@"Token bucket capacity for per-connection chat send rate limit. Default 20. Tune only if you understand the chat-send rate-limit semantics."];
+            ay = addRow(_chatHistoryAdvancedView, @"Rate Capacity:",
+                        _chatHistoryRateCapacityField, ay, 80);
+
+            _chatHistoryRateRefillField = makeEditField(80);
+            [_chatHistoryRateRefillField setIntValue:10];
+            [_chatHistoryRateRefillField setToolTip:@"Token refill rate (tokens/sec) for the per-connection chat send rate limit. Default 10."];
+            ay = addRow(_chatHistoryAdvancedView, @"Refill (tok/s):",
+                        _chatHistoryRateRefillField, ay, 80);
+
+            [_chatHistoryAdvancedView setFrame:NSMakeRect(0, [_chatHistoryAdvancedView frame].origin.y, contentWidth, ay)];
+        }
+        [c addSubview:_chatHistoryAdvancedView];
+        iy += 4;  /* hidden view contributes no visible height */
 
         float contentH = iy;
         [c setFrame:NSMakeRect(0, 0, contentWidth, contentH)];
